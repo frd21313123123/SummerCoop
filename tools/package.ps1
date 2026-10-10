@@ -10,6 +10,9 @@ $release = Join-Path $root ('dist\SummerCoop-' + $version)
 New-Item -ItemType Directory -Path (Join-Path $release 'Mods\References') -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $root 'build\SummerCoop.dll') -Destination (Join-Path $release 'Mods\SummerCoop.dll') -Force
 Copy-Item -LiteralPath (Join-Path $root 'build\SummerCoop.Core.dll') -Destination (Join-Path $release 'Mods\References\SummerCoop.Core.dll') -Force
+$compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework\v4.0.30319\csc.exe'
+& $compiler /nologo /langversion:5 /target:exe ('/out:' + (Join-Path $release 'Mods\References\SummerCoop.ProfileUpdate.exe')) ('/reference:' + (Join-Path $root 'build\SummerCoop.Core.dll')) (Join-Path $root 'tools\MigrateProfile.cs')
+if ($LASTEXITCODE) { throw 'Profile update helper build failed.' }
 foreach ($name in @('README.md','LICENSE')) { Copy-Item -LiteralPath (Join-Path $root $name) -Destination $release -Force }
 Copy-Item -LiteralPath (Join-Path $root 'tools\install.ps1') -Destination (Join-Path $release 'install.ps1') -Force
 Copy-Item -LiteralPath (Join-Path $root 'docs') -Destination $release -Recurse -Force

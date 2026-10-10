@@ -32,16 +32,20 @@ internal static class MigrateProfile
             string game = Path.GetFullPath(args[0]), profile = Path.GetFullPath(args[1]);
             if (!File.Exists(Path.Combine(profile, "world.scw"))) { Console.WriteLine("No existing world checkpoint to migrate."); return 0; }
             string oldHash = GameHash(game, args[2], args[3]);
-            string newHash = GameHash(game, Path.Combine(args[4], "SummerCoop.dll"), Path.Combine(args[4], "SummerCoop.Core.dll"));
+            string newCore = Path.Combine(args[4], "SummerCoop.Core.dll");
+            if (!File.Exists(newCore)) newCore = Path.Combine(args[4], "References\\SummerCoop.Core.dll");
+            string newHash = GameHash(game, Path.Combine(args[4], "SummerCoop.dll"), newCore);
             World world = new CheckpointStore(profile).Recover();
             if (world == null) throw new IOException("Profile cannot be recovered; it was not modified.");
             string oldSchema = Codec.Hash(Encoding.UTF8.GetBytes(oldHash + "/native-schema-2"));
             if (world.GameHash != oldHash || world.SchemaHash != oldSchema) throw new InvalidOperationException("Checkpoint does not match the installed old DLLs and current game resources; automatic migration refused.");
+            if (oldHash == newHash) { Console.WriteLine("Profile already matches these DLLs; no migration needed."); return 0; }
             string backup = Path.Combine(profile, "before-performance-update-" + DateTime.UtcNow.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N").Substring(0, 8));
             Directory.CreateDirectory(backup);
             foreach (string file in Directory.GetFiles(profile)) File.Copy(file, Path.Combine(backup, Path.GetFileName(file)), false);
             world.GameHash = newHash; world.SchemaHash = Codec.Hash(Encoding.UTF8.GetBytes(newHash + "/native-schema-2"));
-            new CheckpointStore(profile).Checkpoint(world);
+            try { new CheckpointStore(profile).Checkpoint(world); }
+            catch { foreach (string file in Directory.GetFiles(backup)) File.Copy(file, Path.Combine(profile, Path.GetFileName(file)), true); throw; }
             Console.WriteLine("Compatible profile updated; world ID, entities, money and native save files preserved."); Console.WriteLine("Backup: " + backup);
             return 0;
         }
