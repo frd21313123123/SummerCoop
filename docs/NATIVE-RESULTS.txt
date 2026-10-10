@@ -1,0 +1,62 @@
+SummerCoop 0.1.0-alpha — native integration results
+Date: 2026-10-10
+My Summer Car: Steam build 20171487, game v.250908-04
+Unity: 5.0.0f4
+MSCLoader: 1.3.5
+Run: pair22, TCP/UDP LAN on one Windows computer
+Two separate game copies and isolated save profiles; one Steam account.
+
+SHA256 SummerCoop.dll
+24303D309A83255E19DF2C39D19C748A4851F24986C1E15A07FE3030565A63B0
+SHA256 SummerCoop.Core.dll
+AAB592E92DEF06439FB2105F3D48245753B290662DA3A93BFD10DDC9D947A0C7
+Both game processes used these exact DLLs.
+
+HOST REPORT
+SCENE=GAME
+ROLE=host
+PHASE=Playing
+OBJECTS=33259
+FSMS=6311
+PLAYERS=2
+REVISION=1
+SNAPSHOT_BYTES=18215395
+SCHEMA=6579c71ff93371b39020cde36cc5cbfebac9d351c27f89de2914342ca802c5b5
+NATIVE_ACTIONS=NOT_REQUESTED
+MISSING_OBJECTS=0
+MISSING_ACTIVE_OBJECTS=0
+ACTIVE_MISMATCHES=0
+DYNAMIC_BODIES=1297
+
+CLIENT REPORT
+SCENE=GAME
+ROLE=client
+PHASE=Playing
+OBJECTS=33292
+FSMS=6321
+PLAYERS=2
+REVISION=31
+SNAPSHOT_BYTES=18222429
+SCHEMA=6579c71ff93371b39020cde36cc5cbfebac9d351c27f89de2914342ca802c5b5
+NATIVE_ACTIONS=PASS: remote take, native starter attachment, native bolt Stage 0 -> 1
+MISSING_OBJECTS=0
+MISSING_ACTIVE_OBJECTS=0
+ACTIVE_MISMATCHES=0
+DYNAMIC_BODIES=0
+
+Reports were captured at different revisions, not simultaneously.
+The native test confirms a client taking the starter, installing it through
+Assembly, and advancing one native bolt from Stage 0 to Stage 1. It does not
+confirm complete tightening, every part, wiring, or a finished running car.
+Missing-object and activeSelf metrics describe the captured snapshot only.
+Actual Steam invitations between accounts were not tested.
+See QA.md for the remaining gameplay acceptance matrix.
+
+POST-TEST SINGLE-PLAYER SAVE CHECK
+defaultES2File.txt: unchanged SHA256
+items.txt: unchanged SHA256
+meshsave.txt: unchanged SHA256
+graveyard.txt: unchanged SHA256
+trophies.txt: unchanged SHA256
+options.txt: unchanged SHA256
+Checked after stopping both isolated test processes.

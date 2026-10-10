@@ -1,0 +1,22 @@
+build/
+dist/
+.tools/
+.local/
+*.user
+*.suo
+__pycache__/
+# Local game references, profiles, runners and credentials are never committed.
+*.dll
+*.exe
+*.pdb
+*.mdb
+*.zip
+*.assets
+*.scw
+*.scj
+*.log
+.env
+.env.*
+!.env.example
+.runner
+.credentials*

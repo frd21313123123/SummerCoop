@@ -1,0 +1,458 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Reflection;
+using HutongGames.PlayMaker;
+using MSCLoader;
+using Steamworks;
+using SummerCoop.Core;
+using UnityEngine;
+
+namespace SummerCoop.Game
+{
+    public sealed class CoopRuntime : MonoBehaviour
+    {
+        public static CoopRuntime Instance { get; private set; }
+        private static bool cliHandled;
+        public Session Session { get; private set; }
+        public WorldRegistry Registry { get; private set; }
+        public NativeAdapter Adapter { get; private set; }
+        public bool Active { get { return Session != null && Session.Phase == SessionPhase.Playing; } }
+        public bool Joining { get; private set; }
+        private SaveIsolation saves;
+        private CheckpointStore store;
+        private Authority authority;
+        private ITransport pendingTransport;
+        private WorldRegistry pendingRegistry;
+        private Callback<GameLobbyJoinRequested_t> invitation;
+        private AvatarView avatars;
+        private GameObject localPlayer;
+        private Camera localCamera;
+        private string gameHash, username = "Player", address = "127.0.0.1", password = "", portText = "27842", lobbyText = "";
+        private string status = "F6 — SummerCoop", root, requestedSeat = "", requestedState = "";
+        private bool visible, importSave, awaitingScene, hostPending, leaving, fatal;
+        private float sceneBegan, poseTime, captureTime, checkpointTime, refreshTime, avatarTime, previousScale = 1;
+        private long requestedSequence;
+        private long sleepEpoch;
+        private bool requestAccepted;
+        private Fsm requestedFsm;
+        private CommandKind requestedKind;
+        private static ulong pendingLobby;
+        private float respawnTime;
+        private Rect panel = new Rect(20, 20, 450, 410);
+        private readonly Dictionary<string, float> requests = new Dictionary<string, float>();
+        public string SaveRoot { get { return root; } }
+        public string StatusText { get { return status; } }
+        public double LastUpdateMilliseconds { get; private set; }
+        public readonly double[] LastStages = new double[8];
+        private static double Elapsed(long began) { return (System.Diagnostics.Stopwatch.GetTimestamp() - began) * 1000.0 / System.Diagnostics.Stopwatch.Frequency; }
+        public static void Ensure()
+        {
+            if (Instance != null) return;
+            GameObject go = new GameObject("SummerCoop.Runtime"); UnityEngine.Object.DontDestroyOnLoad(go); go.AddComponent<CoopRuntime>();
+        }
+        private void Awake()
+        {
+            Instance = this; Application.runInBackground = true;
+            try
+            {
+                string profile = Argument("--summercoop-profile");
+                root = Path.GetFullPath(profile == "" ? Path.Combine(Application.persistentDataPath, "SummerCoop") : profile);
+                saves = new SaveIsolation(root); gameHash = SaveIsolation.GameHash();
+                NativeHooks.Install();
+                if (SteamTransport.Available()) { username = SteamFriends.GetPersonaName(); if (username.Length > 48) username = username.Substring(0, 48); invitation = Callback<GameLobbyJoinRequested_t>.Create(OnInvite); }
+                if (cliHandled) return; cliHandled = true;
+                string port = Argument("--summercoop-host-lan");
+                if (port != "") { portText = port; StartHost(false); }
+                else if (Argument("--summercoop-join-lan") != "") { address = Argument("--summercoop-join-lan"); if (Argument("--summercoop-port") != "") portText = Argument("--summercoop-port"); StartClient(false, 0); }
+                else { string lobby = Argument("+connect_lobby"); ulong id; if (ulong.TryParse(lobby, out id)) StartClient(true, id); }
+            }
+            catch (Exception e) { Fail(e); }
+        }
+        public static string Argument(string key)
+        {
+            string[] args = Environment.GetCommandLineArgs(); int i = Array.IndexOf(args, key); return i >= 0 && i + 1 < args.Length ? args[i + 1] : "";
+        }
+        private int Port()
+        {
+            int port; if (!int.TryParse(portText, out port) || port < 1024 || port > 65535) throw new ArgumentException("Порт должен быть от 1024 до 65535"); return port;
+        }
+        private void VerifyVanilla()
+        {
+            string mods = Path.Combine(Path.GetDirectoryName(Application.dataPath), "Mods");
+            if (!Directory.Exists(mods)) return;
+            foreach (string file in Directory.GetFiles(mods, "*.dll"))
+            {
+                string name = Path.GetFileName(file);
+                if (name != "SummerCoop.dll" && name != "MSCLoader_Console.dll" && name != "MSCLoader_Settings.dll") throw new InvalidOperationException("Для этой версии отключите другой мод: " + name);
+            }
+        }
+        public void StartHost(bool steam)
+        {
+            if (Session != null || awaitingScene || Application.loadedLevelName == "GAME") throw new InvalidOperationException("Создайте сессию из главного меню");
+            VerifyVanilla(); saves.Activate("world", importSave); ConfigureLoad();
+            pendingTransport = steam ? (ITransport)new SteamTransport(true, 0, gameHash) : LanTransport.Host(Port());
+            awaitingScene = true; hostPending = true; sceneBegan = Time.realtimeSinceStartup; SetStatus("Загрузка мира хоста…"); Application.LoadLevel("GAME");
+        }
+        public void StartClient(bool steam, ulong lobbyId)
+        {
+            if (Session != null || awaitingScene || Application.loadedLevelName == "GAME") throw new InvalidOperationException("Подключайтесь из главного меню");
+            VerifyVanilla(); saves.Activate("client", false);
+            ITransport transport = steam ? (ITransport)new SteamTransport(false, lobbyId, gameHash) : LanTransport.Join(address, Port());
+            Session = new Session(transport, null, gameHash, username, password, Time.realtimeSinceStartup); ConfigureSession();
+            SetStatus("Подключение к хосту…");
+        }
+        private static void ConfigureLoad()
+        {
+            FsmVariables g = FsmVariables.GlobalVariables;
+            FsmString slot = g.FindFsmString("SaveSlot"); if (slot != null) slot.Value = "defaultES2File.txt";
+            FsmBool perma = g.FindFsmBool("OptionsPermaDeath"); if (perma != null) perma.Value = false;
+            perma = g.FindFsmBool("PlayerPermaDeath"); if (perma != null) perma.Value = false;
+            foreach (string key in new string[] { "PlayerInMenu", "PlayerStop", "PlayerSleeps", "PlayerSeated", "PlayerCarControl", "PlayerVanControl", "PlayerMuscleControl" }) { FsmBool v = g.FindFsmBool(key); if (v != null) v.Value = false; }
+            foreach (string key in new string[] { "PlayerFirstName", "PlayerLastName", "PlayerName" }) { FsmString v = g.FindFsmString(key); if (v != null && v.Value == "") v.Value = "Coop"; }
+        }
+        public void PreLoad()
+        {
+            if (!awaitingScene || Application.loadedLevelName != "GAME") return;
+            ConfigureLoad(); pendingRegistry = new WorldRegistry(hostPending, gameHash); pendingRegistry.IndexScene();
+        }
+        public void Loaded() { if (awaitingScene) sceneBegan = Time.realtimeSinceStartup; }
+        public void Menu()
+        {
+            if (Application.loadedLevelName != "GAME" && Session == null && !awaitingScene) saves.Restore();
+            if (leaving) { leaving = false; saves.Restore(); Registry = null; Adapter = null; authority = null; }
+            visible = true;
+            if (pendingLobby != 0) { ulong lobby = pendingLobby; pendingLobby = 0; StartClient(true, lobby); }
+        }
+        private void ConfigureSession()
+        {
+            Session.Status = SetStatus; Session.Ended = OnEnded;
+            Session.JoinBarrier = delegate(bool waiting)
+            {
+                if (Joining == waiting) return;
+                Joining = waiting;
+                if (waiting) { previousScale = Time.timeScale; Time.timeScale = 0; SetStatus("Синхронизация нового игрока…"); }
+                else { Time.timeScale = previousScale; }
+            };
+            Session.PrepareNativeSave = delegate { SetStatus("Подготовка сохранения…"); NativeSave.Capture(Registry, saves.CurrentDirectory); byte[] bytes = SaveIsolation.Pack(saves.CurrentDirectory); SetStatus("Передача сохранения: " + bytes.Length + " байт"); return bytes; };
+            Session.NativeSaveReceived = delegate(byte[] bytes)
+            {
+                SaveIsolation.Unpack(saves.CurrentDirectory, bytes); ConfigureLoad();
+                awaitingScene = true; hostPending = false; sceneBegan = Time.realtimeSinceStartup; SetStatus("Загрузка общего мира…"); Application.LoadLevel("GAME");
+            };
+            Session.WorldReceived = delegate(World world, bool full)
+            {
+                Registry.Apply(world, full); if (avatars != null) avatars.Reconcile(Session.World, Session.LocalId); ResumeHand();
+                if (!full && Session.World.SleepEpoch > sleepEpoch) { FsmFloat fatigue = FsmVariables.GlobalVariables.FindFsmFloat("PlayerFatigue"); if (fatigue != null) fatigue.Value = 0; }
+                sleepEpoch = Session.World.SleepEpoch;
+                if (full) SetStatus("Подключено. F6 — меню сессии");
+            };
+            Session.MotionReceived = delegate(MotionFrame frame) { Registry.ReceiveMotion(frame); };
+            Session.PoseReceived = delegate(Pose pose) { if (avatars != null) avatars.Pose(pose); };
+            Session.CommandCompleted = OnCommand;
+        }
+        private void FinishLoad()
+        {
+            Registry = pendingRegistry ?? new WorldRegistry(hostPending, gameHash); pendingRegistry = null; Registry.Discover(true);
+            avatars = new AvatarView();
+            localPlayer = GameObject.Find("PLAYER"); localCamera = Camera.main;
+            if (hostPending)
+            {
+                World world = new World { GameHash = gameHash, SchemaHash = Registry.SchemaHash };
+                store = new CheckpointStore(Path.Combine(root, "world")) { ImmutableEntities = true };
+                World recovered = store.Recover();
+                if (recovered == null && File.Exists(Path.Combine(Path.Combine(root, "world"), "world.scw"))) throw new InvalidOperationException("Контрольная точка и её резервная копия несовместимы или повреждены. Сохраните этот профиль и выберите отдельный новый профиль.");
+                if (recovered != null)
+                {
+                    if (recovered.GameHash != gameHash || recovered.SchemaHash != Registry.SchemaHash) throw new InvalidOperationException("Сохранение SummerCoop сделано другой версией игры или мода");
+                    recovered.Players.Clear(); Registry.Apply(recovered, true); world = recovered;
+                }
+                Registry.Capture(world, true); world.EnableChangeTracking(); Adapter = new NativeAdapter(Registry); authority = new Authority(world, Adapter, store);
+                Session = new Session(pendingTransport, authority, gameHash, username, password, Time.realtimeSinceStartup); pendingTransport = null; ConfigureSession();
+                Session.SceneLoaded(Registry.SchemaHash); store.Checkpoint(Session.World);
+                SetStatus("Мир открыт: " + Registry.Objects.Count + " объектов, " + Registry.Fsms.Count + " FSM");
+            }
+            else Session.SceneLoaded(Registry.SchemaHash);
+            awaitingScene = false; visible = false; captureTime = checkpointTime = refreshTime = Time.realtimeSinceStartup;
+            if (Argument("--summercoop-test-report") != "")
+            {
+                using (StreamWriter w = new StreamWriter(Path.Combine(root, "registry.tsv")))
+                    foreach (ObjectBinding b in Registry.Objects.Values) w.WriteLine(b.Id + "\t" + b.Key + "\t" + GameProbe.PathOf(b.Object.transform));
+                Registry.DumpPrefabs(Path.Combine(root, "prefabs.txt"));
+            }
+            if (Argument("--summercoop-test-report") != "") gameObject.AddComponent<IntegrationProbe>();
+        }
+        private void Update()
+        {
+            long updateBegan = System.Diagnostics.Stopwatch.GetTimestamp();
+            Array.Clear(LastStages, 0, LastStages.Length);
+            try
+            {
+                if (Input.GetKeyDown(KeyCode.F6)) visible = !visible;
+                if (awaitingScene && Application.loadedLevelName == "GAME" && Time.realtimeSinceStartup - sceneBegan > 10) FinishLoad();
+                long stage = System.Diagnostics.Stopwatch.GetTimestamp();
+                if (Session != null) Session.Update(Time.realtimeSinceStartup);
+                LastStages[0] = Elapsed(stage);
+                if (!Active || Registry == null) return;
+                if (avatars != null) { if (Time.realtimeSinceStartup - avatarTime > 0.5f) { avatars.Reconcile(Session.World, Session.LocalId); avatarTime = Time.realtimeSinceStartup; } avatars.Update(Time.unscaledDeltaTime); }
+                if (Session.IsHost)
+                {
+                    store.CheckBackground();
+                    stage = System.Diagnostics.Stopwatch.GetTimestamp(); Adapter.Tick(Session.World); LastStages[1] = Elapsed(stage);
+                    stage = System.Diagnostics.Stopwatch.GetTimestamp();
+                    if (Time.realtimeSinceStartup - refreshTime > 3) { Registry.Discover(false); refreshTime = Time.realtimeSinceStartup; }
+                    LastStages[2] = Elapsed(stage);
+                    stage = System.Diagnostics.Stopwatch.GetTimestamp();
+                    if (!Joining) Registry.CaptureIncremental(Session.World);
+                    LastStages[3] = Elapsed(stage);
+                    if (!Joining && Time.realtimeSinceStartup - captureTime > 0.2f)
+                    {
+                        if (Registry.ConsumeChanges())
+                        {
+                            stage = System.Diagnostics.Stopwatch.GetTimestamp();
+                            Session.World.Revision++; store.CommitNative(Session.World);
+                            LastStages[4] = Elapsed(stage);
+                            stage = System.Diagnostics.Stopwatch.GetTimestamp(); Session.Publish(); LastStages[5] = Elapsed(stage);
+                        }
+                        captureTime = Time.realtimeSinceStartup;
+                    }
+                    if (!Joining && Time.realtimeSinceStartup - checkpointTime > 60) { stage = System.Diagnostics.Stopwatch.GetTimestamp(); if (store.BeginCheckpoint(Session.World)) checkpointTime = Time.realtimeSinceStartup; LastStages[7] = Elapsed(stage); }
+                }
+                else
+                {
+                    stage = System.Diagnostics.Stopwatch.GetTimestamp(); Registry.Interpolate(Time.unscaledDeltaTime); SendDriving();
+                    Registry.EnforceVariables(Session.World);
+                    LastStages[3] = Elapsed(stage);
+                }
+                if (!Joining && Time.realtimeSinceStartup - poseTime > 0.05f)
+                {
+                    stage = System.Diagnostics.Stopwatch.GetTimestamp();
+                    if (localPlayer == null) localPlayer = GameObject.Find("PLAYER");
+                    if (localCamera == null || !localCamera.isActiveAndEnabled) localCamera = Camera.main;
+                    if (localPlayer != null) { Session.SendPose(new Pose { Position = WorldRegistry.From(localPlayer.transform.position), Rotation = WorldRegistry.From(localPlayer.transform.rotation), Pitch = localCamera == null ? 0 : localCamera.transform.eulerAngles.x }); }
+                    if (Session.IsHost && Session.World.Players.Count > 1) foreach (MotionFrame frame in Registry.CaptureMotion()) Session.SendMotion(frame);
+                    poseTime = Time.realtimeSinceStartup;
+                    LastStages[6] = Elapsed(stage);
+                }
+                if (Application.loadedLevelName != "GAME") Leave("Мир закрыт");
+            }
+            catch (Exception e) { Fail(e); }
+            finally { LastUpdateMilliseconds = (System.Diagnostics.Stopwatch.GetTimestamp() - updateBegan) * 1000.0 / System.Diagnostics.Stopwatch.Frequency; }
+        }
+        private void SendDriving()
+        {
+            Player player; if (!Session.World.Players.TryGetValue(Session.LocalId, out player) || player.Seat == "" || Time.realtimeSinceStartup - poseTime < 0.05f) return;
+            FsmBinding seat = Registry.FsmOf(player.Seat); if (seat == null || seat.Key.IndexOf("DriveTrigger", StringComparison.OrdinalIgnoreCase) < 0) return;
+            if (seat.Component.transform.root.name == "BOAT")
+            {
+                Session.Submit(new Command { Kind = CommandKind.Drive, Target = player.Seat, Vector = new V3(Input.GetAxisRaw("Horizontal"), Mathf.Clamp01(Input.GetAxisRaw("Vertical")), 0), Argument = "0|1|0" }); return;
+            }
+            AxisCarController car = seat.Component.transform.root.GetComponent<AxisCarController>(); if (car == null) return;
+            Drivetrain drive = car.GetComponent<Drivetrain>();
+            object[] controls = { 0f, 0f, 0f, 0f, 0f, false, drive == null ? 1 : drive.gear };
+            typeof(AxisCarController).GetMethod("GetInput", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic).Invoke(car, controls);
+            Session.Submit(new Command { Kind = CommandKind.Drive, Target = player.Seat, Vector = new V3((float)controls[2], (float)controls[0], (float)controls[1]), Number = (float)controls[3], Argument = ((float)controls[4]).ToString("R", CultureInfo.InvariantCulture) + "|" + controls[6] + "|" + ((bool)controls[5] ? "1" : "0") });
+        }
+        public void RequestState(FsmBinding b, string state)
+        {
+            if (!Session.World.Entities.ContainsKey(b.Id)) return;
+            if (!Active || Joining || b.Component == null) return;
+            Player actor = Session.World.Players[Session.LocalId];
+            if (Vector3.Distance(WorldRegistry.To(actor.Position), b.Component.transform.position) > 5) return;
+            bool input = Input.anyKey || Input.GetMouseButton(0) || Input.GetMouseButton(1) || Input.GetMouseButtonUp(0) || Input.GetMouseButtonUp(1) || Math.Abs(Input.GetAxis("Mouse ScrollWheel")) > 0.001f;
+            if (!input && !(b.Component.FsmName == "Assembly" && actor.Held != "")) return;
+            float last; if (requests.TryGetValue(b.Id, out last) && Time.realtimeSinceStartup - last < 0.08f) return; requests[b.Id] = Time.realtimeSinceStartup;
+            CommandKind kind = CommandKind.Interact;
+            if (b.Component.FsmName == "Assembly") kind = CommandKind.Attach;
+            else if (b.Component.FsmName == "Removal") kind = CommandKind.Detach;
+            else if (b.Component.FsmName == "Assemble" && b.Key.IndexOf("Wiring", StringComparison.OrdinalIgnoreCase) >= 0) kind = CommandKind.Wire;
+            else if (b.Component.FsmName == "Screw" && b.Component.FsmVariables.FindFsmInt("Stage") != null) kind = CommandKind.Bolt;
+            else if (b.Component.FsmName == "Buy" || b.Key.IndexOf("CashRegister", StringComparison.OrdinalIgnoreCase) >= 0) kind = CommandKind.Purchase;
+            FsmFloat wrench = FsmVariables.GlobalVariables.FindFsmFloat("ToolWrenchSize");
+            Session.Submit(new Command { Kind = kind, Target = b.Id, Argument = state, Number = kind == CommandKind.Bolt && wrench != null ? wrench.Value : 0 });
+        }
+        public bool PersonalState(Fsm fsm, FsmState state)
+        {
+            if (!Active || Joining || NativeHooks.Replaying || Adapter != null && Adapter.Executing) return true;
+            if (fsm.Name == "Death")
+            {
+                foreach (FsmStateAction a in state.Actions) if (a.GetType().Name == "LoadLevel" || a.GetType().Name == "DeleteFile") { if (Time.realtimeSinceStartup - respawnTime > 2) { respawnTime = Time.realtimeSinceStartup; Respawn(); } return false; }
+            }
+            FsmBinding binding = Registry.Binding(fsm);
+            if (binding != null && binding.Key.IndexOf("SleepTrigger", StringComparison.Ordinal) >= 0 && (state.Name == "Get positions" || state.Name == "Player in car"))
+            {
+                Session.Submit(new Command { Kind = CommandKind.Sleep, Number = 1 }); SetStatus("Готовность ко сну отправлена. Нужны все игроки."); return false;
+            }
+            if (binding != null && fsm.Name == "PlayerTrigger")
+            {
+                Player player = Session.World.Players[Session.LocalId];
+                if (state.Name == "Player in car" || state.Name.StartsWith("Get positions", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (player.Seat == binding.Id) return true;
+                    return RequestPersonal(CommandKind.EnterSeat, binding.Id, fsm, state.Name);
+                }
+                if (state.Name == "Create player" || state.Name == "Player out of car")
+                {
+                    if (player.Seat == binding.Id) Session.Submit(new Command { Kind = CommandKind.LeaveSeat, Target = binding.Id });
+                    return true;
+                }
+            }
+            if (fsm.Name == "PickUp")
+            {
+                if (state.Name == "Set pivot" || state.Name == "Set pivot 2" || state.Name == "Tool picked" || state.Name == "Ragdoll picked")
+                {
+                    FsmGameObject picked = fsm.Variables.FindFsmGameObject("PickedObject");
+                    string target = Registry.IdOf(picked == null ? null : picked.Value); if (target == "") return true;
+                    Player p = Session.World.Players[Session.LocalId]; if (p.Held == target) return true;
+                    return RequestPersonal(CommandKind.Take, target, fsm, state.Name);
+                }
+                if (state.Name.StartsWith("Drop ", StringComparison.Ordinal))
+                {
+                    Player p = Session.World.Players[Session.LocalId]; if (p.Held != "") Session.Submit(new Command { Kind = CommandKind.Drop, Target = p.Held });
+                    return true;
+                }
+            }
+            return true;
+        }
+        private bool RequestPersonal(CommandKind kind, string target, Fsm fsm, string state)
+        {
+            if (requestedSeat != "") return false;
+            Command command = new Command { Kind = kind, Target = target };
+            CommandResult result = Session.Submit(command); if (result != null) return result.Accepted;
+            requestedSeat = target; requestedState = state; requestedSequence = command.Sequence; requestedKind = kind; requestedFsm = fsm; requestAccepted = false;
+            SetStatus("Ожидание подтверждения хоста…"); return false;
+        }
+        private void OnCommand(CommandResult result)
+        {
+            if (!result.Accepted) SetStatus(result.Reason);
+            if (requestedSeat == "" || Session == null || Session.IsHost || result.Sequence != requestedSequence) return;
+            requestAccepted = result.Accepted;
+            if (!result.Accepted) { requestedSeat = requestedState = ""; requestedSequence = 0; return; }
+            ResumeHand();
+        }
+        private void ResumeHand()
+        {
+            if (requestedSeat == "" || !requestAccepted || Session == null) return;
+            // Resume the local hand animation only after the host grants ownership.
+            Player p; if (Session.World.Players.TryGetValue(Session.LocalId, out p) && (requestedKind == CommandKind.Take ? p.Held == requestedSeat : p.Seat == requestedSeat))
+            {
+                NativeHooks.Replaying = true;
+                try { PlayMakerFSM component = requestedFsm.Owner as PlayMakerFSM; if (component != null) NativeAdapter.ExecuteState(new FsmBinding { Component = component }, requestedState); }
+                finally { NativeHooks.Replaying = false; }
+                requestedSeat = requestedState = ""; requestedSequence = 0; requestAccepted = false;
+            }
+        }
+        private void OnInvite(GameLobbyJoinRequested_t data)
+        {
+            try
+            {
+                lobbyText = data.m_steamIDLobby.m_SteamID.ToString(CultureInfo.InvariantCulture);
+                if (Application.loadedLevelName == "GAME" || awaitingScene) { pendingLobby = data.m_steamIDLobby.m_SteamID; Leave("Переход в приглашённую сессию"); }
+                else { if (Session != null) Leave("Переход в приглашённую сессию"); StartClient(true, data.m_steamIDLobby.m_SteamID); }
+            }
+            catch (Exception e) { Fail(e); }
+        }
+        public void Leave(string reason)
+        {
+            if (Session == null && pendingTransport == null) return;
+            try { if (Session != null && Session.IsHost && Registry != null) { Registry.Capture(Session.World, true); NativeSave.Capture(Registry, saves.CurrentDirectory); store.Checkpoint(Session.World); } }
+            finally
+            {
+                if (Session != null) { Session.Ended = null; Session.Close(reason); Session = null; }
+                DisposeStore();
+                if (pendingTransport != null) { pendingTransport.Dispose(); pendingTransport = null; }
+                if (avatars != null) { avatars.Dispose(); avatars = null; }
+                Joining = false; Time.timeScale = previousScale; awaitingScene = false;
+                if (Application.loadedLevelName == "GAME") { leaving = true; Application.LoadLevel("MainMenu"); }
+                else { saves.Restore(); Registry = null; Adapter = null; }
+                SetStatus(reason); visible = true;
+            }
+        }
+        private void OnEnded(string reason)
+        {
+            Session = null; Joining = false; Time.timeScale = previousScale;
+            DisposeStore();
+            if (avatars != null) { avatars.Dispose(); avatars = null; }
+            SetStatus(reason);
+            if (Application.loadedLevelName == "GAME") { leaving = true; Application.LoadLevel("MainMenu"); }
+            else saves.Restore(); visible = true;
+        }
+        private void Fail(Exception e)
+        {
+            SetStatus("SummerCoop: " + e.Message); Debug.LogException(e);
+            if (root != null) { try { File.AppendAllText(Path.Combine(root, "errors.log"), DateTime.UtcNow.ToString("o") + " " + e + Environment.NewLine); } catch (IOException) { } }
+            if (!fatal) { fatal = true; try { Leave("Ошибка: " + e.Message); } catch (Exception stop) { Debug.LogException(stop); } }
+            visible = true;
+        }
+        private void SetStatus(string value) { if (status == value) return; status = value; ModConsole.Print("SummerCoop: " + value); }
+        private void DisposeStore() { CheckpointStore current = store; store = null; if (current != null) { try { current.Dispose(); } catch (IOException e) { Debug.LogException(e); } } }
+        private void OnApplicationQuit()
+        {
+            try { if (Session != null && Session.IsHost && Registry != null) { Registry.Capture(Session.World, true); NativeSave.Capture(Registry, saves.CurrentDirectory); store.Checkpoint(Session.World); } }
+            catch (Exception e) { Debug.LogException(e); }
+            if (Session != null) Session.Dispose();
+            if (pendingTransport != null) pendingTransport.Dispose();
+            DisposeStore();
+            // Keep the isolated ES2 path until the engine has completed ALL native quit callbacks.
+        }
+        private void OnDestroy() { if (invitation != null) invitation.Dispose(); if (avatars != null) avatars.Dispose(); if (Instance == this) { Instance = null; NativeHooks.Uninstall(); } }
+        private void OnGUI()
+        {
+            if (!visible || saves == null) return;
+            panel = GUI.Window(516750, panel, DrawPanel, "SummerCoop " + Protocol.ModVersion);
+        }
+        private void DrawPanel(int id)
+        {
+            GUILayout.Label("Экспериментальная версия. Полная сборка Satsuma проходит проверку.");
+            GUILayout.Label(status);
+            try
+            {
+                if (Session == null && !awaitingScene)
+                {
+                    GUILayout.BeginHorizontal(); GUILayout.Label("Имя", GUILayout.Width(90)); username = GUILayout.TextField(username, 48); GUILayout.EndHorizontal();
+                    importSave = GUILayout.Toggle(importSave, "Создать мир из копии одиночного сохранения");
+                    GUILayout.BeginHorizontal(); GUI.enabled = SteamTransport.Available(); if (GUILayout.Button("Хост через Steam")) { fatal = false; StartHost(true); } GUI.enabled = true;
+                    if (GUILayout.Button("Хост LAN / VPN")) { fatal = false; StartHost(false); } GUILayout.EndHorizontal();
+                    GUILayout.BeginHorizontal(); GUILayout.Label("IP хоста", GUILayout.Width(90)); address = GUILayout.TextField(address, 255); GUILayout.EndHorizontal();
+                    GUILayout.BeginHorizontal(); GUILayout.Label("Порт", GUILayout.Width(90)); portText = GUILayout.TextField(portText, 5); GUILayout.EndHorizontal();
+                    GUILayout.BeginHorizontal(); GUILayout.Label("Пароль LAN", GUILayout.Width(90)); password = GUILayout.PasswordField(password, '*', 64); GUILayout.EndHorizontal();
+                    if (GUILayout.Button("Подключиться LAN / VPN")) { fatal = false; StartClient(false, 0); }
+                    GUILayout.BeginHorizontal(); GUILayout.Label("Steam lobby", GUILayout.Width(90)); lobbyText = GUILayout.TextField(lobbyText, 20); GUILayout.EndHorizontal();
+                    if (GUILayout.Button("Подключиться к Steam lobby")) { ulong lobby; if (!ulong.TryParse(lobbyText, out lobby)) throw new ArgumentException("Нужен номер лобби Steam"); fatal = false; StartClient(true, lobby); }
+                }
+                else
+                {
+                    GUILayout.Label(Session == null ? "Загрузка…" : "Состояние: " + Session.Phase);
+                    if (Session != null)
+                    {
+                        if (Session.World != null) GUILayout.Label("Игроков: " + Session.World.Players.Count + "/4. Общие деньги: " + Session.World.Money.ToString("0.00", CultureInfo.InvariantCulture) + " mk");
+                        SteamTransport steam = SessionTransport() as SteamTransport;
+                        if (steam != null && steam.IsHost && steam.LobbyReady) { GUILayout.Label("Лобби: " + steam.Lobby.m_SteamID); if (GUILayout.Button("Пригласить друзей через Steam")) steam.Invite(); }
+                        if (Active)
+                        {
+                            Player p = Session.World.Players[Session.LocalId];
+                            if (GUILayout.Button(p.SleepReady ? "Отменить готовность ко сну" : "Готов ко сну (нужны все игроки)")) Session.Submit(new Command { Kind = CommandKind.Sleep, Number = p.SleepReady ? 0 : 1 });
+                            if (GUILayout.Button("Возродиться дома")) Respawn();
+                        }
+                    }
+                    if (GUILayout.Button("Закрыть сессию")) Leave("Сессия закрыта");
+                }
+                if (GUILayout.Button("Скрыть (F6)")) visible = false;
+            }
+            catch (Exception e) { SetStatus(e.Message); }
+            GUI.DragWindow();
+        }
+        private ITransport SessionTransport() { return Session == null ? null : Session.Transport; }
+        public void Respawn()
+        {
+            if (!Active) return; Player p = Session.World.Players[Session.LocalId];
+            if (p.Held != "") Session.Submit(new Command { Kind = CommandKind.Drop, Target = p.Held });
+            if (p.Seat != "") Session.Submit(new Command { Kind = CommandKind.LeaveSeat, Target = p.Seat });
+            GameObject player = GameObject.Find("PLAYER"); if (player == null) return;
+            player.transform.parent = null; player.transform.position = new Vector3(-9.8f, 0.7f, 11.7f);
+            foreach (string name in new string[] { "PlayerHunger", "PlayerThirst", "PlayerStress", "PlayerFatigue", "PlayerUrine", "PlayerDirtiness", "PlayerDrunk", "PlayerBurns" }) { FsmFloat v = FsmVariables.GlobalVariables.FindFsmFloat(name); if (v != null) v.Value = 0; }
+            foreach (string name in new string[] { "PlayerStop", "PlayerSleeps", "PlayerSeated" }) { FsmBool v = FsmVariables.GlobalVariables.FindFsmBool(name); if (v != null) v.Value = false; }
+        }
+    }
+}

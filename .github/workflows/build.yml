@@ -1,0 +1,39 @@
+name: Build SummerCoop
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: summercoop-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: powershell
+
+jobs:
+  core-tests:
+    name: Protocol and network tests
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Compile core and run all tests without the game
+        run: ./tools/build.ps1 -TestsOnly
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: core-test-results-${{ github.run_number }}
+          path: build/test-results.txt
+          if-no-files-found: warn
+          retention-days: 14
+

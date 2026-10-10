@@ -1,0 +1,38 @@
+name: Ошибка в моде
+description: Сообщить о рассинхронизации, ошибке подключения или игровой механики.
+title: "[Bug] "
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Версии игры, MSCLoader и SummerCoop
+    validations:
+      required: true
+  - type: dropdown
+    id: transport
+    attributes:
+      label: Соединение
+      options:
+        - LAN
+        - VPN
+        - Steam
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Шаги воспроизведения
+      description: Укажите число игроков, кто хост и что делает каждый игрок.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Ожидаемое и фактическое поведение
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Фрагмент лога
+      description: Уберите личные данные, IP-адреса и пароли перед отправкой.
