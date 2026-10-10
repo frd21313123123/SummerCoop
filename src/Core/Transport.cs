@@ -163,7 +163,7 @@ namespace SummerCoop.Core
                         events.Add(new TransportEvent { Kind = TransportEventKind.Connected, Peer = c.Id }); continue;
                     }
                     // Validate before queueing, so invalid input cannot affect game state.
-                    Codec.Open(bytes);
+                    Codec.Validate(bytes);
                     events.Add(new TransportEvent { Kind = TransportEventKind.Data, Peer = c.Id, Data = bytes, Reliable = true });
                 }
             }
@@ -218,7 +218,7 @@ namespace SummerCoop.Core
                     }
                     if (found == null) continue;
                     byte[] frame = new byte[bytes.Length - 16]; Array.Copy(bytes, 16, frame, 0, frame.Length);
-                    try { Codec.Open(frame); } catch (IOException) { continue; }
+                    try { Codec.Validate(frame); } catch (IOException) { continue; }
                     events.Add(new TransportEvent { Kind = TransportEventKind.Data, Peer = found.Id, Data = frame, Reliable = false });
                 }
                 catch (Exception e) { if (!closed) events.Add(new TransportEvent { Kind = TransportEventKind.Error, Error = e.Message }); }

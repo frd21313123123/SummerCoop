@@ -49,7 +49,7 @@ namespace SummerCoop.Core
             using (FileStream file = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None, 65536, false))
             {
                 file.Write(new byte[8], 0, 8);
-                RecordStream record = new RecordStream(file); BinaryWriter writer = new BinaryWriter(record);
+                RecordStream record = new RecordStream(file); BinaryWriter writer = new WireWriter(record);
                 Codec.WriteWorld(writer, world); writer.Flush();
                 file.Position = 0; BinaryWriter header = new BinaryWriter(file); header.Write(checked((int)record.Count)); header.Write(~record.Checksum); header.Flush(); Flush(file);
             }

@@ -59,6 +59,30 @@ internal static class TestRunner
     private static Command Cmd(long sequence, CommandKind kind, string target) { return new Command { Sequence = sequence, Kind = kind, Target = target }; }
     private static void OptimizationTests()
     {
+        Test("allocation-free floating point writes retain all IEEE bits and the original wire format", delegate
+        {
+            float[] singles = { 0, BitConverter.ToSingle(new byte[] { 0, 0, 0, 128 }, 0), float.Epsilon, -float.Epsilon, float.MinValue, float.MaxValue, float.PositiveInfinity, float.NegativeInfinity, float.NaN };
+            double[] doubles = { 0, BitConverter.Int64BitsToDouble(long.MinValue), double.Epsilon, -double.Epsilon, double.MinValue, double.MaxValue, double.PositiveInfinity, double.NegativeInfinity, double.NaN };
+            Random random = new Random(921); byte[] data = new byte[8];
+            List<float> floats = new List<float>(singles); List<double> numbers = new List<double>(doubles);
+            for (int i = 0; i < 1024; i++) { random.NextBytes(data); floats.Add(BitConverter.ToSingle(data, 0)); numbers.Add(BitConverter.ToDouble(data, 0)); }
+            Action<BinaryWriter> encode = delegate(BinaryWriter writer) { foreach (float value in floats) writer.Write(value); foreach (double value in numbers) writer.Write(value); };
+            byte[] expected; using (MemoryStream stream = new MemoryStream()) using (BinaryWriter writer = new BinaryWriter(stream)) { encode(writer); writer.Flush(); expected = stream.ToArray(); }
+            byte[] actual = Codec.Make(encode); Check(Convert.ToBase64String(actual) == Convert.ToBase64String(expected), "Primitive writer changed float/double bit patterns");
+        });
+        Test("pooled encoding preserves nested output, error recovery and cross-thread ownership", delegate
+        {
+            byte[] nested = null;
+            byte[] outer = Codec.Make(delegate(BinaryWriter writer) { writer.Write(123); nested = Codec.Make(delegate(BinaryWriter inner) { Codec.Text(inner, "внутренний"); }); writer.Write(nested.Length); writer.Write(nested); writer.Write(456); });
+            Codec.Read(outer, delegate(BinaryReader reader) { Check(reader.ReadInt32() == 123, "Outer prefix overwritten"); int length = reader.ReadInt32(); Codec.Read(reader.ReadBytes(length), delegate(BinaryReader inner) { Check(Codec.Text(inner) == "внутренний", "Nested bytes overwritten"); }); Check(reader.ReadInt32() == 456, "Outer suffix overwritten"); });
+            byte[] retained = (byte[])outer.Clone();
+            Throws(delegate { Codec.Make(delegate(BinaryWriter writer) { writer.Write(999); throw new IOException("encode failed"); }); });
+            byte[] clean = Codec.Make(delegate(BinaryWriter writer) { writer.Write(7); }); Check(clean.Length == 4 && BitConverter.ToInt32(clean, 0) == 7, "Failed encoding retained old bytes");
+            Exception failure = null; System.Threading.Thread worker = new System.Threading.Thread(delegate() { try { for (int i = 0; i < 1000; i++) { int value = i; byte[] bytes = Codec.Make(delegate(BinaryWriter writer) { writer.Write(value); }); Check(BitConverter.ToInt32(bytes, 0) == value, "Worker bytes overwritten"); } } catch (Exception error) { failure = error; } }); worker.Start();
+            for (int i = 0; i < 1000; i++) { byte[] bytes = Codec.Make(delegate(BinaryWriter writer) { writer.Write(-1); }); Check(BitConverter.ToInt32(bytes, 0) == -1, "Main bytes overwritten"); }
+            worker.Join(); if (failure != null) throw failure;
+            Check(Convert.ToBase64String(outer) == Convert.ToBase64String(retained), "Returned output shared mutable storage");
+        });
         Test("copy-on-write native transaction rolls back entity replacements", delegate
         {
             OptimizedAdapter adapter = new OptimizedAdapter { Fail = true };
@@ -267,6 +291,44 @@ internal static class TestRunner
             Check(object.ReferenceEquals(first.Properties["name"], second.Properties["name"]), "Unchanged atom not shared");
             probe = builder.Begin("another", "native2", EntityKind.Fsm); probe.Properties["stage"] = builder.S("different"); builder.Publish(world);
             Check(first.Properties["stage"].Number == 1 && second.Properties["stage"].Number == 2, "Pool mutation escaped into published values");
+        });
+        Test("capture size buckets keep large arrays and small objects isolated", delegate
+        {
+            World world = Sample(); SnapshotBuilder builder = new SnapshotBuilder();
+            Entity large = builder.Begin("large", "native-array", EntityKind.Object, 2048);
+            Dictionary<string, Atom> largeBuffer = large.Properties;
+            for (int i = 0; i < 2048; i++) large.Properties["array/" + i] = builder.N(i);
+            builder.Publish(world); Entity published = world.Entities["large"];
+            Entity small = builder.Begin("small", "native-small", EntityKind.Object, 1); Dictionary<string, Atom> smallBuffer = small.Properties;
+            Check(!object.ReferenceEquals(largeBuffer, smallBuffer) && small.Properties.Count == 0, "Small capture retained large scratch storage");
+            small.Properties["value"] = builder.N(7); builder.Publish(world);
+            large = builder.Begin("large", "native-array", EntityKind.Object, 2048);
+            Check(object.ReferenceEquals(largeBuffer, large.Properties) && large.Properties.Count == 0, "Large scratch storage was not reused or cleared");
+            large.Properties["array/0"] = builder.N(99); builder.Publish(world);
+            Check(published.Properties.Count == 2048 && published.Properties["array/0"].Number == 0 && world.Entities["small"].Properties["value"].Number == 7, "Bucket reuse modified published entities");
+            small = builder.Begin("grown", "unknown-size", EntityKind.Object, 1);
+            for (int i = 0; i < 500; i++) small.Properties["key" + i] = builder.B(true);
+            builder.Publish(world);
+            small = builder.Begin("small", "native-small", EntityKind.Object, 1);
+            Check(!object.ReferenceEquals(smallBuffer, small.Properties), "Unknown large entity polluted the small scratch bucket");
+        });
+        Test("shared captured constants preserve exact wire values and deep clone isolation", delegate
+        {
+            World world = Sample(); SnapshotBuilder builder = new SnapshotBuilder();
+            for (int index = 0; index < 2; index++)
+            {
+                Entity probe = builder.Begin("constant" + index, "native" + index, EntityKind.Object);
+                probe.Properties["bool"] = builder.B(true); probe.Properties["n"] = builder.N(7); probe.Properties["text"] = builder.S("PART"); probe.Properties["ref"] = builder.R(""); probe.Properties["scale"] = builder.V(new V3(1, 1, 1));
+                probe.Properties["precise"] = builder.N(0.123456789123); builder.Publish(world);
+            }
+            Entity first = world.Entities["constant0"], second = world.Entities["constant1"];
+            foreach (string key in new string[] { "bool", "n", "text", "ref", "scale" }) Check(object.ReferenceEquals(first.Properties[key], second.Properties[key]), "Constant was duplicated: " + key);
+            byte[] bytes = Codec.World(world); World decoded = Codec.World(bytes);
+            Check(CheckpointStore.Equal(first, decoded.Entities[first.Id]) && first.Properties["precise"].Number == 0.123456789123, "Shared capture changed exact values");
+            World copy = world.Clone(); copy.Entities[first.Id].Properties["n"].Number = 8;
+            Check(first.Properties["n"].Number == 7 && second.Properties["n"].Number == 7, "Mutable deep clone modified shared constants");
+            Entity changed = builder.Begin(first.Id, first.Key, first.Kind); changed.Properties["bool"] = builder.B(false); builder.Publish(world);
+            Check(first.Properties["bool"].Number == 1 && second.Properties["bool"].Number == 1 && world.Entities[first.Id].Properties["bool"].Number == 0, "Scratch capture modified published constants");
         });
         string testRoot = Path.GetFullPath(Path.Combine(Environment.CurrentDirectory, ".local"));
         string path = Path.GetFullPath(Path.Combine(testRoot, "tests-" + Guid.NewGuid().ToString("N")));

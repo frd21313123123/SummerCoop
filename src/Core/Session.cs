@@ -245,7 +245,7 @@ namespace SummerCoop.Core
         {
             if (Phase != SessionPhase.Playing) throw new ProtocolException("Unexpected delta");
             long baseline = -1; World delta = null;
-            Codec.Read(bytes, delegate(BinaryReader r) { baseline = r.ReadInt64(); int n = Codec.Count(r, Protocol.MaxSnapshot); byte[] data = r.ReadBytes(n); if (data.Length != n) throw new EndOfStreamException(); delta = Codec.World(data); });
+            Codec.Read(bytes, delegate(BinaryReader r) { baseline = r.ReadInt64(); int n = Codec.Count(r, Protocol.MaxSnapshot); long began = r.BaseStream.Position; if (n > r.BaseStream.Length - began) throw new EndOfStreamException(); delta = Codec.ReadWorld(r); if (r.BaseStream.Position - began != n) throw new ProtocolException("Invalid delta length"); });
             if (delta.Id != World.Id || delta.GameHash != gameHash || delta.SchemaHash != World.SchemaHash) throw new ProtocolException("Delta identity mismatch");
             if (baseline != World.Revision) { Send(transport.HostPeer, MessageKind.Resync, new byte[0], true); return; }
             CheckpointStore.ApplyDelta(World, delta, true); if (WorldReceived != null) WorldReceived(delta, false);

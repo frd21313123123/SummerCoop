@@ -23,35 +23,54 @@ namespace SummerCoop.Core
         [ThreadStatic] private static Dictionary<uint, CachedText> readTextCache;
         private sealed class CachedText { public byte[] Bytes; public string Value; }
         private static readonly UTF8Encoding StrictUtf8 = new UTF8Encoding(false, true);
+        private sealed class WriteBuffer
+        {
+            public readonly MemoryStream Stream = new MemoryStream(256);
+            public readonly BinaryWriter Writer;
+            public WriteBuffer() { Writer = new WireWriter(Stream); }
+        }
+        [ThreadStatic] private static Stack<WriteBuffer> writeBuffers;
+        private static void Store32(byte[] bytes, int offset, uint value)
+        {
+            bytes[offset] = (byte)value; bytes[offset + 1] = (byte)(value >> 8); bytes[offset + 2] = (byte)(value >> 16); bytes[offset + 3] = (byte)(value >> 24);
+        }
         public static byte[] Packet(MessageKind kind, byte[] payload)
         {
             if (payload == null || payload.Length > Protocol.MaxFrame - 15) throw new ProtocolException("Packet too large");
-            using (MemoryStream s = new MemoryStream())
-            using (BinaryWriter w = new BinaryWriter(s))
-            {
-                w.Write(Magic); w.Write((ushort)Protocol.Version); w.Write((byte)kind);
-                w.Write(payload.Length); w.Write(Crc(payload)); w.Write(payload); return s.ToArray();
-            }
+            byte[] bytes = new byte[payload.Length + 15]; Store32(bytes, 0, Magic);
+            bytes[4] = (byte)Protocol.Version; bytes[5] = (byte)(Protocol.Version >> 8); bytes[6] = (byte)kind;
+            Store32(bytes, 7, (uint)payload.Length); Store32(bytes, 11, Crc(payload)); Array.Copy(payload, 0, bytes, 15, payload.Length); return bytes;
         }
         public static Packet Open(byte[] bytes)
         {
+            MessageKind kind = Validate(bytes);
+            byte[] payload = new byte[bytes.Length - 15]; Array.Copy(bytes, 15, payload, 0, payload.Length);
+            return new Packet { Kind = kind, Payload = payload };
+        }
+        private static uint Load32(byte[] bytes, int offset)
+        {
+            return (uint)bytes[offset] | (uint)bytes[offset + 1] << 8 | (uint)bytes[offset + 2] << 16 | (uint)bytes[offset + 3] << 24;
+        }
+        public static MessageKind Validate(byte[] bytes)
+        {
             if (bytes == null || bytes.Length < 15 || bytes.Length > Protocol.MaxFrame) throw new ProtocolException("Invalid frame size");
-            using (MemoryStream s = new MemoryStream(bytes))
-            using (BinaryReader r = new BinaryReader(s))
-            {
-                if (r.ReadUInt32() != Magic || r.ReadUInt16() != Protocol.Version) throw new ProtocolException("Protocol mismatch");
-                MessageKind kind = (MessageKind)r.ReadByte();
-                if (!Enum.IsDefined(typeof(MessageKind), kind)) throw new ProtocolException("Unknown packet");
-                int n = r.ReadInt32(); uint crc = r.ReadUInt32();
-                if (n != bytes.Length - 15) throw new ProtocolException("Invalid payload length");
-                byte[] payload = r.ReadBytes(n);
-                if (Crc(payload) != crc) throw new ProtocolException("Packet checksum mismatch");
-                return new Packet { Kind = kind, Payload = payload };
-            }
+            if (Load32(bytes, 0) != Magic || (bytes[4] | bytes[5] << 8) != Protocol.Version) throw new ProtocolException("Protocol mismatch");
+            MessageKind kind = (MessageKind)bytes[6]; if (kind < MessageKind.Hello || kind > MessageKind.Resync) throw new ProtocolException("Unknown packet");
+            if (Load32(bytes, 7) != bytes.Length - 15) throw new ProtocolException("Invalid payload length");
+            if (~CrcAppend(0xffffffff, bytes, 15, bytes.Length - 15) != Load32(bytes, 11)) throw new ProtocolException("Packet checksum mismatch");
+            return kind;
         }
         public static byte[] Make(Action<BinaryWriter> write)
         {
-            using (MemoryStream s = new MemoryStream()) using (BinaryWriter w = new BinaryWriter(s)) { write(w); return s.ToArray(); }
+            if (writeBuffers == null) writeBuffers = new Stack<WriteBuffer>();
+            WriteBuffer buffer = writeBuffers.Count == 0 ? new WriteBuffer() : writeBuffers.Pop();
+            try { write(buffer.Writer); buffer.Writer.Flush(); return buffer.Stream.ToArray(); }
+            finally
+            {
+                // Returned byte arrays own their storage. Reentrant and other-thread calls get separate writers.
+                if (buffer.Stream.Capacity <= 1048576 && writeBuffers.Count < 4) { buffer.Stream.SetLength(0); buffer.Stream.Position = 0; writeBuffers.Push(buffer); }
+                else buffer.Writer.Close();
+            }
         }
         public static void Read(byte[] data, Action<BinaryReader> read)
         {
@@ -142,6 +161,7 @@ namespace SummerCoop.Core
             Entity e = new Entity { Id = Text(r), Key = Text(r), Prefab = Text(r), Parent = Text(r), Kind = (EntityKind)r.ReadByte(), Active = r.ReadBoolean(), Position = Vector(r), Rotation = Rotation(r), Velocity = Vector(r), AngularVelocity = Vector(r) };
             if (e.Id == "" || !Enum.IsDefined(typeof(EntityKind), e.Kind)) throw new ProtocolException("Invalid entity");
             int n = Count(r, Protocol.MaxProperties);
+            e.Properties = new Dictionary<string, Atom>(n, StringComparer.Ordinal);
             for (int i = 0; i < n; i++) e.Properties.Add(Text(r), Value(r));
             return e;
         }
@@ -171,16 +191,18 @@ namespace SummerCoop.Core
         {
             if (bytes == null || bytes.Length > Protocol.MaxSnapshot) throw new ProtocolException("Snapshot too large");
             World world = null;
-            Read(bytes, delegate(BinaryReader r)
-            {
+            Read(bytes, delegate(BinaryReader r) { world = ReadWorld(r); }); return world;
+        }
+        public static World ReadWorld(BinaryReader r)
+        {
                 if (r.ReadInt32() != Protocol.Version) throw new ProtocolException("Snapshot version mismatch");
-                world = new World { Id = Text(r), GameHash = Text(r), SchemaHash = Text(r), Revision = r.ReadInt64(), Money = r.ReadDouble(), SleepEpoch = r.ReadInt64() };
+                World world = new World { Id = Text(r), GameHash = Text(r), SchemaHash = Text(r), Revision = r.ReadInt64(), Money = r.ReadDouble(), SleepEpoch = r.ReadInt64() };
                 if (world.Id == "" || world.Revision < 0 || world.SleepEpoch < 0 || double.IsNaN(world.Money) || double.IsInfinity(world.Money)) throw new ProtocolException("Invalid world");
                 int n = Count(r, Protocol.MaxEntities);
                 for (int i = 0; i < n; i++) { Entity e = Entity(r); world.Entities.Add(e.Id, e); }
                 n = Count(r, Protocol.MaxPlayers);
                 for (int i = 0; i < n; i++) { Player p = Player(r); world.Players.Add(p.Id, p); }
-            }); return world;
+                return world;
         }
         public static byte[] Command(Command c)
         {

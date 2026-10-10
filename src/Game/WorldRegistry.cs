@@ -13,7 +13,7 @@ namespace SummerCoop.Game
     public sealed class ObjectBinding
     {
         public string Id, Key, Prefab = "";
-        public GameObject Object;
+        public GameObject Object; public Transform Transform;
         public Rigidbody Body;
         public Renderer[] Renderers;
         public Collider[] Colliders;
@@ -43,12 +43,36 @@ namespace SummerCoop.Game
         public readonly Dictionary<string, FsmBinding> Fsms = new Dictionary<string, FsmBinding>(StringComparer.Ordinal);
         private readonly Dictionary<GameObject, string> objectIds = new Dictionary<GameObject, string>();
         private readonly Dictionary<Fsm, FsmBinding> fsmIds = new Dictionary<Fsm, FsmBinding>();
+        private readonly Dictionary<string, List<FsmBinding>> fsmsByObject = new Dictionary<string, List<FsmBinding>>(StringComparer.Ordinal);
         private readonly Dictionary<GameObject, string> partKeys = new Dictionary<GameObject, string>();
         private readonly Dictionary<GameObject, string> sceneKeys = new Dictionary<GameObject, string>();
         private readonly Dictionary<string, int> vehicleNames = new Dictionary<string, int>(StringComparer.Ordinal);
         private readonly Dictionary<string, GameObject> prefabs = new Dictionary<string, GameObject>(StringComparer.Ordinal);
         private readonly Dictionary<string, string> itemPrefixes = new Dictionary<string, string>(StringComparer.Ordinal);
         private readonly Dictionary<string, UnityEngine.Object> assets = new Dictionary<string, UnityEngine.Object>(StringComparer.Ordinal);
+        private sealed class AssetReference { public string Name, Key; }
+        private readonly Dictionary<UnityEngine.Object, AssetReference> assetReferences = new Dictionary<UnityEngine.Object, AssetReference>();
+        private readonly Dictionary<Component, string> componentReferences = new Dictionary<Component, string>();
+        private readonly Dictionary<string, UnityEngine.Object> resolvedReferences = new Dictionary<string, UnityEngine.Object>(StringComparer.Ordinal);
+        private struct PropertyIndex : IEquatable<PropertyIndex>
+        {
+            public string Prefix, Suffix; public int First, Second;
+            public bool Equals(PropertyIndex other) { return Prefix == other.Prefix && Suffix == other.Suffix && First == other.First && Second == other.Second; }
+            public override bool Equals(object other) { return other is PropertyIndex && Equals((PropertyIndex)other); }
+            public override int GetHashCode() { return ((Prefix.GetHashCode() * 397 ^ First) * 397 ^ Second) * 397 ^ Suffix.GetHashCode(); }
+        }
+        private readonly Dictionary<PropertyIndex, string> indexedProperties = new Dictionary<PropertyIndex, string>();
+        private string Property(string prefix, int first, string suffix) { return Property(prefix, first, -1, suffix); }
+        private string Property(string prefix, int first, int second) { return Property(prefix, first, second, ""); }
+        private string Property(string prefix, int first, int second, string suffix)
+        {
+            PropertyIndex index = new PropertyIndex { Prefix = prefix, First = first, Second = second, Suffix = suffix }; string key;
+            if (indexedProperties.TryGetValue(index, out key)) return key;
+            key = prefix + first.ToString(CultureInfo.InvariantCulture) + (second < 0 ? "" : "/" + second.ToString(CultureInfo.InvariantCulture)) + suffix;
+            // Native arrays are bounded to 2048 entries; keep unusual component layouts bounded too.
+            if (indexedProperties.Count < 32768) indexedProperties.Add(index, key);
+            return key;
+        }
         private readonly Dictionary<string, long> motionSequences = new Dictionary<string, long>();
         private readonly Dictionary<string, BodyPose> motionTargets = new Dictionary<string, BodyPose>();
         private readonly Dictionary<string, BodyPose> motionPrevious = new Dictionary<string, BodyPose>();
@@ -91,18 +115,40 @@ namespace SummerCoop.Game
         }
         public void Discover(bool initial)
         {
+            foreach (object ignored in DiscoverSteps(initial)) { }
+        }
+        private IEnumerator<object> discovery;
+        public void DiscoverIncremental(bool begin)
+        {
+            if (discovery == null && begin) discovery = DiscoverSteps(false).GetEnumerator();
+            if (discovery == null) return;
+            long began = System.Diagnostics.Stopwatch.GetTimestamp();
+            do
+            {
+                if (!discovery.MoveNext()) { discovery.Dispose(); discovery = null; break; }
+            }
+            while (System.Diagnostics.Stopwatch.GetTimestamp() - began < System.Diagnostics.Stopwatch.Frequency / 1000);
+        }
+        private IEnumerable<object> DiscoverSteps(bool initial)
+        {
             PlayMakerFSM[] all = Resources.FindObjectsOfTypeAll<PlayMakerFSM>();
+            yield return null;
             HashSet<Transform> roots = new HashSet<Transform>();
             foreach (PlayMakerFSM f in all)
             {
+                yield return null;
+                if (f == null) continue;
                 if (!initial && objectIds.ContainsKey(f.gameObject)) continue;
                 string name = f.transform.root.name;
                 if ((initial || !objectIds.ContainsKey(f.gameObject)) && !PersonalObject(f.gameObject) && (f.Fsm.Initialized || name == "Spawner" || name == "Systems" || name == "Database")) roots.Add(f.transform.root);
             }
-            foreach (Rigidbody body in UnityEngine.Object.FindObjectsOfType<Rigidbody>()) if ((initial || !objectIds.ContainsKey(body.gameObject)) && !PersonalObject(body.gameObject)) roots.Add(body.transform.root);
-            foreach (PlayMakerFSM f in all) if (!f.Fsm.Initialized && roots.Contains(f.transform.root) && !PersonalObject(f.gameObject)) f.Fsm.Init(f);
+            Rigidbody[] bodies = UnityEngine.Object.FindObjectsOfType<Rigidbody>(); yield return null;
+            foreach (Rigidbody body in bodies) { yield return null; if (body != null && (initial || !objectIds.ContainsKey(body.gameObject)) && !PersonalObject(body.gameObject)) roots.Add(body.transform.root); }
+            foreach (PlayMakerFSM f in all) { yield return null; if (f != null && !f.Fsm.Initialized && roots.Contains(f.transform.root) && !PersonalObject(f.gameObject)) f.Fsm.Init(f); }
             foreach (PlayMakerFSM f in all)
             {
+                yield return null;
+                if (f == null) continue;
                 if ((!initial && fsmIds.ContainsKey(f.Fsm)) || !f.Fsm.Initialized || PersonalObject(f.gameObject)) continue;
                 FsmGameObject db = f.FsmVariables.FindFsmGameObject("db_ThisPart");
                 if (db != null && db.Value != null && f.FsmName == "Removal" && (f.gameObject.activeInHierarchy || f.gameObject.name.EndsWith("(Clone)", StringComparison.Ordinal))) partKeys[f.gameObject] = "part/" + StablePath(db.Value.transform);
@@ -122,7 +168,7 @@ namespace SummerCoop.Game
                 foreach (Transform root in roots) foreach (Transform t in root.GetComponentsInChildren<Transform>(true))
                     if (VehicleAnchor(t)) { int count; vehicleNames.TryGetValue(t.name, out count); vehicleNames[t.name] = count + 1; }
             }
-            foreach (Transform root in roots) Walk(root, initial, null);
+            foreach (Transform root in roots) if (root != null) foreach (object ignored in WalkSteps(root, initial, null)) yield return null;
             if (initial)
             {
                 foreach (Material a in Resources.FindObjectsOfTypeAll<Material>()) RegisterAsset(a);
@@ -131,6 +177,8 @@ namespace SummerCoop.Game
             }
             foreach (PlayMakerFSM f in all)
             {
+                yield return null;
+                if (f == null) continue;
                 if (fsmIds.ContainsKey(f.Fsm) || PersonalObject(f.gameObject) || !objectIds.ContainsKey(f.gameObject)) continue;
                 if (!f.Fsm.Initialized) f.Fsm.Init(f);
                 string owner = IdOf(f.gameObject); if (owner == "") continue;
@@ -138,7 +186,7 @@ namespace SummerCoop.Game
                 string key = Objects[owner].Key + "|fsm/" + f.FsmName + "/" + ordinal.ToString(CultureInfo.InvariantCulture);
                 FsmBinding binding = new FsmBinding { Id = Identity.Stable(key), Key = key, ObjectId = owner, Component = f, Variables = new VariableView(f.FsmVariables) };
                 binding.Personal = IsPersonalFsm(f);
-                DescribeRequests(binding); Fsms.Add(binding.Id, binding); fsmIds.Add(f.Fsm, binding); captureFsms.Add(binding);
+                DescribeRequests(binding); RegisterFsm(binding);
             }
             if (!host && (initial || roots.Count > 0)) DisableClientPhysics();
         }
@@ -152,7 +200,12 @@ namespace SummerCoop.Game
         }
         private void Walk(Transform t, bool initial, string forced)
         {
-            if (PersonalObject(t.gameObject)) return;
+            foreach (object ignored in WalkSteps(t, initial, forced)) { }
+        }
+        private IEnumerable<object> WalkSteps(Transform t, bool initial, string forced)
+        {
+            yield return null;
+            if (t == null || PersonalObject(t.gameObject)) yield break;
             string existing;
             if (!objectIds.TryGetValue(t.gameObject, out existing))
             {
@@ -170,7 +223,7 @@ namespace SummerCoop.Game
                     if (ItemPrefab(t.name, out prefab)) b.Prefab = prefab;
                 }
             }
-            for (int i = 0; i < t.childCount; i++) Walk(t.GetChild(i), initial, forced == null ? null : forced + "/" + Segment(t.GetChild(i)));
+            for (int i = 0; t != null && i < t.childCount; i++) foreach (object ignored in WalkSteps(t.GetChild(i), initial, forced == null ? null : forced + "/" + Segment(t.GetChild(i)))) yield return null;
         }
         private string KeyOf(Transform t)
         {
@@ -240,7 +293,7 @@ namespace SummerCoop.Game
         {
             string id = Identity.Stable(key); ObjectBinding collision;
             if (Objects.TryGetValue(id, out collision) && collision.Object != go) throw new InvalidOperationException("Ambiguous native object identity: " + key);
-            ObjectBinding b = new ObjectBinding { Id = id, Key = key, Object = go, Body = go.GetComponent<Rigidbody>(), Renderers = go.GetComponents<Renderer>(), Colliders = go.GetComponents<Collider>(), Arrays = go.GetComponents<PlayMakerArrayListProxy>(), Lights = go.GetComponents<Light>(), Audio = go.GetComponents<AudioSource>(), Mesh = go.GetComponent<MeshFilter>() };
+            ObjectBinding b = new ObjectBinding { Id = id, Key = key, Object = go, Transform = go.transform, Body = go.GetComponent<Rigidbody>(), Renderers = go.GetComponents<Renderer>(), Colliders = go.GetComponents<Collider>(), Arrays = go.GetComponents<PlayMakerArrayListProxy>(), Lights = go.GetComponents<Light>(), Audio = go.GetComponents<AudioSource>(), Mesh = go.GetComponent<MeshFilter>() };
             b.Kind = go.GetComponent<CarController>() != null || go.name == "BOAT" ? EntityKind.Vehicle : b.Body != null ? EntityKind.Rigidbody : EntityKind.Object;
             b.Empty = go.GetComponents<Component>().Length == 1;
             b.Motion = b.Body != null || b.Kind == EntityKind.Vehicle || go.GetComponent<PlayMakerFSM>() != null || go.GetComponent<Animation>() != null || go.GetComponent<Animator>() != null;
@@ -250,6 +303,13 @@ namespace SummerCoop.Game
         public GameObject ObjectOf(string id) { ObjectBinding b; return Objects.TryGetValue(id, out b) ? b.Object : null; }
         public FsmBinding Binding(Fsm fsm) { FsmBinding b; return fsmIds.TryGetValue(fsm, out b) ? b : null; }
         public FsmBinding FsmOf(string id) { FsmBinding b; return Fsms.TryGetValue(id, out b) ? b : null; }
+        private void RegisterFsm(FsmBinding binding)
+        {
+            FsmBinding existing; if (Fsms.TryGetValue(binding.Id, out existing) && existing.Component != null && existing.Component != binding.Component) throw new InvalidOperationException("Ambiguous native FSM identity: " + binding.Key);
+            Fsms[binding.Id] = binding; fsmIds[binding.Component.Fsm] = binding; captureFsms.Add(binding);
+            List<FsmBinding> owned; if (!fsmsByObject.TryGetValue(binding.ObjectId, out owned)) { owned = new List<FsmBinding>(); fsmsByObject.Add(binding.ObjectId, owned); }
+            owned.Add(binding);
+        }
         private static bool IsPersonalFsm(PlayMakerFSM f)
         {
             string path = GameProbe.PathOf(f.transform);
@@ -257,7 +317,15 @@ namespace SummerCoop.Game
         }
         private void RegisterAsset(UnityEngine.Object asset)
         {
-            string key = "asset/" + asset.GetType().FullName + "/" + asset.name; if (!assets.ContainsKey(key)) assets.Add(key, asset);
+            AssetKey(asset);
+        }
+        private string AssetKey(UnityEngine.Object asset)
+        {
+            string name = asset.name; AssetReference entry;
+            if (assetReferences.TryGetValue(asset, out entry) && entry.Name == name) return entry.Key;
+            string key = "asset/" + asset.GetType().FullName + "/" + name;
+            if (!assets.ContainsKey(key)) assets.Add(key, asset);
+            assetReferences[asset] = new AssetReference { Name = name, Key = key }; return key;
         }
         private Atom Reference(UnityEngine.Object obj)
         {
@@ -267,15 +335,21 @@ namespace SummerCoop.Game
             {
                 string id = IdOf(go ?? c.gameObject);
                 if (id == "") return null;
-                return builder.R(id + (c == null ? "" : "#" + c.GetType().FullName));
+                if (c == null) return builder.R(id);
+                string reference; if (!componentReferences.TryGetValue(c, out reference)) { reference = id + "#" + c.GetType().FullName; componentReferences.Add(c, reference); }
+                return builder.R(reference);
             }
-            RegisterAsset(obj); return builder.R("asset/" + obj.GetType().FullName + "/" + obj.name);
+            return builder.R(AssetKey(obj));
         }
         private UnityEngine.Object Resolve(string reference)
         {
             if (reference == "") return null;
             UnityEngine.Object asset; if (reference.StartsWith("asset/", StringComparison.Ordinal)) return assets.TryGetValue(reference, out asset) ? asset : null;
-            string[] parts = reference.Split('#'); GameObject go = ObjectOf(parts[0]); return parts.Length == 1 || go == null ? (UnityEngine.Object)go : go.GetComponent(parts[1]);
+            UnityEngine.Object cached; if (resolvedReferences.TryGetValue(reference, out cached) && cached != null) return cached;
+            int separator = reference.IndexOf('#'); GameObject go = ObjectOf(separator < 0 ? reference : reference.Substring(0, separator));
+            UnityEngine.Object value = separator < 0 || go == null ? (UnityEngine.Object)go : go.GetComponent(reference.Substring(separator + 1));
+            if (value != null && resolvedReferences.Count < Protocol.MaxEntities * 2) resolvedReferences[reference] = value;
+            return value;
         }
         private Atom ReadVariable(NamedVariable v)
         {
@@ -315,6 +389,8 @@ namespace SummerCoop.Game
         private int objectCursor, fsmCursor, enforceCursor;
         private float globalCaptureTime;
         private bool capturedChanges;
+        public int LastObjectVisits { get; private set; }
+        public int LastFsmVisits { get; private set; }
         private readonly SnapshotBuilder builder = new SnapshotBuilder();
         private VariableView globals;
         private readonly Dictionary<string, string> variableKeys = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -334,12 +410,14 @@ namespace SummerCoop.Game
         }
         public void CaptureIncremental(World world)
         {
+            LastObjectVisits = LastFsmVisits = 0;
             long start = System.Diagnostics.Stopwatch.GetTimestamp();
             long objectBudget = System.Diagnostics.Stopwatch.Frequency / 500;
             for (int n = 0; n < 256 && n < captureObjects.Count; n++)
             {
                 if (objectCursor >= captureObjects.Count) objectCursor = 0;
                 CaptureObject(world, captureObjects[objectCursor++], true);
+                LastObjectVisits++;
                 if (System.Diagnostics.Stopwatch.GetTimestamp() - start >= objectBudget) break;
             }
             long totalBudget = System.Diagnostics.Stopwatch.Frequency * 3 / 1000;
@@ -347,6 +425,7 @@ namespace SummerCoop.Game
             {
                 if (fsmCursor >= captureFsms.Count) fsmCursor = 0;
                 CaptureFsm(world, captureFsms[fsmCursor++], true);
+                LastFsmVisits++;
                 if (System.Diagnostics.Stopwatch.GetTimestamp() - start >= totalBudget) break;
             }
             if (Time.realtimeSinceStartup - globalCaptureTime >= 0.2f) { CaptureGlobals(world); globalCaptureTime = Time.realtimeSinceStartup; }
@@ -357,42 +436,43 @@ namespace SummerCoop.Game
                 b.Body = b.Object.GetComponent<Rigidbody>();
                 if (b.Body != null && !b.Motion) { b.Motion = true; motionObjects.Add(b); }
                 Entity previous; world.Entities.TryGetValue(b.Id, out previous);
-                Entity e = builder.Begin(b.Id, b.Key, b.Kind); e.Prefab = b.Prefab; e.Active = b.Object.activeSelf; e.Parent = IdOf(b.Object.transform.parent == null ? null : b.Object.transform.parent.gameObject);
-                e.Position = transforms || previous == null ? From(b.Object.transform.position) : previous.Position;
-                e.Rotation = transforms || previous == null ? From(b.Object.transform.rotation) : previous.Rotation;
+                Entity e = builder.Begin(b.Id, b.Key, b.Kind, previous == null ? 32 : previous.Properties.Count); e.Prefab = b.Prefab; e.Active = b.Object.activeSelf; e.Parent = IdOf(b.Transform.parent == null ? null : b.Transform.parent.gameObject);
+                e.Position = transforms || previous == null ? From(b.Transform.position) : previous.Position;
+                e.Rotation = transforms || previous == null ? From(b.Transform.rotation) : previous.Rotation;
                 if (b.Body != null) { e.Velocity = transforms || previous == null ? From(b.Body.velocity) : previous.Velocity; e.AngularVelocity = transforms || previous == null ? From(b.Body.angularVelocity) : previous.AngularVelocity; e.Properties["@body"] = builder.B(true); e.Properties["@mass"] = builder.N(b.Body.mass); e.Properties["@kinematic"] = builder.B(b.Body.isKinematic); }
-                e.Properties["@scale"] = builder.V(From(b.Object.transform.localScale));
+                e.Properties["@scale"] = builder.V(From(b.Transform.localScale));
                 e.Properties["@name"] = builder.S(b.Object.name);
                 e.Properties["@empty"] = builder.B(b.Empty);
-                e.Properties["@tag"] = builder.S(b.Object.tag);
-                e.Properties["@loose"] = builder.B(b.Body != null && (b.Object.tag == "PART" || b.Object.tag == "ITEM" || b.Object.tag == "TOOLS"));
+                Atom oldTag; string tag = previous != null && previous.Properties.TryGetValue("@tag", out oldTag) && b.Object.CompareTag(oldTag.Text) ? oldTag.Text : b.Object.tag;
+                e.Properties["@tag"] = builder.S(tag);
+                e.Properties["@loose"] = builder.B(b.Body != null && (tag == "PART" || tag == "ITEM" || tag == "TOOLS"));
                 for (int i = 0; i < b.Renderers.Length; i++) if (b.Renderers[i] != null)
                 {
-                    e.Properties["@render/" + i] = builder.B(b.Renderers[i].enabled);
+                    e.Properties[Property("@render/", i, "")] = builder.B(b.Renderers[i].enabled);
                     Material[] materials = b.Renderers[i].sharedMaterials;
                     for (int k = 0; k < materials.Length; k++) if (materials[k] != null)
                     {
-                        e.Properties["@material/" + i + "/" + k] = Reference(materials[k]);
-                        if (materials[k].HasProperty("_Color")) { Color color = materials[k].color; e.Properties["@color/" + i + "/" + k] = builder.Q(new Q4(color.r, color.g, color.b, color.a)); }
+                        e.Properties[Property("@material/", i, k)] = Reference(materials[k]);
+                        if (materials[k].HasProperty("_Color")) { Color color = materials[k].color; e.Properties[Property("@color/", i, k)] = builder.Q(new Q4(color.r, color.g, color.b, color.a)); }
                     }
                 }
-                for (int i = 0; i < b.Colliders.Length; i++) if (b.Colliders[i] != null) e.Properties["@collider/" + i] = builder.B(b.Colliders[i].enabled);
+                for (int i = 0; i < b.Colliders.Length; i++) if (b.Colliders[i] != null) e.Properties[Property("@collider/", i, "")] = builder.B(b.Colliders[i].enabled);
                 for (int i = 0; i < b.Arrays.Length; i++)
                 {
                     PlayMakerArrayListProxy list = b.Arrays[i]; if (list == null || list.arrayList == null || list.arrayList.Count > 2048) continue;
-                    string prefix = "@array/" + i + "/"; e.Properties[prefix + "count"] = builder.N(list.arrayList.Count);
-                    for (int k = 0; k < list.arrayList.Count; k++) { Atom value = ReadArrayValue(list.arrayList[k]); if (value != null) e.Properties[prefix + k] = value; }
+                    e.Properties[Property("@array/", i, "/count")] = builder.N(list.arrayList.Count);
+                    for (int k = 0; k < list.arrayList.Count; k++) { Atom value = ReadArrayValue(list.arrayList[k]); if (value != null) e.Properties[Property("@array/", i, k)] = value; }
                 }
                 Drivetrain drive = b.Object.GetComponent<Drivetrain>(); if (drive != null) { e.Properties["@rpm"] = builder.N(drive.rpm); e.Properties["@gear"] = builder.N(drive.gear); }
                 for (int i = 0; i < b.Lights.Length; i++) if (b.Lights[i] != null)
                 {
-                    Light light = b.Lights[i]; e.Properties["@light/" + i + "/on"] = builder.B(light.enabled); e.Properties["@light/" + i + "/intensity"] = builder.N(light.intensity); e.Properties["@light/" + i + "/color"] = builder.Q(new Q4(light.color.r, light.color.g, light.color.b, light.color.a));
+                    Light light = b.Lights[i]; e.Properties[Property("@light/", i, "/on")] = builder.B(light.enabled); e.Properties[Property("@light/", i, "/intensity")] = builder.N(light.intensity); e.Properties[Property("@light/", i, "/color")] = builder.Q(new Q4(light.color.r, light.color.g, light.color.b, light.color.a));
                 }
                 for (int i = 0; i < b.Audio.Length; i++) if (b.Audio[i] != null)
                 {
-                    AudioSource audio = b.Audio[i]; string prefix = "@audio/" + i + "/";
-                    e.Properties[prefix + "clip"] = Reference(audio.clip); e.Properties[prefix + "playing"] = builder.B(audio.isPlaying); e.Properties[prefix + "loop"] = builder.B(audio.loop); e.Properties[prefix + "volume"] = builder.N(audio.volume); e.Properties[prefix + "pitch"] = builder.N(audio.pitch);
-                    Atom oldTime; e.Properties[prefix + "time"] = !transforms && previous != null && previous.Properties.TryGetValue(prefix + "time", out oldTime) ? oldTime : builder.N(audio.time);
+                    AudioSource audio = b.Audio[i];
+                    e.Properties[Property("@audio/", i, "/clip")] = Reference(audio.clip); e.Properties[Property("@audio/", i, "/playing")] = builder.B(audio.isPlaying); e.Properties[Property("@audio/", i, "/loop")] = builder.B(audio.loop); e.Properties[Property("@audio/", i, "/volume")] = builder.N(audio.volume); e.Properties[Property("@audio/", i, "/pitch")] = builder.N(audio.pitch);
+                    Atom oldTime; e.Properties[Property("@audio/", i, "/time")] = !transforms && previous != null && previous.Properties.TryGetValue(Property("@audio/", i, "/time"), out oldTime) ? oldTime : builder.N(audio.time);
                 }
                 bool meshRefresh = transforms && Time.realtimeSinceStartup >= b.NextMeshCapture;
                 if (meshRefresh) b.NextMeshCapture = Time.realtimeSinceStartup + 5;
@@ -404,14 +484,15 @@ namespace SummerCoop.Game
                 if (b.Component == null) { RemoveCaptured(world, b.Id); return; }
                 b.Variables.Refresh(b.Component.FsmVariables);
                 Entity old; world.Entities.TryGetValue(b.Id, out old);
-                Entity e = builder.Begin(b.Id, b.Key, EntityKind.Fsm); e.Parent = b.ObjectId; e.Active = b.Component.enabled; e.Position = transforms || old == null ? From(b.Component.transform.position) : old.Position;
+                Entity e = builder.Begin(b.Id, b.Key, EntityKind.Fsm, old == null ? 32 : old.Properties.Count); e.Parent = b.ObjectId; e.Active = b.Component.enabled; e.Position = transforms || old == null ? From(b.Component.transform.position) : old.Position;
                 e.Properties["@state"] = builder.S(b.Component.ActiveStateName);
                 if (!b.Personal) foreach (NamedVariable v in b.Variables) { if (PersonalVariable(v.Name)) continue; Atom a = ReadVariable(v); if (a != null) e.Properties[VariableKey(v.Name)] = a; }
                 ReplaceCaptured(world, e);
         }
         private void CaptureGlobals(World world)
         {
-            Entity global = builder.Begin(GlobalId, "globals", EntityKind.Globals);
+            Entity previous; world.Entities.TryGetValue(GlobalId, out previous);
+            Entity global = builder.Begin(GlobalId, "globals", EntityKind.Globals, previous == null ? 256 : previous.Properties.Count);
             foreach (NamedVariable v in GlobalVariables()) if (!PersonalVariable(v.Name)) { Atom a = ReadVariable(v); if (a != null) global.Properties[VariableKey(v.Name)] = a; }
             global.Properties["@ambient"] = builder.Q(new Q4(RenderSettings.ambientLight.r, RenderSettings.ambientLight.g, RenderSettings.ambientLight.b, RenderSettings.ambientLight.a));
             global.Properties["@fog"] = builder.Q(new Q4(RenderSettings.fogColor.r, RenderSettings.fogColor.g, RenderSettings.fogColor.b, RenderSettings.fogColor.a)); global.Properties["@fogDensity"] = builder.N(RenderSettings.fogDensity);
@@ -431,7 +512,7 @@ namespace SummerCoop.Game
                     if (go != null && go.Value != null) AddRelated(relevant, go.Value, false);
                 }
             foreach (string id in relevant) { ObjectBinding b; if (Objects.TryGetValue(id, out b)) CaptureObject(world, b, true); }
-            foreach (FsmBinding b in captureFsms) if (relevant.Contains(b.ObjectId)) CaptureFsm(world, b, true);
+            foreach (string id in relevant) { List<FsmBinding> owned; if (fsmsByObject.TryGetValue(id, out owned)) foreach (FsmBinding b in owned) CaptureFsm(world, b, true); }
             CaptureGlobals(world);
         }
         private void AddRelated(HashSet<string> ids, GameObject go, bool descendants)
@@ -519,35 +600,35 @@ namespace SummerCoop.Game
                     if (e.Key == "__deleted") { UnityEngine.Object.Destroy(b.Object); continue; }
                     Transform parent = e.Parent == "" ? null : ObjectOf(e.Parent) == null ? null : ObjectOf(e.Parent).transform;
                     if (e.Parent != "" && parent == null) { Entity missing; throw new ProtocolException("Missing native parent for " + e.Key + ": " + (world.Entities.TryGetValue(e.Parent, out missing) ? missing.Key : e.Parent)); }
-                    if (b.Object.transform.parent != parent) { b.Object.transform.parent = parent; motionOrderDirty = true; }
-                    if (full || !motionTargets.ContainsKey(e.Id)) { b.Object.transform.position = To(e.Position); b.Object.transform.rotation = To(e.Rotation); }
-                    Atom a; if (e.Properties.TryGetValue("@scale", out a)) b.Object.transform.localScale = To(a.Vector);
+                    if (b.Transform.parent != parent) { b.Transform.parent = parent; motionOrderDirty = true; }
+                    if (full || !motionTargets.ContainsKey(e.Id)) { b.Transform.position = To(e.Position); b.Transform.rotation = To(e.Rotation); }
+                    Atom a; if (e.Properties.TryGetValue("@scale", out a)) b.Transform.localScale = To(a.Vector);
                     if (e.Properties.TryGetValue("@name", out a) && b.Object.name != a.Text) b.Object.name = a.Text;
                     if (e.Properties.TryGetValue("@tag", out a)) b.Object.tag = a.Text;
                     if (b.Object.activeSelf != e.Active) b.Object.SetActive(e.Active);
                     for (int i = 0; i < b.Renderers.Length; i++) if (b.Renderers[i] != null)
                     {
-                        if (e.Properties.TryGetValue("@render/" + i, out a)) b.Renderers[i].enabled = a.Number != 0;
+                        if (e.Properties.TryGetValue(Property("@render/", i, ""), out a)) b.Renderers[i].enabled = a.Number != 0;
                         Material[] materials = b.Renderers[i].sharedMaterials; bool changed = false;
                         for (int k = 0; k < materials.Length; k++)
                         {
-                            if (e.Properties.TryGetValue("@material/" + i + "/" + k, out a)) { Material m = Resolve(a.Text) as Material; if (m != null && materials[k] != m) { materials[k] = m; changed = true; } }
+                            if (e.Properties.TryGetValue(Property("@material/", i, k), out a)) { Material m = Resolve(a.Text) as Material; if (m != null && materials[k] != m) { materials[k] = m; changed = true; } }
                         }
                         if (changed) b.Renderers[i].sharedMaterials = materials;
-                        for (int k = 0; k < materials.Length; k++) if (e.Properties.TryGetValue("@color/" + i + "/" + k, out a) && materials[k] != null && materials[k].HasProperty("_Color"))
+                        for (int k = 0; k < materials.Length; k++) if (e.Properties.TryGetValue(Property("@color/", i, k), out a) && materials[k] != null && materials[k].HasProperty("_Color"))
                         {
                             Color color = new Color(a.Rotation.X, a.Rotation.Y, a.Rotation.Z, a.Rotation.W);
                             if (materials[k].color != color) b.Renderers[i].materials[k].color = color;
                         }
                     }
-                    for (int i = 0; i < b.Colliders.Length; i++) if (b.Colliders[i] != null && e.Properties.TryGetValue("@collider/" + i, out a)) b.Colliders[i].enabled = a.Number != 0;
+                    for (int i = 0; i < b.Colliders.Length; i++) if (b.Colliders[i] != null && e.Properties.TryGetValue(Property("@collider/", i, ""), out a)) b.Colliders[i].enabled = a.Number != 0;
                     for (int i = 0; i < b.Arrays.Length; i++)
                     {
                         if (b.Arrays[i] == null || b.Arrays[i].arrayList == null) continue;
-                        string prefix = "@array/" + i + "/"; if (!e.Properties.TryGetValue(prefix + "count", out a)) continue;
+                        if (!e.Properties.TryGetValue(Property("@array/", i, "/count"), out a)) continue;
                         int count = checked((int)a.Number); if (count < 0 || count > 2048) throw new ProtocolException("Array size out of range");
                         ArrayList list = b.Arrays[i].arrayList; while (list.Count > count) list.RemoveAt(list.Count - 1); while (list.Count < count) list.Add(null);
-                        for (int k = 0; k < count; k++) if (e.Properties.TryGetValue(prefix + k, out a)) list[k] = ReadAtom(a, list[k]);
+                        for (int k = 0; k < count; k++) if (e.Properties.TryGetValue(Property("@array/", i, k), out a)) list[k] = ReadAtom(a, list[k]);
                     }
                     b.Body = b.Object.GetComponent<Rigidbody>();
                     bool wantsBody = e.Properties.ContainsKey("@body");
@@ -563,20 +644,20 @@ namespace SummerCoop.Game
                     Drivetrain drive = b.Object.GetComponent<Drivetrain>(); if (drive != null) { if (e.Properties.TryGetValue("@rpm", out a)) drive.rpm = (float)a.Number; if (e.Properties.TryGetValue("@gear", out a)) drive.gear = checked((int)a.Number); }
                     for (int i = 0; i < b.Lights.Length; i++) if (b.Lights[i] != null)
                     {
-                        Light light = b.Lights[i]; string prefix = "@light/" + i + "/";
-                        if (e.Properties.TryGetValue(prefix + "on", out a)) light.enabled = a.Number != 0;
-                        if (e.Properties.TryGetValue(prefix + "intensity", out a)) light.intensity = (float)a.Number;
-                        if (e.Properties.TryGetValue(prefix + "color", out a)) light.color = new Color(a.Rotation.X, a.Rotation.Y, a.Rotation.Z, a.Rotation.W);
+                        Light light = b.Lights[i];
+                        if (e.Properties.TryGetValue(Property("@light/", i, "/on"), out a)) light.enabled = a.Number != 0;
+                        if (e.Properties.TryGetValue(Property("@light/", i, "/intensity"), out a)) light.intensity = (float)a.Number;
+                        if (e.Properties.TryGetValue(Property("@light/", i, "/color"), out a)) light.color = new Color(a.Rotation.X, a.Rotation.Y, a.Rotation.Z, a.Rotation.W);
                     }
                     if (!host) for (int i = 0; i < b.Audio.Length; i++) if (b.Audio[i] != null)
                     {
-                        AudioSource audio = b.Audio[i]; string prefix = "@audio/" + i + "/";
-                        if (e.Properties.TryGetValue(prefix + "clip", out a)) audio.clip = Resolve(a.Text) as AudioClip;
-                        if (e.Properties.TryGetValue(prefix + "loop", out a)) audio.loop = a.Number != 0;
-                        if (e.Properties.TryGetValue(prefix + "volume", out a)) audio.volume = (float)a.Number;
-                        if (e.Properties.TryGetValue(prefix + "pitch", out a)) audio.pitch = (float)a.Number;
-                        if (e.Properties.TryGetValue(prefix + "playing", out a)) { if (a.Number != 0 && !audio.isPlaying && audio.clip != null) audio.Play(); if (a.Number == 0 && audio.isPlaying) audio.Stop(); }
-                        if (audio.clip != null && e.Properties.TryGetValue(prefix + "time", out a) && Math.Abs(audio.time - a.Number) > 0.5 && a.Number >= 0 && a.Number < audio.clip.length) audio.time = (float)a.Number;
+                        AudioSource audio = b.Audio[i];
+                        if (e.Properties.TryGetValue(Property("@audio/", i, "/clip"), out a)) audio.clip = Resolve(a.Text) as AudioClip;
+                        if (e.Properties.TryGetValue(Property("@audio/", i, "/loop"), out a)) audio.loop = a.Number != 0;
+                        if (e.Properties.TryGetValue(Property("@audio/", i, "/volume"), out a)) audio.volume = (float)a.Number;
+                        if (e.Properties.TryGetValue(Property("@audio/", i, "/pitch"), out a)) audio.pitch = (float)a.Number;
+                        if (e.Properties.TryGetValue(Property("@audio/", i, "/playing"), out a)) { if (a.Number != 0 && !audio.isPlaying && audio.clip != null) audio.Play(); if (a.Number == 0 && audio.isPlaying) audio.Stop(); }
+                        if (audio.clip != null && e.Properties.TryGetValue(Property("@audio/", i, "/time"), out a) && Math.Abs(audio.time - a.Number) > 0.5 && a.Number >= 0 && a.Number < audio.clip.length) audio.time = (float)a.Number;
                     }
                     ApplyMesh(b, e);
                     if (!host) DisableClientPhysics(b);
@@ -656,7 +737,7 @@ namespace SummerCoop.Game
                 string key = Objects[owner].Key + "|fsm/" + f.FsmName + "/" + ordinal.ToString(CultureInfo.InvariantCulture);
                 FsmBinding b = new FsmBinding { Id = Identity.Stable(key), Key = key, ObjectId = owner, Component = f, Variables = new VariableView(f.FsmVariables) };
                 b.Personal = IsPersonalFsm(f);
-                DescribeRequests(b); Fsms[b.Id] = b; fsmIds[f.Fsm] = b; captureFsms.Add(b);
+                DescribeRequests(b); RegisterFsm(b);
             }
         }
         private void DisableClientPhysics()
@@ -684,8 +765,8 @@ namespace SummerCoop.Game
             {
                 if (b.Object == null || !b.Object.activeInHierarchy) continue;
                 BodyPose last; bool seen = motionPrevious.TryGetValue(b.Id, out last);
-                V3 position = From(b.Object.transform.position), velocity = b.Body == null ? new V3() : From(b.Body.velocity);
-                Q4 rotation = From(b.Object.transform.rotation);
+                V3 position = From(b.Transform.position), velocity = b.Body == null ? new V3() : From(b.Body.velocity);
+                Q4 rotation = From(b.Transform.rotation);
                 if (seen && position.Distance(last.Position) < 0.001f && Math.Abs(Quaternion.Dot(To(rotation), To(last.Rotation))) > 0.999999f && velocity.Distance(last.Velocity) < 0.01f) continue;
                 BodyPose pose = new BodyPose { Id = b.Id, Position = position, Rotation = rotation, Velocity = velocity }; motionPrevious[b.Id] = pose;
                 if (!seen && b.Body == null) continue;

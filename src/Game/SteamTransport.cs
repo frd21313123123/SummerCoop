@@ -117,7 +117,7 @@ namespace SummerCoop.Game
                 string peer = sender.m_SteamID.ToString(CultureInfo.InvariantCulture);
                 if (!peers.Contains(peer) || blocked.Contains(peer) || read != size || size > Protocol.MaxFrame) continue;
                 if (!reliable && size > Protocol.MaxDatagram) continue;
-                try { Codec.Open(bytes); } catch (Exception) { Disconnect(peer); continue; }
+                try { Codec.Validate(bytes); } catch (Exception) { Disconnect(peer); continue; }
                 events.Add(new TransportEvent { Kind = TransportEventKind.Data, Peer = peer, Data = bytes, Reliable = reliable });
             }
         }

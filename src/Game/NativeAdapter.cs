@@ -41,7 +41,7 @@ namespace SummerCoop.Game
                 Player p = world.Players[player]; GameObject held = registry.ObjectOf(p.Held);
                 FsmString expected = fsm.Component.FsmVariables.FindFsmString("HandChild");
                 if (held == null || expected == null || held.name != expected.Value) return "Wrong part for this attachment point";
-                if (Vector3.Distance(held.transform.position, fsm.Component.transform.position) > 0.8f) return "Move the part to the attachment point";
+                if (Vector3.Distance(player == "host" ? held.transform.position : HeldPosition(p), fsm.Component.transform.position) > 0.8f) return "Move the part to the attachment point";
                 FsmGameObject db = fsm.Component.FsmVariables.FindFsmGameObject("db_ThisPart");
                 if (db != null && db.Value != null) { PlayMakerFSM data = PlayMakerFSM.FindFsmOnGameObject(db.Value, "Data"); FsmBool installed = data == null ? null : data.FsmVariables.FindFsmBool("Installed"); if (installed != null && installed.Value) return "Part is already installed"; }
             }
@@ -49,7 +49,7 @@ namespace SummerCoop.Game
             {
                 GameObject held = registry.ObjectOf(world.Players[player].Held);
                 if (held == null || !held.name.StartsWith("wiring mess", StringComparison.OrdinalIgnoreCase)) return "Wiring tool is required";
-                if (Vector3.Distance(held.transform.position, fsm.Component.transform.position) > 0.8f) return "Move the wiring tool to the connector";
+                if (Vector3.Distance(player == "host" ? held.transform.position : HeldPosition(world.Players[player]), fsm.Component.transform.position) > 0.8f) return "Move the wiring tool to the connector";
             }
             if (c.Kind == CommandKind.Detach)
             {
@@ -112,6 +112,8 @@ namespace SummerCoop.Game
                 }
                 else if (c.Kind != CommandKind.EnterSeat)
                 {
+                    // Commands are handled before the frame tick. Use the latest accepted pose now.
+                    if ((c.Kind == CommandKind.Attach || c.Kind == CommandKind.Wire) && player != "host") MoveHeld(actor);
                     FsmBinding b = registry.FsmOf(c.Target);
                     if (c.Kind == CommandKind.Attach)
                     {
@@ -157,10 +159,7 @@ namespace SummerCoop.Game
             foreach (Player p in world.Players.Values)
             {
                 if (p.Id == "host" || p.Held == "") continue;
-                GameObject go = registry.ObjectOf(p.Held); if (go == null) continue;
-                Vector3 forward = WorldRegistry.To(p.Rotation) * Quaternion.Euler(p.Pitch, 0, 0) * Vector3.forward;
-                go.transform.position = WorldRegistry.To(p.Position) + Vector3.up * 1.35f + forward * 1.2f;
-                go.transform.rotation = WorldRegistry.To(p.Rotation);
+                MoveHeld(p);
             }
             foreach (string id in new List<string>(leases.Keys)) if (Time.realtimeSinceStartup > leases[id])
             {
@@ -168,6 +167,8 @@ namespace SummerCoop.Game
             }
             foreach (string id in new List<string>(Drivers.Keys)) if (Time.realtimeSinceStartup - Drivers[id].Updated > 0.35f) Drivers.Remove(id);
         }
+        private static Vector3 HeldPosition(Player player) { return WorldRegistry.To(player.Position) + Vector3.up * 1.35f + WorldRegistry.To(player.Rotation) * Quaternion.Euler(player.Pitch, 0, 0) * Vector3.forward * 1.2f; }
+        private void MoveHeld(Player player) { GameObject go = registry.ObjectOf(player.Held); if (go != null) { go.transform.position = HeldPosition(player); go.transform.rotation = WorldRegistry.To(player.Rotation); } }
         private static void AdvanceSleep(World world)
         {
             FsmVariables globals = FsmVariables.GlobalVariables;

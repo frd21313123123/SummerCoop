@@ -22,13 +22,17 @@ namespace SummerCoop.Game
         private Action<CommandResult> previous;
         private readonly List<double> updateTimes = new List<double>();
         private readonly List<double> frameTimes = new List<double>();
-        private readonly List<double>[] stages = { new List<double>(), new List<double>(), new List<double>(), new List<double>(), new List<double>(), new List<double>(), new List<double>(), new List<double>() };
+        private readonly List<double>[] stages = { new List<double>(), new List<double>(), new List<double>(), new List<double>(), new List<double>(), new List<double>(), new List<double>(), new List<double>(), new List<double>(), new List<double>() };
         private double frameSeconds;
         private int frames;
         private string meshOutcome = "NOT_REQUESTED", meshId, previousMeshHash;
         private Vector3 meshExpected;
         private float meshRequested;
-        private void Start() { began = Time.realtimeSinceStartup; }
+        private readonly List<string> outliers = new List<string>();
+        private int previousCollections, measuredCollections, collectionFrames;
+        private long previousHeap;
+        private int objectVisits, fsmVisits;
+        private void Start() { began = Time.realtimeSinceStartup; int limit; if (int.TryParse(CoopRuntime.Argument("--summercoop-test-fps-limit"), out limit) && limit > 0) Application.targetFrameRate = limit; }
         private void Update()
         {
             CoopRuntime r = CoopRuntime.Instance;
@@ -37,7 +41,20 @@ namespace SummerCoop.Game
             if (pair && (r.Session.World.Players.Count < 2 || r.Joining)) { joined = 0; frames = 0; frameSeconds = 0; updateTimes.Clear(); frameTimes.Clear(); foreach (List<double> values in stages) values.Clear(); return; }
             if (joined == 0) joined = Time.realtimeSinceStartup;
             if (CoopRuntime.Argument("--summercoop-test-mesh-proof") != "" && Time.realtimeSinceStartup - joined > 12) CheckMesh(r);
-            if (Time.realtimeSinceStartup - joined > 5) { updateTimes.Add(r.LastUpdateMilliseconds); frameTimes.Add(Time.unscaledDeltaTime * 1000.0); for (int i = 0; i < stages.Length; i++) stages[i].Add(r.LastStages[i]); frameSeconds += Time.unscaledDeltaTime; frames++; }
+            int collections = GC.CollectionCount(0); long heap = GC.GetTotalMemory(false);
+            if (Time.realtimeSinceStartup - joined > 5)
+            {
+                updateTimes.Add(r.LastUpdateMilliseconds); frameTimes.Add(Time.unscaledDeltaTime * 1000.0); for (int i = 0; i < stages.Length; i++) stages[i].Add(r.LastStages[i]); frameSeconds += Time.unscaledDeltaTime; frames++;
+                if (collections > previousCollections) { measuredCollections += collections - previousCollections; collectionFrames++; }
+                objectVisits += r.Registry.LastObjectVisits; fsmVisits += r.Registry.LastFsmVisits;
+                if ((Time.unscaledDeltaTime > 0.05f || r.LastUpdateMilliseconds > 50 || collections > previousCollections) && outliers.Count < 256)
+                {
+                    string line = "t=" + (Time.realtimeSinceStartup - joined).ToString("F2", System.Globalization.CultureInfo.InvariantCulture) + " frame=" + (Time.unscaledDeltaTime * 1000).ToString("F2", System.Globalization.CultureInfo.InvariantCulture) + " update=" + r.LastUpdateMilliseconds.ToString("F2", System.Globalization.CultureInfo.InvariantCulture) + " gc=" + (collections - previousCollections) + " heapDelta=" + ((long)heap - previousHeap) + " stages=";
+                    foreach (double ms in r.LastStages) line += ms.ToString("F2", System.Globalization.CultureInfo.InvariantCulture) + ",";
+                    outliers.Add(line);
+                }
+            }
+            previousCollections = collections; previousHeap = heap;
             if (CoopRuntime.Argument("--summercoop-test-actions") == "yes" && !r.Session.IsHost)
             {
                 if (Time.realtimeSinceStartup - joined < 3) return;
@@ -51,6 +68,7 @@ namespace SummerCoop.Game
                 w.WriteLine("SCENE=" + Application.loadedLevelName); w.WriteLine("ROLE=" + (r.Session.IsHost ? "host" : "client"));
                 w.WriteLine("PHASE=" + r.Session.Phase); w.WriteLine("OBJECTS=" + r.Registry.Objects.Count); w.WriteLine("FSMS=" + r.Registry.Fsms.Count);
                 w.WriteLine("PLAYERS=" + r.Session.World.Players.Count); w.WriteLine("REVISION=" + r.Session.World.Revision);
+                w.WriteLine("RESOLUTION=" + Screen.width + "x" + Screen.height); w.WriteLine("TARGET_FRAME_RATE=" + Application.targetFrameRate); w.WriteLine("VSYNC=" + QualitySettings.vSyncCount);
                 w.WriteLine("SNAPSHOT_BYTES=" + r.Session.LastSnapshotBytes); w.WriteLine("SCHEMA=" + r.Registry.SchemaHash);
                 w.WriteLine("SAVE_PATH=" + r.SaveRoot);
                 w.WriteLine("NATIVE_ACTIONS=" + outcome);
@@ -60,7 +78,9 @@ namespace SummerCoop.Game
                 if (updateTimes.Count > 0) { w.WriteLine("MOD_UPDATE_P95_MS=" + updateTimes[(updateTimes.Count - 1) * 95 / 100].ToString("F2", System.Globalization.CultureInfo.InvariantCulture)); w.WriteLine("MOD_UPDATE_MAX_MS=" + updateTimes[updateTimes.Count - 1].ToString("F2", System.Globalization.CultureInfo.InvariantCulture)); }
                 frameTimes.Sort(); if (frameTimes.Count > 0) { w.WriteLine("FRAME_P95_MS=" + frameTimes[(frameTimes.Count - 1) * 95 / 100].ToString("F2", System.Globalization.CultureInfo.InvariantCulture)); w.WriteLine("FRAME_MAX_MS=" + frameTimes[frameTimes.Count - 1].ToString("F2", System.Globalization.CultureInfo.InvariantCulture)); }
                 int over50 = 0, over100 = 0; foreach (double ms in frameTimes) { if (ms > 50) over50++; if (ms > 100) over100++; } w.WriteLine("FRAMES_OVER_50_MS=" + over50); w.WriteLine("FRAMES_OVER_100_MS=" + over100); w.WriteLine("MEASURED_FRAMES=" + frames);
-                string[] names = { "NETWORK", "ADAPTER", "DISCOVER", "CAPTURE_ENFORCE", "JOURNAL", "PUBLISH", "MOTION", "SAVE" };
+                w.WriteLine("GC_COLLECTIONS=" + measuredCollections); w.WriteLine("GC_FRAMES=" + collectionFrames); w.WriteLine("MONO_USED_BYTES=" + heap); w.WriteLine("OBJECT_VISITS=" + objectVisits); w.WriteLine("FSM_VISITS=" + fsmVisits);
+                foreach (string line in outliers) w.WriteLine("OUTLIER=" + line);
+                string[] names = { "NETWORK", "ADAPTER", "DISCOVER", "CAPTURE_ENFORCE", "JOURNAL", "PUBLISH", "MOTION", "SAVE", "MOTION_CAPTURE", "MOTION_SEND" };
                 for (int i = 0; i < stages.Length; i++) { List<double> values = stages[i]; values.Sort(); if (values.Count > 0) w.WriteLine(names[i] + "_P95_MAX_MS=" + values[(values.Count - 1) * 95 / 100].ToString("F2", System.Globalization.CultureInfo.InvariantCulture) + "," + values[values.Count - 1].ToString("F2", System.Globalization.CultureInfo.InvariantCulture)); }
                 int missing = 0, missingActive = 0, mismatched = 0, dynamic = 0;
                 foreach (Entity e in r.Session.World.Entities.Values)
@@ -90,7 +110,7 @@ namespace SummerCoop.Game
                         if (binding.Mesh == null || binding.Mesh.sharedMesh == null || !binding.Mesh.sharedMesh.isReadable || binding.Mesh.sharedMesh.vertexCount == 0 || !runtime.Session.World.Entities.TryGetValue(binding.Id, out entity) || !entity.Properties.TryGetValue("@mesh/hash", out hash)) continue;
                         meshId = binding.Id; previousMeshHash = hash.Text;
                         Mesh mesh = binding.Mesh.mesh; Vector3[] vertices = mesh.vertices; vertices[0].x += 0.0001f; meshExpected = vertices[0]; mesh.vertices = vertices; mesh.RecalculateBounds(); binding.NextMeshCapture = 0;
-                        File.WriteAllBytes(path, Codec.Make(delegate(BinaryWriter writer) { Codec.Text(writer, meshId); Codec.Text(writer, previousMeshHash); Codec.Vector(writer, WorldRegistry.From(meshExpected)); }));
+                        AtomicFile.Write(path, Codec.Make(delegate(BinaryWriter writer) { Codec.Text(writer, meshId); Codec.Text(writer, previousMeshHash); Codec.Vector(writer, WorldRegistry.From(meshExpected)); }));
                         meshRequested = Time.realtimeSinceStartup; meshOutcome = "WAITING"; break;
                     }
                     if (meshId == null) meshOutcome = "FAIL: readable replicated mesh not found";

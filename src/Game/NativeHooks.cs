@@ -11,6 +11,8 @@ namespace SummerCoop.Game
     {
         private static HarmonyInstance harmony;
         public static bool Saving, Replaying;
+        // Refreshed by the session lifecycle: 0 native execution, 1 join barrier, 2 client filtering.
+        public static int UpdateMode;
         private static readonly FieldInfo Pending = typeof(Fsm).GetField("switchToState", BindingFlags.Instance | BindingFlags.NonPublic);
         private static readonly Dictionary<FsmState, bool> StateSafety = new Dictionary<FsmState, bool>();
         private static readonly HashSet<string> Safe = new HashSet<string>(StringComparer.Ordinal)
@@ -59,10 +61,9 @@ namespace SummerCoop.Game
         }
         public static bool UpdatePrefix(Fsm __instance, FsmState state)
         {
+            if (UpdateMode == 0 || Replaying) return true;
+            if (UpdateMode == 1) return false;
             CoopRuntime r = CoopRuntime.Instance;
-            if (r == null || !r.Active || r.Registry == null || Replaying) return true;
-            if (r.Joining) return false;
-            if (r.Session.IsHost) return true;
             FsmBinding b = r.Registry.Binding(__instance);
             return b == null || b.Personal || (b.Requests.Count > 0 && SafeState(state));
         }
@@ -93,6 +94,6 @@ namespace SummerCoop.Game
             else return true;
             __instance.store.Value = value * __instance.multiplier.Value; return false;
         }
-        public static void Uninstall() { if (harmony != null) { harmony.UnpatchAll("summercoop.native.v1"); harmony = null; } StateSafety.Clear(); }
+        public static void Uninstall() { if (harmony != null) { harmony.UnpatchAll("summercoop.native.v1"); harmony = null; } UpdateMode = 0; StateSafety.Clear(); }
     }
 }
