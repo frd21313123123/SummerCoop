@@ -1,4 +1,4 @@
-param([string]$Run = ('pair-' + (Get-Date -Format 'yyyyMMdd-HHmmss')), [int]$Port = 27942, [switch]$Actions, [int]$Duration = 20, [switch]$MeshProof, [int]$Width = 640, [int]$Height = 480, [int]$FrameLimit = -1, [switch]$HostOnly, [switch]$NativeBaseline, [switch]$ImportSave, [switch]$AllocationProbe)
+param([string]$Run = ('pair-' + (Get-Date -Format 'yyyyMMdd-HHmmss')), [int]$Port = 27942, [switch]$Actions, [int]$Duration = 20, [switch]$MeshProof, [int]$Width = 640, [int]$Height = 480, [int]$FrameLimit = -1, [switch]$HostOnly, [switch]$NativeBaseline, [switch]$ImportSave, [switch]$AllocationProbe, [switch]$CorePeer, [string]$HostSaveDirectory)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $localDir = Join-Path $root '.local'
@@ -6,7 +6,27 @@ if ($Run -notmatch '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$') { throw 'Run must be a si
 foreach ($role in @('host','client')) { if (Test-Path -LiteralPath (Join-Path $localDir ($Run + '-' + $role))) { throw 'Choose a fresh Run name: a previous profile already exists.' } }
 if ($Width -lt 640 -or $Height -lt 480 -or $Width -gt 7680 -or $Height -gt 4320) { throw 'Invalid test resolution.' }
 if ($NativeBaseline -and (!$HostOnly -or $Actions -or $MeshProof)) { throw 'NativeBaseline requires HostOnly and cannot run multiplayer actions.' }
-$testRoles = if ($HostOnly) { @('host') } else { @('host','client') }
+if ($CorePeer -and ($HostOnly -or $NativeBaseline -or $Actions -or $MeshProof)) { throw 'CorePeer measures host network load only; use a normal pair for native actions and mesh proof.' }
+if ($HostSaveDirectory) {
+    if ($ImportSave -or $NativeBaseline) { throw 'HostSaveDirectory requires its own copied SummerCoop checkpoint and cannot use ImportSave or NativeBaseline.' }
+    $HostSaveDirectory = (Resolve-Path -LiteralPath $HostSaveDirectory).Path
+    if (!(Test-Path -LiteralPath (Join-Path $HostSaveDirectory 'world.scw'))) { throw 'The supplied source must contain a migrated SummerCoop checkpoint.' }
+}
+$corePeerExe = Join-Path $root 'build\SummerCoop.CorePeer.exe'
+if ($CorePeer -and !(Test-Path -LiteralPath $corePeerExe)) { throw 'Compile tools/CorePeer.cs against build/SummerCoop.Core.dll first.' }
+$corePidFile = Join-Path $localDir 'pair-core.pid'
+if (Test-Path -LiteralPath $corePidFile) {
+    $oldCorePeer = Get-Process -Id ([int](Get-Content -LiteralPath $corePidFile)) -ErrorAction SilentlyContinue
+    if ($oldCorePeer -and $oldCorePeer.Path -eq $corePeerExe) { Stop-Process -Id $oldCorePeer.Id; $oldCorePeer.WaitForExit() }
+}
+$testRoles = if ($HostOnly -or $CorePeer) { @('host') } else { @('host','client') }
+if ($HostOnly -or $CorePeer) {
+    $clientPidFile = Join-Path $localDir 'pair-client.pid'
+    if (Test-Path -LiteralPath $clientPidFile) {
+        $oldClient = Get-Process -Id ([int](Get-Content -LiteralPath $clientPidFile)) -ErrorAction SilentlyContinue
+        if ($oldClient -and $oldClient.Path -eq (Join-Path $localDir 'game-client\mysummercar.exe')) { Stop-Process -Id $oldClient.Id; $oldClient.WaitForExit() }
+    }
+}
 foreach ($role in $testRoles) {
     $folder = if ($role -eq 'host') { 'game' } else { 'game-client' }
     $gameDir = Join-Path $localDir $folder
@@ -19,6 +39,11 @@ foreach ($role in $testRoles) {
     Copy-Item -LiteralPath (Join-Path $root 'build\SummerCoop.dll') -Destination (Join-Path $gameDir 'Mods\SummerCoop.dll') -Force
     Copy-Item -LiteralPath (Join-Path $root 'build\SummerCoop.Core.dll') -Destination (Join-Path $gameDir 'Mods\References\SummerCoop.Core.dll') -Force
     $profile = Join-Path $localDir ($Run + '-' + $role)
+    if ($role -eq 'host' -and $HostSaveDirectory) {
+        $copiedWorld = Join-Path $profile 'world'
+        New-Item -ItemType Directory -Path $copiedWorld -Force | Out-Null
+        Get-ChildItem -LiteralPath $HostSaveDirectory -File | Copy-Item -Destination $copiedWorld
+    }
     $report = Join-Path $localDir ($Run + '-' + $role + '-report.txt')
     $log = Join-Path $gameDir ($Run + '-' + $role + '-log.txt')
     $connection = if ($role -eq 'host') { '--summercoop-host-lan ' + $Port } else { '--summercoop-join-lan 127.0.0.1 --summercoop-port ' + $Port }
@@ -43,4 +68,10 @@ foreach ($role in $testRoles) {
         } while (!$listenerReady -and (Get-Date) -lt $listenDeadline)
         if (!$listenerReady) { throw 'Test host has not opened its port; inspect its log before retrying.' }
     }
+}
+if ($CorePeer) {
+    $coreArguments = '"' + (Join-Path $localDir ($Run + '-host')) + '" ' + $Port + ' ' + ($Duration + 20)
+    $coreProcess = Start-Process -FilePath $corePeerExe -WorkingDirectory (Join-Path $root 'build') -ArgumentList $coreArguments -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $localDir ($Run + '-core.log')) -RedirectStandardError (Join-Path $localDir ($Run + '-core-errors.log'))
+    $coreProcess.Id | Set-Content -LiteralPath $corePidFile
+    Write-Output ('Core peer PID ' + $coreProcess.Id)
 }

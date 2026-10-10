@@ -208,8 +208,8 @@ namespace SummerCoop.Core
         }
         public World Recover()
         {
-            World world = LoadCheckpoint(Path.Combine(directory, "world.scw"));
-            if (world == null) world = LoadCheckpoint(Path.Combine(directory, "world.scw.bak"));
+            World world = LoadCheckpoint(Path.Combine(directory, "world.scw"), ImmutableEntities);
+            if (world == null) world = LoadCheckpoint(Path.Combine(directory, "world.scw.bak"), ImmutableEntities);
             if (world == null) return null;
             string journal = Path.Combine(directory, "world.scj");
             if (File.Exists(journal))
@@ -234,14 +234,14 @@ namespace SummerCoop.Core
             }
             baseline = ImmutableEntities ? world.ReferenceSnapshot() : world.Clone(); journalBaseline = ImmutableEntities ? baseline.ReferenceSnapshot() : null; return world;
         }
-        private static World LoadCheckpoint(string path)
+        private static World LoadCheckpoint(string path, bool immutable)
         {
             if (!File.Exists(path)) return null;
             try
             {
                 using (FileStream file = File.OpenRead(path)) using (BinaryReader r = new BinaryReader(file))
                 {
-                    byte[] bytes; if (!TryRecord(r, out bytes) || file.Position != file.Length) return null; return Codec.World(bytes);
+                    byte[] bytes; if (!TryRecord(r, out bytes) || file.Position != file.Length) return null; return immutable ? Codec.ImmutableWorld(bytes) : Codec.World(bytes);
                 }
             }
             catch (Exception e) { if (e is IOException || e is ArgumentException) return null; throw; }

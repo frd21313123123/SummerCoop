@@ -59,6 +59,31 @@ internal static class TestRunner
     private static Command Cmd(long sequence, CommandKind kind, string target) { return new Command { Sequence = sequence, Kind = kind, Target = target }; }
     private static void OptimizationTests()
     {
+        Test("immutable decoding shares bounded constants, preserves IEEE bits and isolates mutable callers", delegate
+        {
+            World source = Sample(); Entity part = source.Entities["part"];
+            double minusZero = BitConverter.Int64BitsToDouble(long.MinValue); float negativeZero = BitConverter.ToSingle(new byte[] { 0, 0, 0, 128 }, 0);
+            for (int i = -16; i <= 256; i++) { part.Properties["n/" + i] = Atom.N(i); part.Properties["copy/" + i] = Atom.N(i); }
+            part.Properties["negative-zero"] = Atom.N(minusZero); part.Properties["bool-negative-zero"] = new Atom { Kind = AtomKind.Boolean, Number = minusZero };
+            part.Properties["unit"] = Atom.V(new V3(1, 1, 1));
+            for (int signs = 0; signs < 8; signs++)
+            {
+                V3 zero = new V3((signs & 1) == 0 ? 0 : negativeZero, (signs & 2) == 0 ? 0 : negativeZero, (signs & 4) == 0 ? 0 : negativeZero);
+                part.Properties["v/" + signs] = Atom.V(zero); part.Properties["q/" + signs] = Atom.Q(new Q4(zero.X, zero.Y, zero.Z, 1));
+            }
+            byte[] bytes = Codec.World(source); World first = Codec.ImmutableWorld(bytes), second = Codec.ImmutableWorld(bytes);
+            Check(Codec.Hash(bytes) == Codec.Hash(Codec.World(first)), "Cached constants changed exact wire bits");
+            Check(object.ReferenceEquals(first.Entities["part"].Properties["n/0"], first.Entities["part"].Properties["copy/0"]), "Common constants were allocated twice");
+            foreach (string key in part.Properties.Keys) if (key != "name" && key != "socket" && key != "v")
+                Check(object.ReferenceEquals(first.Entities["part"].Properties[key], second.Entities["part"].Properties[key]), "Constant cache missed " + key);
+            World mutable = Codec.World(bytes), another = Codec.World(bytes), clone = first.Clone();
+            mutable.Entities["part"].Properties["n/0"].Number = 123; clone.Entities["part"].Properties["n/0"].Number = 456;
+            Check(another.Entities["part"].Properties["n/0"].Number == 0 && first.Entities["part"].Properties["n/0"].Number == 0 && mutable.Entities["part"].Properties["copy/0"].Number == 0, "Mutable decode or clone changed a shared constant");
+            World otherThread = null; Exception failure = null; Thread thread = new Thread(delegate() { try { otherThread = Codec.ImmutableWorld(bytes); } catch (Exception e) { failure = e; } }); thread.Start(); thread.Join();
+            if (failure != null) throw failure;
+            Check(!object.ReferenceEquals(first.Entities["part"].Properties["n/0"], otherThread.Entities["part"].Properties["n/0"]), "Threads shared mutable constant storage");
+            Check(Codec.Hash(bytes) == Codec.Hash(Codec.World(otherThread)), "Other-thread decode changed exact values");
+        });
         Test("streamed journal records preserve canonical bytes, headers and append boundaries", delegate
         {
             World world = Sample(); Entity entity = world.Entities["part"];
@@ -175,6 +200,26 @@ internal static class TestRunner
     }
     private static void ProtocolTests()
     {
+        Test("packet views decode bounded immutable slices and snapshot chunks without copying", delegate
+        {
+            Command command = Cmd(17, CommandKind.Attach, "part"); command.Argument = "Assemble";
+            byte[] frame = Codec.Packet(MessageKind.Command, Codec.Command(command)); string hash = Codec.Hash(frame); PacketView view = Codec.View(frame);
+            Check(object.ReferenceEquals(view.Bytes, frame) && view.Offset == 15 && view.Length == frame.Length - 15, "View copied its payload");
+            Check(Codec.Hash(Codec.Command(Codec.Command(view))) == Codec.Hash(Codec.Command(command)) && Codec.Hash(frame) == hash, "Slice decoding changed a command or its immutable frame");
+            Pose pose = new Pose { Id = "A", Sequence = 42, Position = new V3(1, 2, 3), Pitch = 16 };
+            Check(Codec.Pose(Codec.View(Codec.Packet(MessageKind.Pose, Codec.Pose(pose)))).Sequence == 42, "Pose slice failed");
+            CommandResult result = new CommandResult { Sequence = 8, Revision = 9, Accepted = true, Reason = "готово" };
+            Check(Codec.Result(Codec.View(Codec.Packet(MessageKind.Result, Codec.Result(result)))).Reason == result.Reason, "Result slice failed");
+            MotionFrame motion = new MotionFrame { Sequence = 4 }; motion.Bodies.Add(new BodyPose { Id = "part", Position = new V3(3, 2, 1) });
+            Check(Codec.Hash(Codec.Motion(Codec.Motion(Codec.View(Codec.Packet(MessageKind.Motion, Codec.Motion(motion)))))) == Codec.Hash(Codec.Motion(motion)), "Motion slice changed values");
+            SnapshotReceiver receiver = new SnapshotReceiver(); byte[] chunk = new byte[] { 1, 2, 3, 4 }, framed = new byte[] { 99, 1, 2, 3, 4, 88 };
+            receiver.Begin(chunk.Length, Codec.Hash(chunk)); receiver.Chunk(0, framed, 1, 4); Check(Codec.Hash(receiver.End()) == Codec.Hash(chunk), "Chunk included bytes outside its bounds");
+            Throws(delegate { Codec.Read(view, delegate(BinaryReader r) { r.ReadByte(); }); });
+            Throws(delegate { Codec.Read(frame, 14, frame.Length, delegate(BinaryReader r) { }); });
+            byte[] corrupt = (byte[])frame.Clone(); corrupt[corrupt.Length - 1] ^= 1; Throws(delegate { Codec.View(corrupt); });
+            byte[] truncated = new byte[frame.Length - 1]; Array.Copy(frame, truncated, truncated.Length); Throws(delegate { Codec.View(truncated); });
+            receiver.Begin(4, Codec.Hash(chunk)); Throws(delegate { receiver.Chunk(0, framed, 3, 4); }); receiver.Reset();
+        });
         Test("canonical snapshot / all value types / Cyrillic", delegate
         {
             World w = Sample(); byte[] a = Codec.World(w), b = Codec.World(Codec.World(a));
@@ -200,6 +245,35 @@ internal static class TestRunner
             Throws(delegate { Codec.World(bytes); });
             World missing = baseline.Clone(); missing.Entities.Clear(); Throws(delegate { Codec.Read(bytes, delegate(BinaryReader r) { Codec.ReadDelta(r, missing); }); });
             World wrong = baseline.Clone(); wrong.GameHash = "different"; Throws(delegate { Codec.Read(bytes, delegate(BinaryReader r) { Codec.ReadDelta(r, wrong); }); });
+        });
+        Test("sparse properties retain signed zero, removed keys and unchanged deformation without mutating the baseline", delegate
+        {
+            World before = Sample(); Entity part = before.Entities["part"];
+            for (int i = 0; i < 2048; i++) part.Properties["vertex/" + i] = Atom.V(new V3(i, i / 7.0f, -i));
+            double minusZero = BitConverter.Int64BitsToDouble(long.MinValue); float negativeZero = BitConverter.ToSingle(new byte[] { 0, 0, 0, 128 }, 0);
+            part.Properties["zero"] = Atom.N(minusZero); part.Properties["vector-zero"] = Atom.V(new V3(negativeZero, 1, 2));
+            World after = before.Clone(); after.Revision++; after.Entities["part"].Properties["zero"] = Atom.N(0); after.Entities["part"].Properties["vector-zero"] = Atom.V(new V3(0, 1, 2));
+            after.Entities["part"].Properties["stage"] = Atom.N(3); after.Entities["part"].Properties.Remove("name"); after.Entities["part"].Properties["added"] = Atom.S("проводка");
+            World delta = CheckpointStore.Difference(before, after, true), decoded = null;
+            byte[] bytes = Codec.Make(delegate(BinaryWriter w) { Codec.WriteDelta(w, delta, before); });
+            Codec.Read(bytes, delegate(BinaryReader r) { decoded = Codec.ReadDelta(r, before); });
+            Check(bytes.Length < Codec.World(delta).Length / 20, "A small property change repeated the deformation map");
+            Check(before.Entities["part"].Properties.ContainsKey("name") && before.Entities["part"].Properties["stage"].Number != 3, "Sparse decode mutated the baseline");
+            World replica = before.Clone(); CheckpointStore.ApplyDelta(replica, decoded, true);
+            Check(Codec.Hash(Codec.World(replica)) == Codec.Hash(Codec.World(after)), "Sparse properties lost exact wire values or a removal");
+            for (int step = 0; step < 4; step++)
+            {
+                World previous = replica.ReferenceSnapshot(); after = replica.Clone(); after.Revision++;
+                Entity changed = after.Entities["part"];
+                if (step == 0) changed.Parent = "seat";
+                if (step == 1) changed.Prefab = "prefab/changed";
+                if (step == 2) changed.Kind = EntityKind.Vehicle;
+                if (step == 3) changed.Key = "native/changed";
+                delta = CheckpointStore.Difference(previous, after, true);
+                bytes = Codec.Make(delegate(BinaryWriter w) { Codec.WriteDelta(w, delta, previous); });
+                Codec.Read(bytes, delegate(BinaryReader r) { decoded = Codec.ReadDelta(r, replica); }); CheckpointStore.ApplyDelta(replica, decoded, true);
+                Check(Codec.Hash(Codec.World(replica)) == Codec.Hash(Codec.World(after)), "Compact metadata omitted changed hierarchy, prefab, kind or key");
+            }
         });
         Test("compact deltas reproduce seeded replacement, removal, deletion and recreation sequences", delegate
         {

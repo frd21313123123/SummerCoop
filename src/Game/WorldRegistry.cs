@@ -52,8 +52,7 @@ namespace SummerCoop.Game
         private readonly Dictionary<string, GameObject> prefabs = new Dictionary<string, GameObject>(StringComparer.Ordinal);
         private readonly Dictionary<string, string> itemPrefixes = new Dictionary<string, string>(StringComparer.Ordinal);
         private readonly Dictionary<string, UnityEngine.Object> assets = new Dictionary<string, UnityEngine.Object>(StringComparer.Ordinal);
-        private sealed class AssetReference { public string Name, Key; }
-        private readonly Dictionary<UnityEngine.Object, AssetReference> assetReferences = new Dictionary<UnityEngine.Object, AssetReference>();
+        private readonly Dictionary<UnityEngine.Object, string> assetReferences = new Dictionary<UnityEngine.Object, string>();
         private readonly Dictionary<Component, string> componentReferences = new Dictionary<Component, string>();
         private readonly Dictionary<string, UnityEngine.Object> resolvedReferences = new Dictionary<string, UnityEngine.Object>(StringComparer.Ordinal);
         private struct PropertyIndex : IEquatable<PropertyIndex>
@@ -337,11 +336,14 @@ namespace SummerCoop.Game
         }
         private string AssetKey(UnityEngine.Object asset)
         {
-            string name = asset.name; AssetReference entry;
-            if (assetReferences.TryGetValue(asset, out entry) && entry.Name == name) return entry.Key;
+            string cached;
+            // A material/clip/texture keeps its resource identity when native code renames
+            // the same object. Polling Object.name allocates a string on Unity 5 each time.
+            if (assetReferences.TryGetValue(asset, out cached)) return cached;
+            string name = asset.name;
             string key = "asset/" + asset.GetType().FullName + "/" + name;
             if (!assets.ContainsKey(key)) assets.Add(key, asset);
-            assetReferences[asset] = new AssetReference { Name = name, Key = key }; return key;
+            assetReferences[asset] = key; return key;
         }
         private Atom Reference(UnityEngine.Object obj)
         {

@@ -120,19 +120,19 @@ namespace SummerCoop.Core
             }
             if (item.Kind == TransportEventKind.Disconnected) { Remove(item.Peer, item.Error); return; }
             Peer peer; if (!peers.TryGetValue(item.Peer, out peer)) throw new ProtocolException("Unadmitted connection");
-            Packet packet = Codec.Open(item.Data); peer.Seen = now;
+            PacketView packet = Codec.View(item.Data); peer.Seen = now;
             if (!item.Reliable && packet.Kind != MessageKind.Pose && packet.Kind != MessageKind.Motion) throw new ProtocolException("Unreliable control message");
-            if (packet.Kind == MessageKind.Ping) { if (packet.Payload.Length != 0) throw new ProtocolException("Invalid ping"); return; }
-            if (packet.Kind == MessageKind.Goodbye) { Remove(peer.Id, ReadText(packet.Payload)); transport.Disconnect(peer.Id); return; }
+            if (packet.Kind == MessageKind.Ping) { if (packet.Length != 0) throw new ProtocolException("Invalid ping"); return; }
+            if (packet.Kind == MessageKind.Goodbye) { Remove(peer.Id, ReadText(packet)); transport.Disconnect(peer.Id); return; }
             if (IsHost) HandleHost(peer, packet); else HandleClient(peer, packet);
         }
-        private void HandleHost(Peer p, Packet packet)
+        private void HandleHost(Peer p, PacketView packet)
         {
             if (packet.Kind == MessageKind.Hello)
             {
                 if (p.Admitted || !sceneReady) { Reject(p.Id, "Host world is not ready"); return; }
                 string mod = "", hash = "", playerName = "", password = "";
-                Codec.Read(packet.Payload, delegate(BinaryReader r) { mod = Codec.Text(r); hash = Codec.Text(r); playerName = Codec.Text(r); password = Codec.Text(r); });
+                Codec.Read(packet, delegate(BinaryReader r) { mod = Codec.Text(r); hash = Codec.Text(r); playerName = Codec.Text(r); password = Codec.Text(r); });
                 if (mod != Protocol.ModVersion || hash != gameHash) { Reject(p.Id, "Different game or mod build"); return; }
                 if (password != secret) { Reject(p.Id, "Incorrect session password"); return; }
                 if (playerName.Length == 0 || playerName.Length > 48 || World.Players.Count >= Protocol.MaxPlayers) { Reject(p.Id, "Invalid player or session full"); return; }
@@ -148,7 +148,7 @@ namespace SummerCoop.Core
             if (packet.Kind == MessageKind.Ready)
             {
                 byte stage = 0; string schema = ""; long revision = -1;
-                Codec.Read(packet.Payload, delegate(BinaryReader r) { stage = r.ReadByte(); if (stage == 1) schema = Codec.Text(r); else if (stage == 2) revision = r.ReadInt64(); else throw new ProtocolException("Unknown ready stage"); });
+                Codec.Read(packet, delegate(BinaryReader r) { stage = r.ReadByte(); if (stage == 1) schema = Codec.Text(r); else if (stage == 2) revision = r.ReadInt64(); else throw new ProtocolException("Unknown ready stage"); });
                 if (stage == 1)
                 {
                     if (!p.Loading || p.AwaitingAck || schema != World.SchemaHash) { Reject(p.Id, "Scene schema mismatch"); return; }
@@ -170,28 +170,28 @@ namespace SummerCoop.Core
                 case MessageKind.Command:
                     if (now - p.CommandWindow >= 1) { p.CommandWindow = now; p.Commands = 0; }
                     if (++p.Commands > 64) throw new ProtocolException("Command rate exceeded");
-                    Command c = Codec.Command(packet.Payload);
+                    Command c = Codec.Command(packet);
                     CommandResult result = authority.Execute(p.Id, c); World = authority.World;
                     Send(p.Id, MessageKind.Result, Codec.Result(result), true); Publish(); break;
                 case MessageKind.Pose:
-                    Pose pose = Codec.Pose(packet.Payload); pose.Id = p.Id;
+                    Pose pose = Codec.Pose(packet); pose.Id = p.Id;
                     if (authority.SetPose(p.Id, pose)) { if (PoseReceived != null) PoseReceived(pose); Broadcast(MessageKind.Pose, Codec.Pose(pose), false, p.Id); }
                     break;
                 case MessageKind.Resync:
-                    if (packet.Payload.Length != 0 || p.Transfers.Count != 0) break;
+                    if (packet.Length != 0 || p.Transfers.Count != 0) break;
                     QueueWorld(p); break;
                 default: throw new ProtocolException("Unexpected client message");
             }
         }
-        private void HandleClient(Peer p, Packet packet)
+        private void HandleClient(Peer p, PacketView packet)
         {
             if (p.Id != transport.HostPeer) throw new ProtocolException("Host identity mismatch");
-            if (packet.Kind == MessageKind.Reject) { Close(ReadText(packet.Payload)); return; }
+            if (packet.Kind == MessageKind.Reject) { Close(ReadText(packet)); return; }
             if (packet.Kind == MessageKind.Welcome)
             {
                 if (LocalId != "") throw new ProtocolException("Duplicate welcome");
                 string worldId = "", schema = "";
-                Codec.Read(packet.Payload, delegate(BinaryReader r) { LocalId = Codec.Text(r); worldId = Codec.Text(r); schema = Codec.Text(r); });
+                Codec.Read(packet, delegate(BinaryReader r) { LocalId = Codec.Text(r); worldId = Codec.Text(r); schema = Codec.Text(r); });
                 if (LocalId == "" || LocalId == "host" || worldId == "") throw new ProtocolException("Invalid assigned identity");
                 World = new World { Id = worldId, GameHash = gameHash, SchemaHash = schema }; p.Admitted = true; Phase = SessionPhase.ReceivingSave; return;
             }
@@ -199,7 +199,7 @@ namespace SummerCoop.Core
             if (packet.Kind == MessageKind.SnapshotBegin)
             {
                 if (transferActive) throw new ProtocolException("Overlapping transfers");
-                Codec.Read(packet.Payload, delegate(BinaryReader r) { receiving = (TransferKind)r.ReadByte(); if (!Enum.IsDefined(typeof(TransferKind), receiving)) throw new ProtocolException("Unknown transfer"); receiver.Begin(r.ReadInt32(), Codec.Text(r)); });
+                Codec.Read(packet, delegate(BinaryReader r) { receiving = (TransferKind)r.ReadByte(); if (!Enum.IsDefined(typeof(TransferKind), receiving)) throw new ProtocolException("Unknown transfer"); receiver.Begin(r.ReadInt32(), Codec.Text(r)); });
                 if (receiving == TransferKind.NativeSave && Phase != SessionPhase.ReceivingSave) throw new ProtocolException("Unexpected native save");
                 if (receiving != TransferKind.NativeSave && !sceneReady) throw new ProtocolException("Scene not ready");
                 transferActive = true; return;
@@ -207,31 +207,36 @@ namespace SummerCoop.Core
             if (packet.Kind == MessageKind.SnapshotChunk)
             {
                 if (!transferActive) throw new ProtocolException("No transfer");
-                Codec.Read(packet.Payload, delegate(BinaryReader r) { int offset = r.ReadInt32(), length = Codec.Count(r, Protocol.SnapshotChunk); byte[] bytes = r.ReadBytes(length); if (bytes.Length != length) throw new EndOfStreamException(); receiver.Chunk(offset, bytes); }); return;
+                Codec.Read(packet, delegate(BinaryReader r)
+                {
+                    int offset = r.ReadInt32(), length = Codec.Count(r, Protocol.SnapshotChunk);
+                    if (length > r.BaseStream.Length - r.BaseStream.Position) throw new EndOfStreamException();
+                    receiver.Chunk(offset, packet.Bytes, packet.Offset + checked((int)r.BaseStream.Position), length); r.BaseStream.Position += length;
+                }); return;
             }
             if (packet.Kind == MessageKind.SnapshotEnd)
             {
-                if (!transferActive || packet.Payload.Length != 0) throw new ProtocolException("Unexpected transfer end");
+                if (!transferActive || packet.Length != 0) throw new ProtocolException("Unexpected transfer end");
                 byte[] bytes = receiver.End(); transferActive = false;
                 if (receiving == TransferKind.NativeSave)
                 {
                     Phase = SessionPhase.Loading; if (NativeSaveReceived == null) throw new InvalidOperationException("Native load adapter missing"); NativeSaveReceived(bytes);
                 }
-                else if (receiving == TransferKind.World) { LastSnapshotBytes = bytes.Length; AcceptWorld(Codec.World(bytes)); }
+                else if (receiving == TransferKind.World) { LastSnapshotBytes = bytes.Length; AcceptWorld(Codec.ImmutableWorld(bytes)); }
                 else AcceptDelta(bytes);
                 return;
             }
-            if (packet.Kind == MessageKind.WorldDelta) { AcceptDelta(packet.Payload); return; }
+            if (packet.Kind == MessageKind.WorldDelta) { AcceptDelta(packet); return; }
             if (Phase != SessionPhase.Playing) return; // Motion may race the last reliable chunk.
             switch (packet.Kind)
             {
                 case MessageKind.Pose:
-                    Pose pose = Codec.Pose(packet.Payload); Player player;
+                    Pose pose = Codec.Pose(packet); Player player;
                     if (pose.Id == LocalId || !World.Players.TryGetValue(pose.Id, out player) || pose.Sequence <= player.LastPose) break;
                     player.Position = pose.Position; player.Rotation = pose.Rotation; player.Pitch = pose.Pitch; player.LastPose = pose.Sequence;
                     if (PoseReceived != null) PoseReceived(pose); break;
-                case MessageKind.Motion: if (MotionReceived != null) MotionReceived(Codec.Motion(packet.Payload)); break;
-                case MessageKind.Result: if (CommandCompleted != null) CommandCompleted(Codec.Result(packet.Payload)); break;
+                case MessageKind.Motion: if (MotionReceived != null) MotionReceived(Codec.Motion(packet)); break;
+                case MessageKind.Result: if (CommandCompleted != null) CommandCompleted(Codec.Result(packet)); break;
                 default: throw new ProtocolException("Unexpected host message");
             }
         }
@@ -242,11 +247,12 @@ namespace SummerCoop.Core
             if (Phase != SessionPhase.Playing) Send(transport.HostPeer, MessageKind.Ready, Codec.Make(delegate(BinaryWriter w) { w.Write((byte)2); w.Write(world.Revision); }), true);
             Phase = SessionPhase.Playing;
         }
-        private void AcceptDelta(byte[] bytes)
+        private void AcceptDelta(byte[] bytes) { AcceptDelta(new PacketView { Bytes = bytes, Offset = 0, Length = bytes.Length }); }
+        private void AcceptDelta(PacketView packet)
         {
             if (Phase != SessionPhase.Playing) throw new ProtocolException("Unexpected delta");
             long baseline = -1; World delta = null;
-            Codec.Read(bytes, delegate(BinaryReader r) { baseline = r.ReadInt64(); int n = Codec.Count(r, Protocol.MaxSnapshot); long began = r.BaseStream.Position; if (n > r.BaseStream.Length - began) throw new EndOfStreamException(); if (baseline != World.Revision) { r.BaseStream.Position += n; return; } delta = Codec.ReadDelta(r, World); if (r.BaseStream.Position - began != n) throw new ProtocolException("Invalid delta length"); });
+            Codec.Read(packet, delegate(BinaryReader r) { baseline = r.ReadInt64(); int n = Codec.Count(r, Protocol.MaxSnapshot); long began = r.BaseStream.Position; if (n > r.BaseStream.Length - began) throw new EndOfStreamException(); if (baseline != World.Revision) { r.BaseStream.Position += n; return; } delta = Codec.ReadDelta(r, World); if (r.BaseStream.Position - began != n) throw new ProtocolException("Invalid delta length"); });
             if (baseline != World.Revision) { Send(transport.HostPeer, MessageKind.Resync, new byte[0], true); return; }
             if (delta.Id != World.Id || delta.GameHash != gameHash || delta.SchemaHash != World.SchemaHash) throw new ProtocolException("Delta identity mismatch");
             CheckpointStore.ApplyDelta(World, delta, true); if (WorldReceived != null) WorldReceived(delta, false);
@@ -322,7 +328,7 @@ namespace SummerCoop.Core
             foreach (Peer p in peers.Values) if (p.Playing && p.Id != except) Send(p.Id, kind, bytes, reliable);
         }
         private void Send(string peer, MessageKind kind, byte[] bytes, bool reliable) { transport.Send(peer, Codec.Packet(kind, bytes), reliable); }
-        private static string ReadText(byte[] bytes) { string text = ""; Codec.Read(bytes, delegate(BinaryReader r) { text = Codec.Text(r); }); return text; }
+        private static string ReadText(PacketView packet) { string text = ""; Codec.Read(packet, delegate(BinaryReader r) { text = Codec.Text(r); }); return text; }
         private void Reject(string id, string reason)
         {
             Send(id, MessageKind.Reject, Codec.Make(delegate(BinaryWriter w) { Codec.Text(w, reason); }), true);

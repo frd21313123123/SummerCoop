@@ -142,7 +142,24 @@ namespace SummerCoop.Game
                 }
                 else if (!runtime.Session.IsHost && meshId == null && File.Exists(path))
                 {
-                    Codec.Read(File.ReadAllBytes(path), delegate(BinaryReader reader) { meshId = Codec.Text(reader); previousMeshHash = Codec.Text(reader); meshExpected = WorldRegistry.To(Codec.Vector(reader)); }); meshRequested = Time.realtimeSinceStartup; meshOutcome = "WAITING";
+                    byte[] proof;
+                    try
+                    {
+                        using (FileStream file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+                        {
+                            if (file.Length > 1024) throw new ProtocolException("Mesh proof is too large");
+                            proof = new byte[(int)file.Length]; int read = 0;
+                            while (read < proof.Length) { int n = file.Read(proof, read, proof.Length - read); if (n == 0) throw new EndOfStreamException(); read += n; }
+                        }
+                    }
+                    catch (IOException e)
+                    {
+                        if (e is ProtocolException) throw;
+                        if (meshRequested == 0) meshRequested = Time.realtimeSinceStartup;
+                        if (Time.realtimeSinceStartup - meshRequested > 5) throw;
+                        return;
+                    }
+                    Codec.Read(proof, delegate(BinaryReader reader) { meshId = Codec.Text(reader); previousMeshHash = Codec.Text(reader); meshExpected = WorldRegistry.To(Codec.Vector(reader)); }); meshRequested = Time.realtimeSinceStartup; meshOutcome = "WAITING";
                 }
                 if (meshId == null) return;
                 Entity current; Atom currentHash;
