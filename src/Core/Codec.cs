@@ -11,6 +11,10 @@ namespace SummerCoop.Core
     {
         public ProtocolException(string message) : base(message) { }
     }
+    internal sealed class JournalIdentityException : IOException
+    {
+        public JournalIdentityException() : base("Journal belongs to another world") { }
+    }
     public enum MessageKind : byte { Hello = 1, Welcome, Reject, SaveBundle, SnapshotBegin, SnapshotChunk, SnapshotEnd, Ready, WorldDelta, Command, Result, Pose, Motion, Goodbye, Ping, Resync }
     public sealed class Packet { public MessageKind Kind; public byte[] Payload; }
 
@@ -20,8 +24,8 @@ namespace SummerCoop.Core
         [ThreadStatic] private static byte[] textBuffer;
         [ThreadStatic] private static List<string> entityKeys;
         [ThreadStatic] private static byte[] readTextBuffer;
-        [ThreadStatic] private static Dictionary<uint, CachedText> readTextCache;
-        private sealed class CachedText { public byte[] Bytes; public string Value; }
+        [ThreadStatic] private static CachedText[] readTextCache;
+        private sealed class CachedText { public byte[] Bytes; public int Length; public string Value; }
         private static readonly UTF8Encoding StrictUtf8 = new UTF8Encoding(false, true);
         private sealed class WriteBuffer
         {
@@ -95,16 +99,19 @@ namespace SummerCoop.Core
             int offset = 0; while (offset < n) { int count = r.Read(readTextBuffer, offset, n - offset); if (count == 0) throw new EndOfStreamException(); offset += count; }
             if (n > 256) return StrictUtf8.GetString(readTextBuffer, 0, n);
             uint hash = 2166136261; for (int i = 0; i < n; i++) hash = (hash ^ readTextBuffer[i]) * 16777619;
-            if (readTextCache == null) readTextCache = new Dictionary<uint, CachedText>();
-            CachedText cached;
-            if (readTextCache.TryGetValue(hash, out cached) && cached.Bytes.Length == n)
+            if (readTextCache == null) readTextCache = new CachedText[8192];
+            int slot = (int)(hash & 8191); CachedText cached = readTextCache[slot];
+            if (cached != null && cached.Length == n)
             {
                 bool same = true; for (int i = 0; i < n; i++) if (cached.Bytes[i] != readTextBuffer[i]) { same = false; break; }
                 if (same) return cached.Value;
             }
             string value = StrictUtf8.GetString(readTextBuffer, 0, n);
-            if (readTextCache.Count >= 8192) readTextCache.Clear();
-            byte[] bytes = new byte[n]; Array.Copy(readTextBuffer, bytes, n); readTextCache[hash] = new CachedText { Bytes = bytes, Value = value }; return value;
+            // Replace only this slot. A large snapshot must not flush every hot property name.
+            // Compare bytes on hits; hash collisions never alias different strings.
+            if (cached == null) readTextCache[slot] = cached = new CachedText();
+            if (cached.Bytes == null || cached.Bytes.Length < n) cached.Bytes = new byte[n];
+            Array.Copy(readTextBuffer, cached.Bytes, n); cached.Length = n; cached.Value = value; return value;
         }
         public static int Count(BinaryReader r, int maximum)
         {
@@ -151,17 +158,39 @@ namespace SummerCoop.Core
         }
         public static void Entity(BinaryWriter w, Entity e)
         {
+            WriteEntity(w, e, false);
+        }
+        private static void WriteEntity(BinaryWriter w, Entity e, bool shareProperties)
+        {
             Text(w, e.Id); Text(w, e.Key); Text(w, e.Prefab); Text(w, e.Parent); w.Write((byte)e.Kind); w.Write(e.Active);
             Vector(w, e.Position); Rotation(w, e.Rotation); Vector(w, e.Velocity); Vector(w, e.AngularVelocity);
+            if (shareProperties) { w.Write(-1); return; }
             List<string> keys = entityKeys; if (keys == null) entityKeys = keys = new List<string>(); keys.Clear(); keys.AddRange(e.Properties.Keys); keys.Sort(StringComparer.Ordinal);
             w.Write(keys.Count); foreach (string key in keys) { Text(w, key); Value(w, e.Properties[key]); }
         }
         public static Entity Entity(BinaryReader r)
         {
-            Entity e = new Entity { Id = Text(r), Key = Text(r), Prefab = Text(r), Parent = Text(r), Kind = (EntityKind)r.ReadByte(), Active = r.ReadBoolean(), Position = Vector(r), Rotation = Rotation(r), Velocity = Vector(r), AngularVelocity = Vector(r) };
-            if (e.Id == "" || !Enum.IsDefined(typeof(EntityKind), e.Kind)) throw new ProtocolException("Invalid entity");
-            int n = Count(r, Protocol.MaxProperties);
-            e.Properties = new Dictionary<string, Atom>(n, StringComparer.Ordinal);
+            return ReadEntity(r, null);
+        }
+        private static Entity ReadEntity(BinaryReader r, World baseline)
+        {
+            string id = Text(r), key = Text(r), prefab = Text(r), parent = Text(r);
+            EntityKind kind = (EntityKind)r.ReadByte(); bool active = r.ReadBoolean();
+            V3 position = Vector(r); Q4 rotation = Rotation(r); V3 velocity = Vector(r), angularVelocity = Vector(r);
+            if (id == "" || kind < EntityKind.Object || kind > EntityKind.Globals) throw new ProtocolException("Invalid entity");
+            int n = r.ReadInt32(); Dictionary<string, Atom> properties;
+            if (n == -1)
+            {
+                Entity old;
+                if (baseline == null || key == "__deleted" || !baseline.Entities.TryGetValue(id, out old)) throw new ProtocolException("Missing delta property baseline");
+                properties = old.Properties;
+            }
+            else
+            {
+                if (n < 0 || n > Protocol.MaxProperties) throw new ProtocolException("Invalid count");
+                properties = new Dictionary<string, Atom>(n, StringComparer.Ordinal);
+            }
+            Entity e = new Entity(properties) { Id = id, Key = key, Prefab = prefab, Parent = parent, Kind = kind, Active = active, Position = position, Rotation = rotation, Velocity = velocity, AngularVelocity = angularVelocity };
             for (int i = 0; i < n; i++) e.Properties.Add(Text(r), Value(r));
             return e;
         }
@@ -181,9 +210,23 @@ namespace SummerCoop.Core
         }
         public static void WriteWorld(BinaryWriter w, World world)
         {
+            WriteWorld(w, world, null);
+        }
+        public static void WriteDelta(BinaryWriter w, World delta, World baseline)
+        {
+            if (baseline == null || delta.Id != baseline.Id || delta.GameHash != baseline.GameHash || delta.SchemaHash != baseline.SchemaHash || delta.Revision < baseline.Revision) throw new ProtocolException("Invalid delta baseline");
+            WriteWorld(w, delta, baseline);
+        }
+        private static void WriteWorld(BinaryWriter w, World world, World baseline)
+        {
                 w.Write(Protocol.Version); Text(w, world.Id); Text(w, world.GameHash); Text(w, world.SchemaHash); w.Write(world.Revision); w.Write(world.Money); w.Write(world.SleepEpoch);
                 List<string> keys = new List<string>(world.Entities.Keys); keys.Sort(StringComparer.Ordinal);
-                w.Write(keys.Count); foreach (string key in keys) Entity(w, world.Entities[key]);
+                w.Write(keys.Count); foreach (string key in keys)
+                {
+                    Entity e = world.Entities[key], old;
+                    bool share = baseline != null && e.Key != "__deleted" && baseline.Entities.TryGetValue(key, out old) && object.ReferenceEquals(e.Properties, old.Properties);
+                    WriteEntity(w, e, share);
+                }
                 keys = new List<string>(world.Players.Keys); keys.Sort(StringComparer.Ordinal);
                 w.Write(keys.Count); foreach (string key in keys) Player(w, world.Players[key]);
         }
@@ -195,11 +238,36 @@ namespace SummerCoop.Core
         }
         public static World ReadWorld(BinaryReader r)
         {
+            return ReadWorld(r, null);
+        }
+        public static World ReadDelta(BinaryReader r, World baseline)
+        {
+            if (baseline == null) throw new ArgumentNullException("baseline");
+            return ReadWorld(r, baseline);
+        }
+        private static World ReadWorld(BinaryReader r, World baseline)
+        {
+            return ReadWorld(r, baseline, false);
+        }
+        internal static World ReadJournalRecord(BinaryReader r, World baseline)
+        {
+            return ReadWorld(r, baseline, true);
+        }
+        private static World ReadWorld(BinaryReader r, World baseline, bool skipCheckpointed)
+        {
                 if (r.ReadInt32() != Protocol.Version) throw new ProtocolException("Snapshot version mismatch");
                 World world = new World { Id = Text(r), GameHash = Text(r), SchemaHash = Text(r), Revision = r.ReadInt64(), Money = r.ReadDouble(), SleepEpoch = r.ReadInt64() };
                 if (world.Id == "" || world.Revision < 0 || world.SleepEpoch < 0 || double.IsNaN(world.Money) || double.IsInfinity(world.Money)) throw new ProtocolException("Invalid world");
+                if (baseline != null && (world.Id != baseline.Id || world.GameHash != baseline.GameHash || world.SchemaHash != baseline.SchemaHash || (!skipCheckpointed && world.Revision < baseline.Revision)))
+                {
+                    if (skipCheckpointed) throw new JournalIdentityException();
+                    throw new ProtocolException("Invalid delta identity");
+                }
+                // CRC and identity are already checked. Older records are superseded by the
+                // checkpoint; their property references need not exist in the current world.
+                if (skipCheckpointed && world.Revision <= baseline.Revision) { r.BaseStream.Position = r.BaseStream.Length; return world; }
                 int n = Count(r, Protocol.MaxEntities);
-                for (int i = 0; i < n; i++) { Entity e = Entity(r); world.Entities.Add(e.Id, e); }
+                for (int i = 0; i < n; i++) { Entity e = ReadEntity(r, baseline); world.Entities.Add(e.Id, e); }
                 n = Count(r, Protocol.MaxPlayers);
                 for (int i = 0; i < n; i++) { Player p = Player(r); world.Players.Add(p.Id, p); }
                 return world;

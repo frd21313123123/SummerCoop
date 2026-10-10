@@ -42,6 +42,7 @@ namespace SummerCoop.Core
         public SessionPhase Phase { get; private set; }
         public World World { get; private set; }
         public int LastSnapshotBytes { get; private set; }
+        public long DeltaBytesSent { get; private set; }
         public Action<string> Status;
         public Action<byte[]> NativeSaveReceived;
         public Action<World, bool> WorldReceived;
@@ -245,9 +246,9 @@ namespace SummerCoop.Core
         {
             if (Phase != SessionPhase.Playing) throw new ProtocolException("Unexpected delta");
             long baseline = -1; World delta = null;
-            Codec.Read(bytes, delegate(BinaryReader r) { baseline = r.ReadInt64(); int n = Codec.Count(r, Protocol.MaxSnapshot); long began = r.BaseStream.Position; if (n > r.BaseStream.Length - began) throw new EndOfStreamException(); delta = Codec.ReadWorld(r); if (r.BaseStream.Position - began != n) throw new ProtocolException("Invalid delta length"); });
-            if (delta.Id != World.Id || delta.GameHash != gameHash || delta.SchemaHash != World.SchemaHash) throw new ProtocolException("Delta identity mismatch");
+            Codec.Read(bytes, delegate(BinaryReader r) { baseline = r.ReadInt64(); int n = Codec.Count(r, Protocol.MaxSnapshot); long began = r.BaseStream.Position; if (n > r.BaseStream.Length - began) throw new EndOfStreamException(); if (baseline != World.Revision) { r.BaseStream.Position += n; return; } delta = Codec.ReadDelta(r, World); if (r.BaseStream.Position - began != n) throw new ProtocolException("Invalid delta length"); });
             if (baseline != World.Revision) { Send(transport.HostPeer, MessageKind.Resync, new byte[0], true); return; }
+            if (delta.Id != World.Id || delta.GameHash != gameHash || delta.SchemaHash != World.SchemaHash) throw new ProtocolException("Delta identity mismatch");
             CheckpointStore.ApplyDelta(World, delta, true); if (WorldReceived != null) WorldReceived(delta, false);
         }
         public void Publish()
@@ -257,7 +258,13 @@ namespace SummerCoop.Core
             {
                 if (!p.Playing || p.Transfers.Count != 0 || p.Baseline == null || p.SentRevision == World.Revision) continue;
                 World delta = CheckpointStore.Difference(p.Baseline, World, authority.ImmutableEntities);
-                byte[] data = Codec.World(delta), payload = Codec.Make(delegate(BinaryWriter w) { w.Write(p.SentRevision); w.Write(data.Length); w.Write(data); });
+                byte[] payload = Codec.Make(delegate(BinaryWriter w)
+                {
+                    w.Write(p.SentRevision); long lengthAt = w.BaseStream.Position; w.Write(0); long began = w.BaseStream.Position;
+                    if (authority.ImmutableEntities) Codec.WriteDelta(w, delta, p.Baseline); else Codec.WriteWorld(w, delta);
+                    long end = w.BaseStream.Position; w.BaseStream.Position = lengthAt; w.Write(checked((int)(end - began))); w.BaseStream.Position = end;
+                });
+                DeltaBytesSent += payload.Length;
                 if (payload.Length <= Protocol.MaxFrame - 15) Send(p.Id, MessageKind.WorldDelta, payload, true); else Queue(p, TransferKind.Delta, payload);
                 p.SentRevision = World.Revision;
                 CheckpointStore.ApplyDelta(p.Baseline, delta, authority.ImmutableEntities);

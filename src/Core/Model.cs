@@ -77,7 +77,9 @@ namespace SummerCoop.Core
         public bool Active = true;
         public V3 Position, Velocity, AngularVelocity;
         public Q4 Rotation = Q4.Identity;
-        public Dictionary<string, Atom> Properties = new Dictionary<string, Atom>(StringComparer.Ordinal);
+        public Dictionary<string, Atom> Properties;
+        public Entity() : this(new Dictionary<string, Atom>(StringComparer.Ordinal)) { }
+        internal Entity(Dictionary<string, Atom> properties) { if (properties == null) throw new ArgumentNullException("properties"); Properties = properties; }
         public Entity Clone()
         {
             Entity e = (Entity)MemberwiseClone();

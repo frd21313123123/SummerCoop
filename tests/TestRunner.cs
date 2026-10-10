@@ -59,6 +59,62 @@ internal static class TestRunner
     private static Command Cmd(long sequence, CommandKind kind, string target) { return new Command { Sequence = sequence, Kind = kind, Target = target }; }
     private static void OptimizationTests()
     {
+        Test("streamed journal records preserve canonical bytes, headers and append boundaries", delegate
+        {
+            World world = Sample(); Entity entity = world.Entities["part"];
+            for (int i = 0; i < 128; i++) entity.Properties["mesh/" + i] = Atom.S(new string((char)('a' + i % 26), 12000));
+            byte[] expected = Codec.World(world);
+            using (MemoryStream stream = new MemoryStream())
+            {
+                stream.WriteByte(77); AtomicFile.WriteWorldRecord(stream, world); long firstEnd = stream.Position;
+                world.Revision++; world.Money = 456; AtomicFile.WriteWorldRecord(stream, world);
+                long end = stream.Position; stream.Position = 0;
+                using (BinaryReader reader = new BinaryReader(stream))
+                {
+                    Check(reader.ReadByte() == 77, "Streamed header overwrote existing records");
+                    int length = reader.ReadInt32(); uint crc = reader.ReadUInt32(); byte[] bytes = reader.ReadBytes(length);
+                    Check(length == expected.Length && crc == Codec.Crc(expected) && Convert.ToBase64String(bytes) == Convert.ToBase64String(expected) && stream.Position == firstEnd, "First streamed record differs from the previous format");
+                    length = reader.ReadInt32(); crc = reader.ReadUInt32(); bytes = reader.ReadBytes(length);
+                    Check(Codec.Crc(bytes) == crc && Codec.World(bytes).Money == 456 && stream.Position == end, "Second record has a bad boundary or checksum");
+                }
+            }
+        });
+        Test("moving captures share immutable properties without changing old snapshots", delegate
+        {
+            World world = Sample(); world.EnableChangeTracking(); SnapshotBuilder builder = new SnapshotBuilder();
+            Entity probe = builder.Begin("moving", "native-moving", EntityKind.Rigidbody);
+            probe.Properties["stage"] = builder.N(1); probe.Properties["name"] = builder.S("starter"); builder.Publish(world);
+            Entity first = world.Entities["moving"]; World baseline = world.ReferenceSnapshot();
+            probe = builder.Begin("moving", "native-moving", EntityKind.Rigidbody); probe.Position = new V3(0.1234567f, 2, 3); probe.Velocity = new V3(4, 5, 6);
+            probe.Properties["name"] = builder.S("starter"); probe.Properties["stage"] = builder.N(1); builder.Publish(world); world.Revision++;
+            Entity moved = world.Entities["moving"];
+            Check(object.ReferenceEquals(first.Properties, moved.Properties), "Movement copied unchanged property storage");
+            Check(first.Position.X == 0 && moved.Position.X == 0.1234567f && moved.Velocity.Z == 6, "Movement changed history or precision");
+            World delta = Codec.World(Codec.World(CheckpointStore.Difference(baseline, world, true)));
+            Check(delta.Entities.Count == 1 && CheckpointStore.Equal(delta.Entities["moving"], moved), "Shared properties changed delta bytes");
+            probe = builder.Begin("moving", "native-moving", EntityKind.Rigidbody); probe.Properties["stage"] = builder.N(2); builder.Publish(world);
+            Check(!object.ReferenceEquals(moved.Properties, world.Entities["moving"].Properties) && first.Properties["stage"].Number == 1 && first.Properties.ContainsKey("name"), "Changed properties mutated shared history");
+            World copy = baseline.Clone(); copy.Entities["moving"].Properties["stage"].Number = 9;
+            Check(first.Properties["stage"].Number == 1 && moved.Properties["stage"].Number == 1, "Deep clone exposed shared mutable properties");
+        });
+        Test("large text streams retain exact values through bounded cache replacement", delegate
+        {
+            byte[] bytes = Codec.Make(delegate(BinaryWriter writer)
+            {
+                for (int i = 0; i < 24000; i++) { Codec.Text(writer, "scene/объект/" + i); Codec.Text(writer, "@body"); Codec.Text(writer, i % 2 == 0 ? "costarring" : "liquid"); }
+            });
+            Codec.Read(bytes, delegate(BinaryReader reader)
+            {
+                for (int i = 0; i < 24000; i++)
+                {
+                    Check(Codec.Text(reader) == "scene/объект/" + i, "High-cardinality text aliased another value");
+                    string hot = Codec.Text(reader); Check(hot == "@body", "Recurring property name was corrupted");
+                    Check(Codec.Text(reader) == (i % 2 == 0 ? "costarring" : "liquid"), "Collision returned another string");
+                }
+            });
+            Array cache = (Array)typeof(Codec).GetField("readTextCache", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).GetValue(null);
+            Check(cache.Length == 8192, "Text cache exceeded its fixed storage bound");
+        });
         Test("allocation-free floating point writes retain all IEEE bits and the original wire format", delegate
         {
             float[] singles = { 0, BitConverter.ToSingle(new byte[] { 0, 0, 0, 128 }, 0), float.Epsilon, -float.Epsilon, float.MinValue, float.MaxValue, float.PositiveInfinity, float.NegativeInfinity, float.NaN };
@@ -124,6 +180,49 @@ internal static class TestRunner
             World w = Sample(); byte[] a = Codec.World(w), b = Codec.World(Codec.World(a));
             Check(Codec.Hash(a) == Codec.Hash(b), "Roundtrip changed world");
             Check(Codec.World(a).Entities["part"].Properties["name"].Text == "Блок двигателя", "UTF-8 failed");
+        });
+        Test("compact movement deltas retain every property and exact transform without copying the property map", delegate
+        {
+            World world = new World { Id = "compact", GameHash = "build", SchemaHash = "schema" }; world.EnableChangeTracking(); SnapshotBuilder builder = new SnapshotBuilder();
+            Entity probe = builder.Begin("moving", "native/moving", EntityKind.Rigidbody, 2048);
+            for (int i = 0; i < 2048; i++) probe.Properties["vertex/" + i] = builder.V(new V3(i, i / 3.0f, -i));
+            builder.Publish(world); World baseline = world.ReferenceSnapshot(), replica = world.Clone(); Entity old = world.Entities["moving"];
+            probe = builder.Begin(old.Id, old.Key, old.Kind, 2048); foreach (KeyValuePair<string, Atom> property in old.Properties) probe.Properties[property.Key] = property.Value;
+            probe.Parent = "parent"; probe.Active = false; probe.Position = new V3(1.234567f, float.Epsilon, -98.76f); probe.Rotation = new Q4(.1f, .2f, .3f, .9f); probe.Velocity = new V3(13, -4, 5); probe.AngularVelocity = new V3(6, 7, 8);
+            builder.Publish(world); world.Revision++;
+            World delta = CheckpointStore.Difference(baseline, world, true);
+            byte[] bytes = Codec.Make(delegate(BinaryWriter w) { Codec.WriteDelta(w, delta, baseline); }); World decoded = null;
+            Codec.Read(bytes, delegate(BinaryReader r) { decoded = Codec.ReadDelta(r, replica); });
+            Check(bytes.Length < Codec.World(delta).Length / 20, "Movement repeated the large property map");
+            Check(object.ReferenceEquals(decoded.Entities["moving"].Properties, replica.Entities["moving"].Properties), "Movement allocated a replacement property map");
+            CheckpointStore.ApplyDelta(replica, decoded, true);
+            Check(Codec.Hash(Codec.World(world)) == Codec.Hash(Codec.World(replica)), "Compact movement lost exact world values");
+            Throws(delegate { Codec.World(bytes); });
+            World missing = baseline.Clone(); missing.Entities.Clear(); Throws(delegate { Codec.Read(bytes, delegate(BinaryReader r) { Codec.ReadDelta(r, missing); }); });
+            World wrong = baseline.Clone(); wrong.GameHash = "different"; Throws(delegate { Codec.Read(bytes, delegate(BinaryReader r) { Codec.ReadDelta(r, wrong); }); });
+        });
+        Test("compact deltas reproduce seeded replacement, removal, deletion and recreation sequences", delegate
+        {
+            World world = new World { Id = "compact-replay", GameHash = "build", SchemaHash = "schema" }; world.EnableChangeTracking(); SnapshotBuilder builder = new SnapshotBuilder(); Random random = new Random(76439);
+            World baseline = world.ReferenceSnapshot(), replica = world.Clone();
+            for (int step = 0; step < 240; step++)
+            {
+                string id = "entity-" + random.Next(12); Entity old; world.Entities.TryGetValue(id, out old);
+                if (old != null && step % 7 == 0) { world.Entities.Remove(id); world.EntityChanged(id); }
+                else
+                {
+                    Entity probe = builder.Begin(id, "native/" + id, EntityKind.Object);
+                    if (old != null) foreach (KeyValuePair<string, Atom> p in old.Properties) probe.Properties[p.Key] = p.Value;
+                    if (old == null || step % 3 == 0) probe.Properties["value"] = builder.N(step + .123456789);
+                    if (step % 5 == 0) probe.Properties.Remove("value");
+                    probe.Position = new V3(step / 7.0f, -step, float.Epsilon); probe.Active = step % 2 == 0; builder.Publish(world);
+                }
+                world.Revision++; world.Money = step / 3.0; world.SleepEpoch = step / 20;
+                World delta = CheckpointStore.Difference(baseline, world, true), decoded = null;
+                byte[] bytes = Codec.Make(delegate(BinaryWriter w) { Codec.WriteDelta(w, delta, baseline); });
+                Codec.Read(bytes, delegate(BinaryReader r) { decoded = Codec.ReadDelta(r, replica); }); CheckpointStore.ApplyDelta(replica, decoded, true); CheckpointStore.ApplyDelta(baseline, delta, true);
+                Check(Codec.Hash(Codec.World(world)) == Codec.Hash(Codec.World(replica)), "Compact replica diverged at step " + step);
+            }
         });
         Test("sleep completion survives snapshots and incremental updates", delegate
         {
@@ -351,6 +450,57 @@ internal static class TestRunner
                     Check(recovered.Revision == 5 && recovered.Money == 456 && recovered.Entities["part"].Properties["stage"].Number == 4, "Durable command overtook native records");
                     store.BeginCheckpoint(world); world.Money = 432; world.Revision++; store.CommitNative(world); store.Checkpoint(world);
                     Check(new CheckpointStore(queuedPath).Recover().Money == 432 && new FileInfo(Path.Combine(queuedPath, "world.scj")).Length == 0, "Clean checkpoint lost pending native state");
+                }
+            });
+            Test("slow native journal coalesces unwritten state without losing deletions or durable commands", delegate
+            {
+                string slowPath = Path.Combine(path, "slow-background");
+                using (CheckpointStore store = new CheckpointStore(slowPath) { ImmutableEntities = true })
+                {
+                    World world = Sample(); world.EnableChangeTracking(); store.Checkpoint(world);
+                    object queue = typeof(CheckpointStore).GetField("pendingNative", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).GetValue(store);
+                    lock (queue)
+                    {
+                        for (int stage = 1; stage <= 12; stage++)
+                        {
+                            Entity next = world.Entities["part"].Clone(); next.Properties["stage"] = Atom.N(stage); world.Entities["part"] = next; world.EntityChanged("part");
+                            if (stage == 5) { Entity added = next.Clone(); added.Id = "temporary"; world.Entities[added.Id] = added; world.EntityChanged(added.Id); }
+                            if (stage == 6) { world.Entities.Remove("temporary"); world.EntityChanged("temporary"); }
+                            world.Revision++; store.CommitNative(world);
+                        }
+                        Check((int)queue.GetType().GetProperty("Count").GetValue(queue, null) == 4, "Native journal queue grew beyond its bound");
+                    }
+                    world.Money = 321; world.Revision++; store.Commit(world, "A", Cmd(1, CommandKind.Purchase, "part"));
+                    World recovered = new CheckpointStore(slowPath).Recover();
+                    Check(recovered.Revision == 13 && recovered.Money == 321 && recovered.Entities["part"].Properties["stage"].Number == 12 && !recovered.Entities.ContainsKey("temporary"), "Coalesced journal lost state or reordered a durable command");
+                }
+            });
+            Test("compact journal restores exact movement and survives a checkpoint that supersedes removed baselines", delegate
+            {
+                string compactPath = Path.Combine(path, "compact-journal"); World world = new World { Id = "journal-compact", GameHash = "build", SchemaHash = "schema" }; world.EnableChangeTracking(); SnapshotBuilder builder = new SnapshotBuilder();
+                Entity probe = builder.Begin("moving", "native/moving", EntityKind.Rigidbody, 2048);
+                for (int i = 0; i < 2048; i++) probe.Properties["vertex/" + i] = builder.V(new V3(i, i / 3.0f, -i));
+                builder.Publish(world);
+                using (CheckpointStore store = new CheckpointStore(compactPath) { ImmutableEntities = true })
+                {
+                    store.Checkpoint(world); long fullBytes = Codec.World(world).Length;
+                    for (int i = 1; i <= 10; i++)
+                    {
+                        Entity old = world.Entities["moving"]; probe = builder.Begin(old.Id, old.Key, old.Kind, 2048);
+                        foreach (KeyValuePair<string, Atom> p in old.Properties) probe.Properties[p.Key] = p.Value;
+                        probe.Position = new V3(i / 7.0f, -i, float.Epsilon); builder.Publish(world); world.Revision++; store.CommitNative(world); store.FlushNative();
+                    }
+                    World recovered = new CheckpointStore(compactPath).Recover();
+                    Check(Codec.Hash(Codec.World(world)) == Codec.Hash(Codec.World(recovered)), "Compact journal lost exact property or movement values");
+                    Check(new FileInfo(Path.Combine(compactPath, "world.scj")).Length < fullBytes, "Movement journal kept repeating the property map");
+                    world.Entities.Remove("moving"); world.EntityChanged("moving"); world.Revision++; store.CommitNative(world); store.FlushNative();
+                    store.BeginCheckpoint(world); store.FinishBackgroundCheckpoint();
+                    world.Money = 123; world.Revision++; store.CommitNative(world); store.FlushNative();
+                    recovered = new CheckpointStore(compactPath).Recover();
+                    Check(recovered.Revision == 12 && recovered.Money == 123 && recovered.Entities.Count == 0, "Superseded compact records broke checkpoint recovery");
+                    World foreign = world.Clone(); foreign.Id = "foreign";
+                    using (FileStream file = new FileStream(Path.Combine(compactPath, "world.scj"), FileMode.Append)) AtomicFile.WriteWorldRecord(file, foreign);
+                    Throws(delegate { new CheckpointStore(compactPath).Recover(); });
                 }
             });
             Test("background journal disk errors are surfaced before further durable commands", delegate

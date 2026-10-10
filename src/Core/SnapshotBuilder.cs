@@ -16,6 +16,8 @@ namespace SummerCoop.Core
         private readonly Dictionary<string, Atom>[] propertyBuffers = new Dictionary<string, Atom>[9];
         private int propertyBufferIndex;
         private int used;
+        public long SharedPropertyMaps { get; private set; }
+        public long PropertyMapEntries { get; private set; }
         public Entity Begin(string id, string key, EntityKind kind)
         {
             return Begin(id, key, kind, 32);
@@ -80,8 +82,17 @@ namespace SummerCoop.Core
             Entity previous;
             world.Entities.TryGetValue(scratch.Id, out previous);
             if (previous != null && CheckpointStore.Equal(previous, scratch)) return false;
-            Entity next = new Entity { Id = scratch.Id, Key = scratch.Key, Kind = scratch.Kind, Prefab = scratch.Prefab, Parent = scratch.Parent, Active = scratch.Active, Position = scratch.Position, Rotation = scratch.Rotation, Velocity = scratch.Velocity, AngularVelocity = scratch.AngularVelocity, Properties = new Dictionary<string, Atom>(scratch.Properties.Count, StringComparer.Ordinal) };
-            foreach (KeyValuePair<string, Atom> property in scratch.Properties)
+            bool sameProperties = previous != null && previous.Properties.Count == scratch.Properties.Count;
+            if (sameProperties) foreach (KeyValuePair<string, Atom> property in scratch.Properties)
+            {
+                Atom old;
+                if (!previous.Properties.TryGetValue(property.Key, out old) || !property.Value.Same(old)) { sameProperties = false; break; }
+            }
+            // Movement replaces the entity, but its immutable property map can remain shared.
+            // Never publish the reusable scratch dictionary.
+            Entity next = new Entity(sameProperties ? previous.Properties : new Dictionary<string, Atom>(scratch.Properties.Count, StringComparer.Ordinal)) { Id = scratch.Id, Key = scratch.Key, Kind = scratch.Kind, Prefab = scratch.Prefab, Parent = scratch.Parent, Active = scratch.Active, Position = scratch.Position, Rotation = scratch.Rotation, Velocity = scratch.Velocity, AngularVelocity = scratch.AngularVelocity };
+            if (sameProperties) SharedPropertyMaps++; else PropertyMapEntries += scratch.Properties.Count;
+            if (!sameProperties) foreach (KeyValuePair<string, Atom> property in scratch.Properties)
             {
                 Atom old;
                 next.Properties[property.Key] = previous != null && previous.Properties.TryGetValue(property.Key, out old) && property.Value.Same(old) ? old : Published(property.Value);

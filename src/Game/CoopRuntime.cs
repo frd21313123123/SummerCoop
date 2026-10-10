@@ -15,11 +15,14 @@ namespace SummerCoop.Game
     {
         public static CoopRuntime Instance { get; private set; }
         private static bool cliHandled;
+        private static readonly string[] commandLine = Environment.GetCommandLineArgs();
         public Session Session { get; private set; }
         public WorldRegistry Registry { get; private set; }
         public NativeAdapter Adapter { get; private set; }
         public bool Active { get { return Session != null && Session.Phase == SessionPhase.Playing; } }
         public bool Joining { get; private set; }
+        public bool NativeBaselineReady { get; private set; }
+        private static bool NativeBaseline { get { return Argument("--summercoop-test-native-only") == "yes" && Argument("--summercoop-test-report") != ""; } }
         private SaveIsolation saves;
         private CheckpointStore store;
         private Authority authority;
@@ -64,6 +67,7 @@ namespace SummerCoop.Game
                 root = Path.GetFullPath(profile == "" ? Path.Combine(Application.persistentDataPath, "SummerCoop") : profile);
                 saves = new SaveIsolation(root); gameHash = SaveIsolation.GameHash();
                 NativeHooks.Install();
+                if (Argument("--summercoop-test-report") != "" && Argument("--summercoop-test-import-save") == "yes") importSave = true;
                 if (SteamTransport.Available()) { username = SteamFriends.GetPersonaName(); if (username.Length > 48) username = username.Substring(0, 48); invitation = Callback<GameLobbyJoinRequested_t>.Create(OnInvite); }
                 if (cliHandled) return; cliHandled = true;
                 string port = Argument("--summercoop-host-lan");
@@ -75,7 +79,7 @@ namespace SummerCoop.Game
         }
         public static string Argument(string key)
         {
-            string[] args = Environment.GetCommandLineArgs(); int i = Array.IndexOf(args, key); return i >= 0 && i + 1 < args.Length ? args[i + 1] : "";
+            int i = Array.IndexOf(commandLine, key); return i >= 0 && i + 1 < commandLine.Length ? commandLine[i + 1] : "";
         }
         private int Port()
         {
@@ -118,7 +122,8 @@ namespace SummerCoop.Game
         public void PreLoad()
         {
             if (!awaitingScene || Application.loadedLevelName != "GAME") return;
-            ConfigureLoad(); pendingRegistry = new WorldRegistry(hostPending, gameHash); pendingRegistry.IndexScene();
+            ConfigureLoad(); if (NativeBaseline) return;
+            pendingRegistry = new WorldRegistry(hostPending, gameHash); pendingRegistry.IndexScene();
         }
         public void Loaded() { if (awaitingScene && Application.loadedLevelName == "GAME") { nativeLoaded = true; sceneBegan = Time.realtimeSinceStartup; } }
         public void Menu()
@@ -158,6 +163,11 @@ namespace SummerCoop.Game
         }
         private void FinishLoad()
         {
+            if (NativeBaseline)
+            {
+                NativeHooks.Uninstall(); awaitingScene = false; visible = false; NativeBaselineReady = true;
+                SetStatus("Диагностика нативной игры без синхронизации"); gameObject.AddComponent<IntegrationProbe>(); return;
+            }
             Registry = pendingRegistry ?? new WorldRegistry(hostPending, gameHash); pendingRegistry = null; Registry.Discover(true);
             avatars = new AvatarView();
             localPlayer = GameObject.Find("PLAYER"); localCamera = Camera.main;

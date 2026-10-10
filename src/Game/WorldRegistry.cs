@@ -27,6 +27,7 @@ namespace SummerCoop.Game
         public float NextMeshCapture;
         public Mesh CapturedMesh;
         public Vector3[] CapturedVertices;
+        public Dictionary<string, Atom> AppliedProperties;
     }
     public sealed class FsmBinding
     {
@@ -36,6 +37,7 @@ namespace SummerCoop.Game
         public HashSet<string> Requests = new HashSet<string>(StringComparer.Ordinal);
         public string WaitingState = "";
         public bool Personal;
+        public Dictionary<string, Atom> AppliedProperties;
     }
     public sealed class WorldRegistry
     {
@@ -84,6 +86,7 @@ namespace SummerCoop.Game
         public WorldRegistry(bool host, string gameHash)
         {
             this.host = host;
+            allocationProbe = CoopRuntime.Argument("--summercoop-test-allocations") == "yes";
             // Adapter schema is independent of the saved arrangement of parts and item count.
             SchemaHash = Codec.Hash(System.Text.Encoding.UTF8.GetBytes(gameHash + "/native-schema-2"));
         }
@@ -404,6 +407,21 @@ namespace SummerCoop.Game
         private bool capturedChanges;
         public int LastObjectVisits { get; private set; }
         public int LastFsmVisits { get; private set; }
+        private readonly bool allocationProbe;
+        private long allocationHeap;
+        private int allocationCollections;
+        public readonly long[] CaptureHeapIncrease = new long[3];
+        public readonly long[] CaptureHeapSamples = new long[3];
+        public long MeshBytesRead { get; private set; }
+        public long SharedPropertyMaps { get { return builder.SharedPropertyMaps; } }
+        public long PropertyMapEntries { get { return builder.PropertyMapEntries; } }
+        private void BeginAllocationProbe() { if (allocationProbe) { allocationCollections = GC.CollectionCount(0); allocationHeap = GC.GetTotalMemory(false); } }
+        private void EndAllocationProbe(int phase)
+        {
+            if (!allocationProbe || allocationCollections != GC.CollectionCount(0)) return;
+            long difference = GC.GetTotalMemory(false) - allocationHeap;
+            if (difference >= 0) { CaptureHeapIncrease[phase] += difference; CaptureHeapSamples[phase]++; }
+        }
         private readonly SnapshotBuilder builder = new SnapshotBuilder();
         private VariableView globals;
         private readonly Dictionary<string, string> variableKeys = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -426,6 +444,7 @@ namespace SummerCoop.Game
             LastObjectVisits = LastFsmVisits = 0;
             long start = System.Diagnostics.Stopwatch.GetTimestamp();
             long objectBudget = System.Diagnostics.Stopwatch.Frequency / 500;
+            BeginAllocationProbe();
             for (int n = 0; n < 256 && n < captureObjects.Count; n++)
             {
                 if (objectCursor >= captureObjects.Count) objectCursor = 0;
@@ -433,6 +452,7 @@ namespace SummerCoop.Game
                 LastObjectVisits++;
                 if (System.Diagnostics.Stopwatch.GetTimestamp() - start >= objectBudget) break;
             }
+            EndAllocationProbe(0); BeginAllocationProbe();
             long totalBudget = System.Diagnostics.Stopwatch.Frequency * 3 / 1000;
             for (int n = 0; n < 128 && n < captureFsms.Count; n++)
             {
@@ -441,7 +461,8 @@ namespace SummerCoop.Game
                 LastFsmVisits++;
                 if (System.Diagnostics.Stopwatch.GetTimestamp() - start >= totalBudget) break;
             }
-            if (Time.realtimeSinceStartup - globalCaptureTime >= 0.2f) { CaptureGlobals(world); globalCaptureTime = Time.realtimeSinceStartup; }
+            EndAllocationProbe(1);
+            if (Time.realtimeSinceStartup - globalCaptureTime >= 0.2f) { BeginAllocationProbe(); CaptureGlobals(world); EndAllocationProbe(2); globalCaptureTime = Time.realtimeSinceStartup; }
         }
         private void CaptureObject(World world, ObjectBinding b, bool transforms)
         {
@@ -552,6 +573,7 @@ namespace SummerCoop.Game
             if (!refresh && previous != null) { foreach (KeyValuePair<string, Atom> p in previous.Properties) if (p.Key.StartsWith("@mesh/", StringComparison.Ordinal)) entity.Properties[p.Key] = p.Value; return; }
             Mesh mesh = binding.Mesh.sharedMesh; if (mesh == null || !mesh.isReadable || mesh.vertexCount > 20000) return;
             Vector3[] vertices = mesh.vertices;
+            MeshBytesRead += vertices.LongLength * 12;
             bool same = binding.CapturedMesh == mesh && binding.CapturedVertices != null && binding.CapturedVertices.Length == vertices.Length && previous != null && previous.Properties.ContainsKey("@mesh/hash");
             if (same) for (int i = 0; i < vertices.Length; i++) if (vertices[i].x != binding.CapturedVertices[i].x || vertices[i].y != binding.CapturedVertices[i].y || vertices[i].z != binding.CapturedVertices[i].z) { same = false; break; }
             if (same) { foreach (KeyValuePair<string, Atom> p in previous.Properties) if (p.Key.StartsWith("@mesh/", StringComparison.Ordinal)) entity.Properties[p.Key] = p.Value; return; }
@@ -602,11 +624,11 @@ namespace SummerCoop.Game
                     string name = e.Key.Substring(e.Key.LastIndexOf('/') + 1); int bracket = name.LastIndexOf('['); if (bracket >= 0) name = name.Substring(0, bracket);
                     Add(new GameObject(name), e.Key);
                 }
-                List<Entity> ordered = new List<Entity>(world.Entities.Values);
-                Dictionary<string, int> depths = new Dictionary<string, int>(StringComparer.Ordinal);
-                foreach (Entity e in ordered) Depth(e, world, depths, new HashSet<string>(StringComparer.Ordinal));
-                ordered.Sort(delegate(Entity a, Entity b) { return depths[a.Id].CompareTo(depths[b.Id]); });
-                foreach (Entity e in ordered)
+                applyOrder.Clear(); applyDepths.Clear(); applyVisiting.Clear();
+                applyOrder.AddRange(world.Entities.Values);
+                foreach (Entity e in applyOrder) Depth(e, world, applyDepths, applyVisiting);
+                applyOrder.Sort(CompareApplyDepth);
+                foreach (Entity e in applyOrder)
                 {
                     ObjectBinding b;
                     if (!Objects.TryGetValue(e.Id, out b) || b.Object == null) continue;
@@ -615,10 +637,17 @@ namespace SummerCoop.Game
                     if (e.Parent != "" && parent == null) { Entity missing; throw new ProtocolException("Missing native parent for " + e.Key + ": " + (world.Entities.TryGetValue(e.Parent, out missing) ? missing.Key : e.Parent)); }
                     if (b.Transform.parent != parent) { b.Transform.parent = parent; motionOrderDirty = true; }
                     if (full || !motionTargets.ContainsKey(e.Id)) { b.Transform.position = To(e.Position); b.Transform.rotation = To(e.Rotation); }
+                    bool activationChanged = b.Object.activeSelf != e.Active;
+                    if (activationChanged) b.Object.SetActive(e.Active);
+                    if (!host && !full && !activationChanged && object.ReferenceEquals(b.AppliedProperties, e.Properties))
+                    {
+                        // Position-only deltas retain the exact immutable property map.
+                        // Still catch a Rigidbody recreated by native Start/OnEnable.
+                        DisableClientPhysics(b); continue;
+                    }
                     Atom a; if (e.Properties.TryGetValue("@scale", out a)) b.Transform.localScale = To(a.Vector);
                     if (e.Properties.TryGetValue("@name", out a) && b.Object.name != a.Text) b.Object.name = a.Text;
                     if (e.Properties.TryGetValue("@tag", out a)) b.Object.tag = a.Text;
-                    if (b.Object.activeSelf != e.Active) b.Object.SetActive(e.Active);
                     for (int i = 0; i < b.Renderers.Length; i++) if (b.Renderers[i] != null)
                     {
                         if (e.Properties.TryGetValue(Property("@render/", i, ""), out a)) b.Renderers[i].enabled = a.Number != 0;
@@ -674,6 +703,7 @@ namespace SummerCoop.Game
                     }
                     ApplyMesh(b, e);
                     if (!host) DisableClientPhysics(b);
+                    b.AppliedProperties = e.Properties;
                 }
                 foreach (Entity e in world.Entities.Values)
                 {
@@ -687,17 +717,24 @@ namespace SummerCoop.Game
                     }
                     FsmBinding b; if (!Fsms.TryGetValue(e.Id, out b) || b.Component == null) continue;
                     if (b.Personal) continue;
-                    if (b.Component.enabled != e.Active) b.Component.enabled = e.Active;
+                    bool enabledChanged = b.Component.enabled != e.Active;
+                    if (enabledChanged) b.Component.enabled = e.Active;
+                    if (!host && !full && !enabledChanged && object.ReferenceEquals(b.AppliedProperties, e.Properties)) continue;
                     b.Variables.Refresh(b.Component.FsmVariables);
                     foreach (NamedVariable v in b.Variables) { Atom a; if (!PersonalVariable(v.Name) && e.Properties.TryGetValue(VariableKey(v.Name), out a)) WriteVariable(v, a); }
                     // State assignment does not execute purchases, spawning, or save actions on a client.
                     Atom state; if (!host && b.Requests.Count == 0 && e.Properties.TryGetValue("@state", out state)) { FsmState s = b.Component.Fsm.GetState(state.Text); if (s != null) AssignState(b.Component.Fsm, s); }
+                    b.AppliedProperties = e.Properties;
                 }
                 FsmFloat money = FsmVariables.GlobalVariables.FindFsmFloat("PlayerMoney"); if (money != null) money.Value = (float)world.Money;
                 if (!host && full) DisableClientPhysics();
             }
-            finally { Applying = false; }
+            finally { applyOrder.Clear(); applyDepths.Clear(); applyVisiting.Clear(); Applying = false; }
         }
+        private readonly List<Entity> applyOrder = new List<Entity>();
+        private readonly Dictionary<string, int> applyDepths = new Dictionary<string, int>(StringComparer.Ordinal);
+        private readonly HashSet<string> applyVisiting = new HashSet<string>(StringComparer.Ordinal);
+        private int CompareApplyDepth(Entity a, Entity b) { return applyDepths[a.Id].CompareTo(applyDepths[b.Id]); }
         private int Depth(Entity entity, World world, Dictionary<string, int> depths, HashSet<string> visiting)
         {
             int depth;
@@ -771,9 +808,12 @@ namespace SummerCoop.Game
                 b.PhysicsDisabled = true; b.DisabledBody = b.Body;
             }
         }
+        private readonly List<MotionFrame> capturedMotion = new List<MotionFrame>();
+        private readonly List<MotionFrame> motionFramePool = new List<MotionFrame>();
+        // The caller encodes these frames immediately. Buffers are valid until the next capture.
         public List<MotionFrame> CaptureMotion()
         {
-            List<MotionFrame> frames = new List<MotionFrame>(); MotionFrame frame = null;
+            capturedMotion.Clear(); MotionFrame frame = null;
             foreach (ObjectBinding b in motionObjects)
             {
                 if (b.Object == null || !b.Object.activeInHierarchy) continue;
@@ -781,12 +821,18 @@ namespace SummerCoop.Game
                 V3 position = From(b.Transform.position), velocity = b.Body == null ? new V3() : From(b.Body.velocity);
                 Q4 rotation = From(b.Transform.rotation);
                 if (seen && position.Distance(last.Position) < 0.001f && Math.Abs(Quaternion.Dot(To(rotation), To(last.Rotation))) > 0.999999f && velocity.Distance(last.Velocity) < 0.01f) continue;
-                BodyPose pose = new BodyPose { Id = b.Id, Position = position, Rotation = rotation, Velocity = velocity }; motionPrevious[b.Id] = pose;
+                BodyPose pose = seen ? last : new BodyPose { Id = b.Id };
+                pose.Position = position; pose.Rotation = rotation; pose.Velocity = velocity; motionPrevious[b.Id] = pose;
                 if (!seen && b.Body == null) continue;
-                if (frame == null || frame.Bodies.Count == 13) { frame = new MotionFrame { Sequence = ++motionSequence }; frames.Add(frame); }
+                if (frame == null || frame.Bodies.Count == 13)
+                {
+                    int index = capturedMotion.Count;
+                    if (index == motionFramePool.Count) motionFramePool.Add(new MotionFrame());
+                    frame = motionFramePool[index]; frame.Sequence = ++motionSequence; frame.Bodies.Clear(); capturedMotion.Add(frame);
+                }
                 frame.Bodies.Add(pose);
             }
-            return frames;
+            return capturedMotion;
         }
         public void ReceiveMotion(MotionFrame frame)
         {

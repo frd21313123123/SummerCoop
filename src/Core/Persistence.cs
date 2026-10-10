@@ -27,13 +27,34 @@ namespace SummerCoop.Core
         private sealed class RecordStream : Stream
         {
             private readonly Stream output;
-            private readonly byte[] single = new byte[1];
+            [ThreadStatic] private static byte[] writeBuffer;
+            private readonly byte[] buffer;
+            private int buffered;
             public uint Checksum = 0xffffffff;
             public long Count;
-            public RecordStream(Stream output) { this.output = output; }
-            public override void Write(byte[] bytes, int offset, int count) { Checksum = Codec.CrcAppend(Checksum, bytes, offset, count); Count += count; if (Count > Protocol.MaxSnapshot) throw new ProtocolException("World snapshot too large"); output.Write(bytes, offset, count); }
-            public override void WriteByte(byte value) { single[0] = value; Write(single, 0, 1); }
-            public override void Flush() { output.Flush(); }
+            public RecordStream(Stream output) { this.output = output; buffer = writeBuffer ?? (writeBuffer = new byte[65536]); }
+            private void Drain()
+            {
+                if (buffered == 0) return;
+                Checksum = Codec.CrcAppend(Checksum, buffer, 0, buffered);
+                output.Write(buffer, 0, buffered); buffered = 0;
+            }
+            public override void Write(byte[] bytes, int offset, int count)
+            {
+                Count += count; if (Count > Protocol.MaxSnapshot) throw new ProtocolException("World snapshot too large");
+                while (count > 0)
+                {
+                    int n = Math.Min(count, buffer.Length - buffered);
+                    Array.Copy(bytes, offset, buffer, buffered, n); buffered += n; offset += n; count -= n;
+                    if (buffered == buffer.Length) Drain();
+                }
+            }
+            public override void WriteByte(byte value)
+            {
+                if (++Count > Protocol.MaxSnapshot) throw new ProtocolException("World snapshot too large");
+                buffer[buffered++] = value; if (buffered == buffer.Length) Drain();
+            }
+            public override void Flush() { Drain(); output.Flush(); }
             public override bool CanRead { get { return false; } }
             public override bool CanWrite { get { return true; } }
             public override bool CanSeek { get { return false; } }
@@ -48,22 +69,35 @@ namespace SummerCoop.Core
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))); string temp = path + ".pending";
             using (FileStream file = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None, 65536, false))
             {
-                file.Write(new byte[8], 0, 8);
-                RecordStream record = new RecordStream(file); BinaryWriter writer = new WireWriter(record);
-                Codec.WriteWorld(writer, world); writer.Flush();
-                file.Position = 0; BinaryWriter header = new BinaryWriter(file); header.Write(checked((int)record.Count)); header.Write(~record.Checksum); header.Flush(); Flush(file);
+                WriteWorldRecord(file, world); Flush(file);
             }
             if (File.Exists(path)) File.Replace(temp, path, path + ".bak"); else File.Move(temp, path);
+        }
+        public static void WriteWorldRecord(Stream output, World world)
+        {
+            WriteWorldRecord(output, world, null);
+        }
+        internal static void WriteWorldRecord(Stream output, World world, World baseline)
+        {
+            long start = output.Position;
+            output.Write(new byte[8], 0, 8);
+            RecordStream record = new RecordStream(output); BinaryWriter writer = new WireWriter(record);
+            if (baseline == null) Codec.WriteWorld(writer, world); else Codec.WriteDelta(writer, world, baseline); writer.Flush();
+            long end = output.Position; output.Position = start;
+            BinaryWriter header = new BinaryWriter(output); header.Write(checked((int)record.Count)); header.Write(~record.Checksum); header.Flush();
+            output.Position = end;
         }
     }
     public sealed class CheckpointStore : ICommitLog, IDisposable
     {
         private readonly string directory;
         private World baseline;
+        private World journalBaseline;
         private long journalEnd = -1;
         private Thread checkpointWorker;
         private volatile Exception checkpointError;
         private readonly Queue<World> pendingNative = new Queue<World>();
+        private World pendingTail;
         private readonly AutoResetEvent journalWake = new AutoResetEvent(false);
         private readonly ManualResetEvent journalIdle = new ManualResetEvent(true);
         private Thread journalWorker;
@@ -79,6 +113,7 @@ namespace SummerCoop.Core
             // A journal containing old records is safe: recovery ignores <= checkpoint revision.
             AtomicFile.Write(Path.Combine(directory, "world.scj"), new byte[0]);
             baseline = ImmutableEntities ? world.ReferenceSnapshot() : world.Clone();
+            journalBaseline = ImmutableEntities ? baseline.ReferenceSnapshot() : null;
             journalEnd = -1;
         }
         public bool BeginCheckpoint(World world)
@@ -127,8 +162,12 @@ namespace SummerCoop.Core
             World delta = Difference(baseline, world, true);
             lock (pendingNative)
             {
-                if (journalStopping || pendingNative.Count >= 4) throw new IOException("Native journal queue is full or closed");
-                journalIdle.Reset(); pendingNative.Enqueue(delta);
+                if (journalStopping) throw new IOException("Native journal is closed");
+                journalIdle.Reset();
+                // Native captures describe state, not actions. Merge only unwritten captures;
+                // durable commands still drain all native state before their own append.
+                if (pendingNative.Count >= 4) ApplyDelta(pendingTail, delta, true);
+                else { pendingNative.Enqueue(delta); pendingTail = delta; }
                 if (journalWorker == null) { journalWorker = new Thread(WriteNative); journalWorker.IsBackground = true; journalWorker.Start(); }
             }
             ApplyDelta(baseline, delta, true); journalWake.Set();
@@ -140,7 +179,7 @@ namespace SummerCoop.Core
                 while (true)
                 {
                     World delta = null;
-                    lock (pendingNative) { if (pendingNative.Count > 0) delta = pendingNative.Dequeue(); else journalIdle.Set(); }
+                    lock (pendingNative) { if (pendingNative.Count > 0) { delta = pendingNative.Dequeue(); if (pendingNative.Count == 0) pendingTail = null; } else journalIdle.Set(); }
                     if (delta != null) { Append(delta); continue; }
                     if (journalStopping) return;
                     journalWake.WaitOne();
@@ -154,12 +193,12 @@ namespace SummerCoop.Core
         }
         private void Append(World delta)
         {
-            byte[] bytes = Wrap(Codec.World(delta));
             using (FileStream file = new FileStream(Path.Combine(directory, "world.scj"), FileMode.OpenOrCreate, FileAccess.Write, FileShare.Read, 65536, false))
             {
                 if (journalEnd >= 0 && file.Length > journalEnd) file.SetLength(journalEnd);
-                file.Position = file.Length; file.Write(bytes, 0, bytes.Length); AtomicFile.Flush(file);
+                file.Position = file.Length; AtomicFile.WriteWorldRecord(file, delta, journalBaseline); AtomicFile.Flush(file);
             }
+            if (journalBaseline != null) ApplyDelta(journalBaseline, delta, true);
             journalEnd = -1;
         }
         public void Dispose()
@@ -184,14 +223,16 @@ namespace SummerCoop.Core
                         byte[] bytes;
                         if (!TryRecord(r, out bytes)) break; // An interrupted final append is discarded.
                         World next;
-                        try { next = Codec.World(bytes); } catch (Exception) { break; }
+                        try { next = null; Codec.Read(bytes, delegate(BinaryReader reader) { next = Codec.ReadJournalRecord(reader, world); }); }
+                        catch (JournalIdentityException) { throw; }
+                        catch (Exception) { break; }
                         if (next.Id != world.Id || next.GameHash != world.GameHash) throw new ProtocolException("Journal belongs to another world");
                         if (next.Revision > world.Revision) ApplyDelta(world, next);
                         journalEnd = file.Position;
                     }
                 }
             }
-            baseline = ImmutableEntities ? world.ReferenceSnapshot() : world.Clone(); return world;
+            baseline = ImmutableEntities ? world.ReferenceSnapshot() : world.Clone(); journalBaseline = ImmutableEntities ? baseline.ReferenceSnapshot() : null; return world;
         }
         private static World LoadCheckpoint(string path)
         {
@@ -205,7 +246,6 @@ namespace SummerCoop.Core
             }
             catch (Exception e) { if (e is IOException || e is ArgumentException) return null; throw; }
         }
-        private static byte[] Wrap(byte[] bytes) { return Codec.Make(delegate(BinaryWriter w) { w.Write(bytes.Length); w.Write(Codec.Crc(bytes)); w.Write(bytes); }); }
         private static bool TryRecord(BinaryReader r, out byte[] bytes)
         {
             bytes = null;
