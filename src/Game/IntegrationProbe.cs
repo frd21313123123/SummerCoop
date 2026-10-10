@@ -67,6 +67,7 @@ namespace SummerCoop.Game
             {
                 w.WriteLine("SCENE=" + Application.loadedLevelName); w.WriteLine("ROLE=" + (r.Session.IsHost ? "host" : "client"));
                 w.WriteLine("PHASE=" + r.Session.Phase); w.WriteLine("OBJECTS=" + r.Registry.Objects.Count); w.WriteLine("FSMS=" + r.Registry.Fsms.Count);
+                w.WriteLine("INDEX_SAMPLES=" + r.Registry.IndexSamples); w.WriteLine("INDEX_MISMATCHES=" + r.Registry.IndexMismatches);
                 w.WriteLine("PLAYERS=" + r.Session.World.Players.Count); w.WriteLine("REVISION=" + r.Session.World.Revision);
                 w.WriteLine("RESOLUTION=" + Screen.width + "x" + Screen.height); w.WriteLine("TARGET_FRAME_RATE=" + Application.targetFrameRate); w.WriteLine("VSYNC=" + QualitySettings.vSyncCount);
                 w.WriteLine("SNAPSHOT_BYTES=" + r.Session.LastSnapshotBytes); w.WriteLine("SCHEMA=" + r.Registry.SchemaHash);

@@ -24,6 +24,8 @@ namespace SummerCoop.Game
         private CheckpointStore store;
         private Authority authority;
         private ITransport pendingTransport;
+        private bool hostSteamPending;
+        private int hostPortPending;
         private WorldRegistry pendingRegistry;
         private Callback<GameLobbyJoinRequested_t> invitation;
         private AvatarView avatars;
@@ -31,7 +33,7 @@ namespace SummerCoop.Game
         private Camera localCamera;
         private string gameHash, username = "Player", address = "127.0.0.1", password = "", portText = "27842", lobbyText = "";
         private string status = "F6 — SummerCoop", root, requestedSeat = "", requestedState = "";
-        private bool visible, importSave, awaitingScene, hostPending, leaving, fatal;
+        private bool visible, importSave, awaitingScene, nativeLoaded, hostPending, leaving, fatal;
         private float sceneBegan, poseTime, captureTime, checkpointTime, refreshTime, avatarTime, previousScale = 1;
         private long requestedSequence;
         private long sleepEpoch;
@@ -93,8 +95,8 @@ namespace SummerCoop.Game
         {
             if (Session != null || awaitingScene || Application.loadedLevelName == "GAME") throw new InvalidOperationException("Создайте сессию из главного меню");
             VerifyVanilla(); saves.Activate("world", importSave); ConfigureLoad();
-            pendingTransport = steam ? (ITransport)new SteamTransport(true, 0, gameHash) : LanTransport.Host(Port());
-            awaitingScene = true; hostPending = true; sceneBegan = Time.realtimeSinceStartup; SetStatus("Загрузка мира хоста…"); Application.LoadLevel("GAME");
+            hostSteamPending = steam; hostPortPending = steam ? 0 : Port();
+            awaitingScene = true; nativeLoaded = false; hostPending = true; sceneBegan = Time.realtimeSinceStartup; SetStatus("Загрузка мира хоста…"); Application.LoadLevel("GAME");
         }
         public void StartClient(bool steam, ulong lobbyId)
         {
@@ -118,7 +120,7 @@ namespace SummerCoop.Game
             if (!awaitingScene || Application.loadedLevelName != "GAME") return;
             ConfigureLoad(); pendingRegistry = new WorldRegistry(hostPending, gameHash); pendingRegistry.IndexScene();
         }
-        public void Loaded() { if (awaitingScene) sceneBegan = Time.realtimeSinceStartup; }
+        public void Loaded() { if (awaitingScene && Application.loadedLevelName == "GAME") { nativeLoaded = true; sceneBegan = Time.realtimeSinceStartup; } }
         public void Menu()
         {
             if (Application.loadedLevelName != "GAME" && Session == null && !awaitingScene) saves.Restore();
@@ -141,7 +143,7 @@ namespace SummerCoop.Game
             Session.NativeSaveReceived = delegate(byte[] bytes)
             {
                 SaveIsolation.Unpack(saves.CurrentDirectory, bytes); ConfigureLoad();
-                awaitingScene = true; hostPending = false; sceneBegan = Time.realtimeSinceStartup; SetStatus("Загрузка общего мира…"); Application.LoadLevel("GAME");
+                awaitingScene = true; nativeLoaded = false; hostPending = false; sceneBegan = Time.realtimeSinceStartup; SetStatus("Загрузка общего мира…"); Application.LoadLevel("GAME");
             };
             Session.WorldReceived = delegate(World world, bool full)
             {
@@ -171,6 +173,8 @@ namespace SummerCoop.Game
                     recovered.Players.Clear(); Registry.Apply(recovered, true); world = recovered;
                 }
                 Registry.Capture(world, true); world.EnableChangeTracking(); Adapter = new NativeAdapter(Registry); authority = new Authority(world, Adapter, store);
+                // Admit peers only after the native scene is ready; early listeners let clients time out during load.
+                pendingTransport = hostSteamPending ? (ITransport)new SteamTransport(true, 0, gameHash) : LanTransport.Host(hostPortPending);
                 Session = new Session(pendingTransport, authority, gameHash, username, password, Time.realtimeSinceStartup); pendingTransport = null; ConfigureSession();
                 Session.SceneLoaded(Registry.SchemaHash); store.Checkpoint(Session.World);
                 SetStatus("Мир открыт: " + Registry.Objects.Count + " объектов, " + Registry.Fsms.Count + " FSM");
@@ -193,7 +197,7 @@ namespace SummerCoop.Game
             try
             {
                 if (Input.GetKeyDown(KeyCode.F6)) visible = !visible;
-                if (awaitingScene && Application.loadedLevelName == "GAME" && Time.realtimeSinceStartup - sceneBegan > 10) FinishLoad();
+                if (awaitingScene && nativeLoaded && Application.loadedLevelName == "GAME" && Time.realtimeSinceStartup - sceneBegan > 10) FinishLoad();
                 long stage = System.Diagnostics.Stopwatch.GetTimestamp();
                 if (Session != null) Session.Update(Time.realtimeSinceStartup);
                 RefreshHooks();
@@ -365,7 +369,7 @@ namespace SummerCoop.Game
         }
         public void Leave(string reason)
         {
-            if (Session == null && pendingTransport == null) return;
+            if (Session == null && pendingTransport == null && !awaitingScene) return;
             try { if (Session != null && Session.IsHost && Registry != null) { Registry.Capture(Session.World, true); NativeSave.Capture(Registry, saves.CurrentDirectory); store.Checkpoint(Session.World); } }
             finally
             {
@@ -374,7 +378,7 @@ namespace SummerCoop.Game
                 DisposeStore();
                 if (pendingTransport != null) { pendingTransport.Dispose(); pendingTransport = null; }
                 if (avatars != null) { avatars.Dispose(); avatars = null; }
-                Joining = false; Time.timeScale = previousScale; awaitingScene = false;
+                Joining = false; Time.timeScale = previousScale; awaitingScene = nativeLoaded = false;
                 if (Application.loadedLevelName == "GAME") { leaving = true; Application.LoadLevel("MainMenu"); }
                 else { saves.Restore(); Registry = null; Adapter = null; }
                 SetStatus(reason); visible = true;

@@ -30,7 +30,7 @@ foreach ($role in $testRoles) {
     $gameProcess.Id | Set-Content -LiteralPath $pidFile
     Write-Output ($role + ' PID ' + $gameProcess.Id + ' profile ' + $profile)
     if ($role -eq 'host') {
-        $listenDeadline = (Get-Date).AddSeconds(120)
+        $listenDeadline = (Get-Date).AddSeconds(300)
         do {
             $gameProcess.Refresh()
             if ($gameProcess.HasExited) { throw 'Test host exited before opening its port.' }

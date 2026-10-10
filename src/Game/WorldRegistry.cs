@@ -104,14 +104,27 @@ namespace SummerCoop.Game
         {
             // MSCLoader PreLoad runs before vehicle Start methods detach wheel transforms.
             HashSet<Transform> roots = new HashSet<Transform>();
-            foreach (Transform t in UnityEngine.Object.FindObjectsOfType<Transform>()) if (!PersonalObject(t.gameObject)) roots.Add(t.root);
-            foreach (Transform root in roots) Index(root);
+            foreach (Transform t in UnityEngine.Object.FindObjectsOfType<Transform>()) roots.Add(t.root);
+            foreach (Transform root in roots) if (!PersonalObject(root.gameObject)) Index(root, "scene/" + Segment(root));
+            if (CoopRuntime.Argument("--summercoop-test-report") != "")
+            {
+                int index = 0; foreach (KeyValuePair<GameObject, string> entry in sceneKeys)
+                    if (index++ % 251 == 0) { IndexSamples++; if (entry.Value != "scene/" + StablePath(entry.Key.transform)) IndexMismatches++; }
+                if (IndexMismatches > 0) throw new InvalidOperationException("Indexed native paths differ from the original identity algorithm");
+            }
         }
-        private void Index(Transform t)
+        public int IndexSamples { get; private set; }
+        public int IndexMismatches { get; private set; }
+        private void Index(Transform t, string path)
         {
-            if (PersonalObject(t.gameObject)) return;
-            sceneKeys[t.gameObject] = "scene/" + StablePath(t);
-            for (int i = 0; i < t.childCount; i++) Index(t.GetChild(i));
+            sceneKeys[t.gameObject] = path;
+            int children = t.childCount; if (children == 0) return;
+            Dictionary<string, int> siblings = new Dictionary<string, int>(StringComparer.Ordinal);
+            for (int i = 0; i < children; i++)
+            {
+                Transform child = t.GetChild(i); string name = child.name; int ordinal; siblings.TryGetValue(name, out ordinal); siblings[name] = ordinal + 1;
+                Index(child, path + "/" + name + "[" + ordinal.ToString(CultureInfo.InvariantCulture) + "]");
+            }
         }
         public void Discover(bool initial)
         {
