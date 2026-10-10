@@ -51,6 +51,18 @@ namespace SummerCoop.Game
         public string StatusText { get { return status; } }
         public double LastUpdateMilliseconds { get; private set; }
         public readonly double[] LastStages = new double[10];
+        public static readonly bool TraceAllocations = Argument("--summercoop-test-allocations") == "yes" && Argument("--summercoop-test-report") != "";
+        public readonly long[] HeapIncrease = new long[6], HeapSamples = new long[6];
+        private struct HeapStamp { public long Bytes; public int Collections; }
+        private HeapStamp previousUpdateEnd;
+        private bool measuredUpdateEnd;
+        private static HeapStamp HeapBegin() { return TraceAllocations ? new HeapStamp { Bytes = GC.GetTotalMemory(false), Collections = GC.CollectionCount(0) } : new HeapStamp(); }
+        private void HeapEnd(int index, HeapStamp began)
+        {
+            if (!TraceAllocations || GC.CollectionCount(0) != began.Collections) return;
+            long difference = GC.GetTotalMemory(false) - began.Bytes;
+            if (difference >= 0) { HeapIncrease[index] += difference; HeapSamples[index]++; }
+        }
         public int LastMotionBodies { get; private set; }
         private static double Elapsed(long began) { return (System.Diagnostics.Stopwatch.GetTimestamp() - began) * 1000.0 / System.Diagnostics.Stopwatch.Frequency; }
         public static void Ensure()
@@ -202,6 +214,7 @@ namespace SummerCoop.Game
         private void RefreshHooks() { NativeHooks.UpdateMode = Registry != null && Active ? (Joining ? 1 : Session.IsHost ? 0 : 2) : 0; }
         private void Update()
         {
+            if (TraceAllocations && measuredUpdateEnd && Active && !Session.IsHost) HeapEnd(5, previousUpdateEnd);
             long updateBegan = System.Diagnostics.Stopwatch.GetTimestamp();
             Array.Clear(LastStages, 0, LastStages.Length);
             try
@@ -209,11 +222,15 @@ namespace SummerCoop.Game
                 if (Input.GetKeyDown(KeyCode.F6)) visible = !visible;
                 if (awaitingScene && nativeLoaded && Application.loadedLevelName == "GAME" && Time.realtimeSinceStartup - sceneBegan > 10) FinishLoad();
                 long stage = System.Diagnostics.Stopwatch.GetTimestamp();
+                HeapStamp heapStage = HeapBegin();
                 if (Session != null) Session.Update(Time.realtimeSinceStartup);
                 RefreshHooks();
+                HeapEnd(0, heapStage);
                 LastStages[0] = Elapsed(stage);
                 if (!Active || Registry == null) return;
+                heapStage = HeapBegin();
                 if (avatars != null) { if (Time.realtimeSinceStartup - avatarTime > 0.5f) { avatars.Reconcile(Session.World, Session.LocalId); avatarTime = Time.realtimeSinceStartup; } avatars.Update(Time.unscaledDeltaTime); }
+                HeapEnd(1, heapStage);
                 if (Session.IsHost)
                 {
                     store.CheckBackground();
@@ -240,13 +257,16 @@ namespace SummerCoop.Game
                 }
                 else
                 {
-                    stage = System.Diagnostics.Stopwatch.GetTimestamp(); Registry.Interpolate(Time.unscaledDeltaTime); SendDriving();
+                    stage = System.Diagnostics.Stopwatch.GetTimestamp(); heapStage = HeapBegin(); Registry.Interpolate(Time.unscaledDeltaTime); SendDriving(); HeapEnd(2, heapStage);
+                    heapStage = HeapBegin();
                     Registry.EnforceVariables(Session.World);
+                    HeapEnd(3, heapStage);
                     LastStages[3] = Elapsed(stage);
                 }
                 if (!Joining && Time.realtimeSinceStartup - poseTime > 0.05f)
                 {
                     stage = System.Diagnostics.Stopwatch.GetTimestamp();
+                    heapStage = HeapBegin();
                     LastMotionBodies = 0;
                     if (localPlayer == null) localPlayer = GameObject.Find("PLAYER");
                     if (localCamera == null || !localCamera.isActiveAndEnabled) localCamera = Camera.main;
@@ -257,12 +277,13 @@ namespace SummerCoop.Game
                         motionBegan = System.Diagnostics.Stopwatch.GetTimestamp(); foreach (MotionFrame frame in frames) { LastMotionBodies += frame.Bodies.Count; Session.SendMotion(frame); } LastStages[9] = Elapsed(motionBegan);
                     }
                     poseTime = Time.realtimeSinceStartup;
+                    HeapEnd(4, heapStage);
                     LastStages[6] = Elapsed(stage);
                 }
                 if (Application.loadedLevelName != "GAME") Leave("Мир закрыт");
             }
             catch (Exception e) { Fail(e); }
-            finally { LastUpdateMilliseconds = (System.Diagnostics.Stopwatch.GetTimestamp() - updateBegan) * 1000.0 / System.Diagnostics.Stopwatch.Frequency; }
+            finally { LastUpdateMilliseconds = (System.Diagnostics.Stopwatch.GetTimestamp() - updateBegan) * 1000.0 / System.Diagnostics.Stopwatch.Frequency; if (TraceAllocations) { previousUpdateEnd = HeapBegin(); measuredUpdateEnd = true; } }
         }
         private void SendDriving()
         {

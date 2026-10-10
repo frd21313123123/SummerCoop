@@ -13,6 +13,7 @@ namespace SummerCoop.Game
         public static bool Saving, Replaying;
         // Refreshed by the session lifecycle: 0 native execution, 1 join barrier, 2 client filtering.
         public static int UpdateMode;
+        public static long DiagnosticInputReentries;
         private static readonly FieldInfo Pending = typeof(Fsm).GetField("switchToState", BindingFlags.Instance | BindingFlags.NonPublic);
         private static readonly Dictionary<FsmState, bool> StateSafety = new Dictionary<FsmState, bool>();
         private static readonly HashSet<string> Safe = new HashSet<string>(StringComparer.Ordinal)
@@ -53,7 +54,7 @@ namespace SummerCoop.Game
                 Pending.SetValue(__instance, null); runtime.RequestState(b, state.Name);
                 // Keep the client's input state alive; effects only run on the host.
                 FsmState current = __instance.ActiveState;
-                if (current != null && SafeState(current)) { Replaying = true; try { current.OnEnter(); } finally { Replaying = false; } }
+                if (current != null && SafeState(current)) { if (CoopRuntime.TraceAllocations) DiagnosticInputReentries++; Replaying = true; try { current.OnEnter(); } finally { Replaying = false; } }
                 Pending.SetValue(__instance, null); return false;
             }
             if (SafeState(state)) return true;

@@ -197,13 +197,18 @@ namespace SummerCoop.Core
         }
         private void ReadDatagrams()
         {
+            // The game's legacy Mono UdpClient.Receive allocates a 65536-byte
+            // scratch array for every packet. Keep one private receive buffer;
+            // queued payloads still own an exact independent array.
+            byte[] receiveBuffer = new byte[65536];
             while (!closed)
             {
                 try
                 {
-                    IPEndPoint sender = new IPEndPoint(IPAddress.Any, 0);
-                    byte[] bytes = udp.Receive(ref sender);
-                    if (bytes.Length < 31 || bytes.Length > Protocol.MaxDatagram) continue;
+                    EndPoint endpoint = new IPEndPoint(IPAddress.Any, 0);
+                    int count = udp.Client.ReceiveFrom(receiveBuffer, ref endpoint);
+                    if (count < 31 || count > Protocol.MaxDatagram) continue;
+                    IPEndPoint sender = (IPEndPoint)endpoint;
                     Connection found = null;
                     lock (gate)
                     {
@@ -211,13 +216,13 @@ namespace SummerCoop.Core
                         {
                             if (c.Token == null || c.Closed) continue;
                             if (!((IPEndPoint)c.Client.Client.RemoteEndPoint).Address.Equals(sender.Address)) continue;
-                            bool equal = true; for (int i = 0; i < 16; i++) if (c.Token[i] != bytes[i]) equal = false;
+                            bool equal = true; for (int i = 0; i < 16; i++) if (c.Token[i] != receiveBuffer[i]) equal = false;
                             if (equal) { found = c; break; }
                         }
                         if (found != null && IsHost) found.DatagramEndpoint = sender;
                     }
                     if (found == null) continue;
-                    byte[] frame = new byte[bytes.Length - 16]; Array.Copy(bytes, 16, frame, 0, frame.Length);
+                    byte[] frame = new byte[count - 16]; Array.Copy(receiveBuffer, 16, frame, 0, frame.Length);
                     try { Codec.Validate(frame); } catch (IOException) { continue; }
                     events.Add(new TransportEvent { Kind = TransportEventKind.Data, Peer = found.Id, Data = frame, Reliable = false });
                 }

@@ -33,6 +33,8 @@ namespace SummerCoop.Game
         private int objectVisits, fsmVisits;
         private readonly long[] captureHeapBefore = new long[3], captureSamplesBefore = new long[3];
         private long meshBytesBefore, sharedMapsBefore, propertyEntriesBefore;
+        private readonly long[] runtimeHeapBefore = new long[6], runtimeSamplesBefore = new long[6];
+        private long inputReentriesBefore;
         private void Start() { int limit; if (int.TryParse(CoopRuntime.Argument("--summercoop-test-fps-limit"), out limit) && limit > 0) Application.targetFrameRate = limit; }
         private void Update()
         {
@@ -41,7 +43,7 @@ namespace SummerCoop.Game
             bool baseline = r.NativeBaselineReady;
             bool pair = !baseline && CoopRuntime.Argument("--summercoop-test-pair") == "yes";
             if (pair && (r.Session.World.Players.Count < 2 || r.Joining)) { joined = 0; frames = 0; frameSeconds = 0; updateTimes.Clear(); frameTimes.Clear(); foreach (List<double> values in stages) values.Clear(); return; }
-            if (joined == 0) joined = Time.realtimeSinceStartup;
+            if (joined == 0) { joined = Time.realtimeSinceStartup; }
             if (!baseline && CoopRuntime.Argument("--summercoop-test-mesh-proof") != "" && Time.realtimeSinceStartup - joined > 12) CheckMesh(r);
             int collections = GC.CollectionCount(0); long heap = GC.GetTotalMemory(false);
             if (Time.realtimeSinceStartup - joined > 5)
@@ -49,6 +51,7 @@ namespace SummerCoop.Game
                 if (frames == 0 && !baseline)
                 {
                     Array.Copy(r.Registry.CaptureHeapIncrease, captureHeapBefore, 3); Array.Copy(r.Registry.CaptureHeapSamples, captureSamplesBefore, 3);
+                    Array.Copy(r.HeapIncrease, runtimeHeapBefore, 6); Array.Copy(r.HeapSamples, runtimeSamplesBefore, 6); inputReentriesBefore = NativeHooks.DiagnosticInputReentries;
                     meshBytesBefore = r.Registry.MeshBytesRead; sharedMapsBefore = r.Registry.SharedPropertyMaps; propertyEntriesBefore = r.Registry.PropertyMapEntries;
                 }
                 updateTimes.Add(r.LastUpdateMilliseconds); frameTimes.Add(Time.unscaledDeltaTime * 1000.0); for (int i = 0; i < stages.Length; i++) stages[i].Add(r.LastStages[i]); frameSeconds += Time.unscaledDeltaTime; frames++;
@@ -106,6 +109,9 @@ namespace SummerCoop.Game
                 w.WriteLine("SHARED_PROPERTY_MAPS=" + (r.Registry.SharedPropertyMaps - sharedMapsBefore));
                 w.WriteLine("NEW_PROPERTY_MAP_ENTRIES=" + (r.Registry.PropertyMapEntries - propertyEntriesBefore));
                 for (int i = 0; i < 3; i++) w.WriteLine("CAPTURE_HEAP_" + i + "=" + (r.Registry.CaptureHeapIncrease[i] - captureHeapBefore[i]) + ",samples=" + (r.Registry.CaptureHeapSamples[i] - captureSamplesBefore[i]));
+                string[] heapNames = { "NETWORK", "AVATAR", "INTERPOLATE", "ENFORCE", "POSE", "BETWEEN_UPDATES" };
+                for (int i = 0; i < heapNames.Length; i++) w.WriteLine("RUNTIME_HEAP_" + heapNames[i] + "=" + (r.HeapIncrease[i] - runtimeHeapBefore[i]) + ",samples=" + (r.HeapSamples[i] - runtimeSamplesBefore[i]));
+                w.WriteLine("INPUT_STATE_REENTRIES=" + (NativeHooks.DiagnosticInputReentries - inputReentriesBefore));
                 int missing = 0, missingActive = 0, mismatched = 0, dynamic = 0;
                 foreach (Entity e in r.Session.World.Entities.Values)
                 {

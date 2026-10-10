@@ -677,6 +677,32 @@ internal static class TestRunner
                         Thread.Sleep(2);
                     }
                     Check(connected.Count == 3 && reliable == 3 && datagrams == 3 && replies == 3, "Loopback incomplete: " + reliable + "/" + datagrams + "/" + replies);
+                    // Retain both directions' packets while later datagrams reuse the
+                    // receiver's scratch buffer. Each event must keep its own bytes.
+                    List<byte[]> sent = new List<byte[]>(), retainedHost = new List<byte[]>(), retainedClient = new List<byte[]>();
+                    for (int n = 0; n < 8; n++)
+                    {
+                        byte[] packet = Codec.Packet(MessageKind.Pose, Codec.Pose(new Pose { Id = "buffer-proof-" + new string('x', n * 9), Sequence = n + 100, Position = new V3(n, -n, n * 0.25f) }));
+                        sent.Add(packet); clients[1].Send("host", packet, false);
+                    }
+                    clock.Restart();
+                    while (clock.ElapsedMilliseconds < 3000 && (retainedHost.Count < 8 || retainedClient.Count < 8))
+                    {
+                        TransportEvent e;
+                        while (host.Poll(out e)) if (e.Kind == TransportEventKind.Data && !e.Reliable) { retainedHost.Add(e.Data); host.Send(e.Peer, e.Data, false); }
+                        while (clients[1].Poll(out e)) if (e.Kind == TransportEventKind.Data && !e.Reliable) retainedClient.Add(e.Data);
+                        Thread.Sleep(2);
+                    }
+                    Check(retainedHost.Count == 8 && retainedClient.Count == 8, "UDP buffer proof incomplete");
+                    foreach (List<byte[]> retained in new List<byte[]>[] { retainedHost, retainedClient })
+                    {
+                        HashSet<int> seen = new HashSet<int>();
+                        foreach (byte[] packet in retained)
+                        {
+                            Pose pose = Codec.Pose(Codec.Open(packet).Payload); int n = checked((int)pose.Sequence - 100);
+                            Check(n >= 0 && n < sent.Count && seen.Add(n) && Codec.Hash(packet) == Codec.Hash(sent[n]), "Later datagram changed retained packet bytes");
+                        }
+                    }
                     clients[0].Dispose(); clock.Restart(); bool removed = false;
                     while (clock.ElapsedMilliseconds < 3000 && !removed) { TransportEvent e; while (host.Poll(out e)) if (e.Kind == TransportEventKind.Disconnected) removed = true; Thread.Sleep(2); }
                     Check(removed && host.Peers.Count == 2, "Disconnect not detected");
