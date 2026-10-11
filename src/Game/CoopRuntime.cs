@@ -89,7 +89,8 @@ namespace SummerCoop.Game
                 if (SteamTransport.Available()) { username = SteamFriends.GetPersonaName(); if (username.Length > 48) username = username.Substring(0, 48); invitation = Callback<GameLobbyJoinRequested_t>.Create(OnInvite); }
                 if (cliHandled) return; cliHandled = true;
                 string port = Argument("--summercoop-host-lan");
-                if (port != "") { portText = port; StartHost(false); }
+                if (Argument("--summercoop-test-report") != "" && Argument("--summercoop-test-steam-host") == "yes") StartHost(true);
+                else if (port != "") { portText = port; StartHost(false); }
                 else if (Argument("--summercoop-join-lan") != "") { address = Argument("--summercoop-join-lan"); if (Argument("--summercoop-port") != "") portText = Argument("--summercoop-port"); StartClient(false, 0); }
                 else { string lobby = Argument("+connect_lobby"); ulong id; if (ulong.TryParse(lobby, out id)) StartClient(true, id); }
             }
@@ -201,7 +202,10 @@ namespace SummerCoop.Game
                 if (recovered != null)
                 {
                     if (recovered.GameHash != gameHash || recovered.SchemaHash != Registry.SchemaHash) throw new InvalidOperationException("Сохранение SummerCoop сделано другой версией игры или мода");
-                    recovered.Players.Clear(); Registry.Apply(recovered, true); world = recovered;
+                    recovered.Players.Clear();
+                    int personal = LocalHierarchy.RemoveFromCheckpoint(recovered);
+                    if (personal > 0) Debug.Log("[SummerCoop] Recovered checkpoint: excluded " + personal + " local player/menu entities; shared objects retained.");
+                    Registry.Apply(recovered, true); world = recovered;
                 }
                 Registry.Capture(world, true); world.EnableChangeTracking(); Adapter = new NativeAdapter(Registry); authority = new Authority(world, Adapter, store);
                 // Admit peers only after the native scene is ready; early listeners let clients time out during load.
@@ -220,6 +224,7 @@ namespace SummerCoop.Game
             }
             if (Argument("--summercoop-test-report") != "") gameObject.AddComponent<IntegrationProbe>();
             if (Argument("--summercoop-test-report") != "" && Argument("--summercoop-test-native-input") == "yes") gameObject.AddComponent<NativeInputProbe>();
+            if (Argument("--summercoop-test-report") != "" && Argument("--summercoop-test-save-restore") == "yes") gameObject.AddComponent<SaveRestoreProbe>();
         }
         private void RefreshHooks() { NativeHooks.UpdateMode = Registry != null && Active ? (Joining ? 1 : Session.IsHost ? 0 : 2) : 0; }
         private void Update()

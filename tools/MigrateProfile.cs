@@ -5,7 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 using SummerCoop.Core;
 
-// Explicit same-schema update only; never guesses a game/protocol migration.
+// Explicit same-schema update; recover the known local-player contamination too.
 internal static class MigrateProfile
 {
     private static string GameHash(string game, string mod, string core)
@@ -43,10 +43,13 @@ internal static class MigrateProfile
             string backup = Path.Combine(profile, "before-performance-update-" + DateTime.UtcNow.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N").Substring(0, 8));
             Directory.CreateDirectory(backup);
             foreach (string file in Directory.GetFiles(profile)) File.Copy(file, Path.Combine(backup, Path.GetFileName(file)), false);
+            int personal = LocalHierarchy.RemoveFromCheckpoint(world);
             world.GameHash = newHash; world.SchemaHash = Codec.Hash(Encoding.UTF8.GetBytes(newHash + "/native-schema-2"));
             try { new CheckpointStore(profile).Checkpoint(world); }
             catch { foreach (string file in Directory.GetFiles(backup)) File.Copy(file, Path.Combine(profile, Path.GetFileName(file)), true); throw; }
-            Console.WriteLine("Compatible profile updated; world ID, entities, money and native save files preserved."); Console.WriteLine("Backup: " + backup);
+            Console.WriteLine("Compatible profile updated; world ID, shared entities, money and native save files preserved.");
+            if (personal > 0) Console.WriteLine("Recovered " + personal + " local player/menu entries incorrectly included by an older build; shared objects retained.");
+            Console.WriteLine("Backup: " + backup);
             return 0;
         }
         catch (Exception e) { Console.Error.WriteLine(e.Message); return 1; }

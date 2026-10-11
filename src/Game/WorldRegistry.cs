@@ -94,8 +94,13 @@ namespace SummerCoop.Game
         }
         public static bool PersonalObject(GameObject go)
         {
-            string root = go.transform.root.name;
-            return root == "PLAYER" || root == "GUI" || root == "HUD" || root.StartsWith("MSCLoader", StringComparison.Ordinal) || root.StartsWith("SummerCoop", StringComparison.Ordinal) || root == "Steam";
+            // PLAYER is reparented beneath vehicles when seated. Checking only
+            // transform.root turns its cameras and hands into shared spawns.
+            if (go == null) return true;
+            if (LocalHierarchy.IsRootName(go.transform.root.name)) return true;
+            for (Transform cursor = go.transform; cursor != null; cursor = cursor.parent)
+                if (LocalHierarchy.IsNestedName(cursor.name)) return true;
+            return false;
         }
         public static bool PersonalVariable(string name)
         {
@@ -122,6 +127,7 @@ namespace SummerCoop.Game
         public int IndexMismatches { get; private set; }
         private void Index(Transform t, string path)
         {
+            if (PersonalObject(t.gameObject)) return;
             sceneKeys[t.gameObject] = path;
             int children = t.childCount; if (children == 0) return;
             Dictionary<string, int> siblings = new Dictionary<string, int>(StringComparer.Ordinal);
