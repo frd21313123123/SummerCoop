@@ -181,7 +181,7 @@ namespace SummerCoop.Core
                     Send(p.Id, MessageKind.Result, Codec.Result(result), true); Publish(); break;
                 case MessageKind.Pose:
                     Pose pose = Codec.Pose(packet); pose.Id = p.Id;
-                    if (authority.SetPose(p.Id, pose)) { if (PoseReceived != null) PoseReceived(pose); Broadcast(MessageKind.Pose, Codec.Pose(pose), false, p.Id); }
+                    if (authority.SetPose(p.Id, pose)) { if (PoseReceived != null) PoseReceived(pose); BroadcastFrame(Codec.PoseFrame(pose), p.Id); }
                     break;
                 case MessageKind.Resync:
                     if (packet.Length != 0 || p.Transfers.Count != 0) break;
@@ -328,12 +328,16 @@ namespace SummerCoop.Core
         {
             if (disposed || Phase != SessionPhase.Playing) return;
             pose.Id = LocalId; pose.Sequence = ++poseSequence;
-            if (IsHost) { authority.SetPose(LocalId, pose); Broadcast(MessageKind.Pose, Codec.Pose(pose), false, null); }
-            else Send(transport.HostPeer, MessageKind.Pose, Codec.Pose(pose), false);
+            if (IsHost) { authority.SetPose(LocalId, pose); BroadcastFrame(Codec.PoseFrame(pose), null); }
+            else transport.Send(transport.HostPeer, Codec.PoseFrame(pose), false);
         }
         public void SendMotion(MotionFrame frame)
         {
-            if (!IsHost || disposed) return; Broadcast(MessageKind.Motion, Codec.Motion(frame), false, null);
+            if (!IsHost || disposed) return; BroadcastFrame(Codec.MotionPacket(frame), null);
+        }
+        private void BroadcastFrame(byte[] frame, string except)
+        {
+            foreach (Peer p in peers.Values) if (p.Playing && p.Id != except) transport.Send(p.Id, frame, false);
         }
         private void Broadcast(MessageKind kind, byte[] bytes, bool reliable, string except)
         {

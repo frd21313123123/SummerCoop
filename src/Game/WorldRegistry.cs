@@ -15,6 +15,7 @@ namespace SummerCoop.Game
         public string Id, Key, Prefab = "";
         public GameObject Object; public Transform Transform;
         public Rigidbody Body;
+        public Drivetrain Drive;
         public Renderer[] Renderers;
         public Collider[] Colliders;
         public PlayMakerArrayListProxy[] Arrays;
@@ -85,6 +86,8 @@ namespace SummerCoop.Game
         public WorldRegistry(bool host, string gameHash)
         {
             this.host = host;
+            compareMotionDepth = CompareMotionDepth;
+            completedMotionPredicate = MotionCompleted;
             allocationProbe = CoopRuntime.Argument("--summercoop-test-allocations") == "yes";
             // Adapter schema is independent of the saved arrangement of parts and item count.
             SchemaHash = Codec.Hash(System.Text.Encoding.UTF8.GetBytes(gameHash + "/native-schema-2"));
@@ -308,7 +311,7 @@ namespace SummerCoop.Game
         {
             string id = Identity.Stable(key); ObjectBinding collision;
             if (Objects.TryGetValue(id, out collision) && collision.Object != go) throw new InvalidOperationException("Ambiguous native object identity: " + key);
-            ObjectBinding b = new ObjectBinding { Id = id, Key = key, Object = go, Transform = go.transform, Body = go.GetComponent<Rigidbody>(), Renderers = go.GetComponents<Renderer>(), Colliders = go.GetComponents<Collider>(), Arrays = go.GetComponents<PlayMakerArrayListProxy>(), Lights = go.GetComponents<Light>(), Audio = go.GetComponents<AudioSource>(), Mesh = go.GetComponent<MeshFilter>() };
+            ObjectBinding b = new ObjectBinding { Id = id, Key = key, Object = go, Transform = go.transform, Body = go.GetComponent<Rigidbody>(), Drive = go.GetComponent<Drivetrain>(), Renderers = go.GetComponents<Renderer>(), Colliders = go.GetComponents<Collider>(), Arrays = go.GetComponents<PlayMakerArrayListProxy>(), Lights = go.GetComponents<Light>(), Audio = go.GetComponents<AudioSource>(), Mesh = go.GetComponent<MeshFilter>() };
             b.Kind = go.GetComponent<CarController>() != null || go.name == "BOAT" ? EntityKind.Vehicle : b.Body != null ? EntityKind.Rigidbody : EntityKind.Object;
             b.Empty = go.GetComponents<Component>().Length == 1;
             b.Motion = b.Body != null || b.Kind == EntityKind.Vehicle || go.GetComponent<PlayMakerFSM>() != null || go.GetComponent<Animation>() != null || go.GetComponent<Animator>() != null;
@@ -469,7 +472,9 @@ namespace SummerCoop.Game
         private void CaptureObject(World world, ObjectBinding b, bool transforms)
         {
                 if (b.Object == null) { RemoveCaptured(world, b.Id); return; }
-                b.Body = b.Object.GetComponent<Rigidbody>();
+                // Unity's null comparison detects destroyed native components. Do not cache
+                // a missing component: assembly/removal can add it before the next capture.
+                if (b.Body == null) b.Body = b.Object.GetComponent<Rigidbody>();
                 if (b.Body != null && !b.Motion) { b.Motion = true; motionObjects.Add(b); }
                 Entity previous; world.Entities.TryGetValue(b.Id, out previous);
                 Entity e = builder.Begin(b.Id, b.Key, b.Kind, previous == null ? 32 : previous.Properties.Count); e.Prefab = b.Prefab; e.Active = b.Object.activeSelf; e.Parent = IdOf(b.Transform.parent == null ? null : b.Transform.parent.gameObject);
@@ -499,7 +504,8 @@ namespace SummerCoop.Game
                     e.Properties[Property("@array/", i, "/count")] = builder.N(list.arrayList.Count);
                     for (int k = 0; k < list.arrayList.Count; k++) { Atom value = ReadArrayValue(list.arrayList[k]); if (value != null) e.Properties[Property("@array/", i, k)] = value; }
                 }
-                Drivetrain drive = b.Object.GetComponent<Drivetrain>(); if (drive != null) { e.Properties["@rpm"] = builder.N(drive.rpm); e.Properties["@gear"] = builder.N(drive.gear); }
+                if (b.Drive == null) b.Drive = b.Object.GetComponent<Drivetrain>();
+                Drivetrain drive = b.Drive; if (drive != null) { e.Properties["@rpm"] = builder.N(drive.rpm); e.Properties["@gear"] = builder.N(drive.gear); }
                 for (int i = 0; i < b.Lights.Length; i++) if (b.Lights[i] != null)
                 {
                     Light light = b.Lights[i]; e.Properties[Property("@light/", i, "/on")] = builder.B(light.enabled); e.Properties[Property("@light/", i, "/intensity")] = builder.N(light.intensity); e.Properties[Property("@light/", i, "/color")] = builder.Q(new Q4(light.color.r, light.color.g, light.color.b, light.color.a));
@@ -773,8 +779,13 @@ namespace SummerCoop.Game
             finally { Applying = false; }
         }
         private bool motionOrderDirty;
-        private List<string> motionOrder = new List<string>();
+        private readonly List<string> motionOrder = new List<string>();
+        private readonly Dictionary<string, int> motionDepths = new Dictionary<string, int>();
+        private readonly Comparison<string> compareMotionDepth;
+        private readonly Predicate<string> completedMotionPredicate;
         private readonly List<string> completedMotion = new List<string>();
+        private int CompareMotionDepth(string a, string b) { return motionDepths[a].CompareTo(motionDepths[b]); }
+        private bool MotionCompleted(string id) { return !motionTargets.ContainsKey(id); }
         private void Spawn(Entity e)
         {
             GameObject prefab; if (!prefabs.TryGetValue(e.Prefab, out prefab) || prefab == null) throw new ProtocolException("Unknown or ambiguous native prefab: " + e.Prefab);
@@ -849,16 +860,25 @@ namespace SummerCoop.Game
         {
             float blend = 1 - (float)Math.Exp(-dt * 20);
             completedMotion.Clear();
-            if (motionOrderDirty) { motionOrder = new List<string>(motionTargets.Keys); Dictionary<string, int> depths = new Dictionary<string, int>(); foreach (string id in motionOrder) depths[id] = NativeDepth(ObjectOf(id)); motionOrder.Sort(delegate(string a, string b) { return depths[a].CompareTo(depths[b]); }); motionOrderDirty = false; }
+            if (motionOrderDirty)
+            {
+                motionOrder.Clear(); motionOrder.AddRange(motionTargets.Keys);
+                motionDepths.Clear();
+                try { foreach (string id in motionOrder) motionDepths[id] = NativeDepth(ObjectOf(id)); motionOrder.Sort(compareMotionDepth); }
+                finally { motionDepths.Clear(); }
+                motionOrderDirty = false;
+            }
             foreach (string id in motionOrder)
             {
                 BodyPose pose = motionTargets[id];
-                GameObject go = ObjectOf(pose.Id); if (go == null) { completedMotion.Add(id); continue; } Vector3 target = To(pose.Position);
-                go.transform.position = Vector3.Distance(go.transform.position, target) > 3 ? target : Vector3.Lerp(go.transform.position, target, blend);
-                go.transform.rotation = Quaternion.Slerp(go.transform.rotation, To(pose.Rotation), blend);
-                if ((go.transform.position - target).sqrMagnitude < 0.00000001f && Math.Abs(Quaternion.Dot(go.transform.rotation, To(pose.Rotation))) > 0.9999999f) { go.transform.position = target; go.transform.rotation = To(pose.Rotation); completedMotion.Add(id); }
+                ObjectBinding binding;
+                if (!Objects.TryGetValue(pose.Id, out binding) || binding.Object == null) { completedMotion.Add(id); continue; }
+                Transform transform = binding.Transform; Vector3 target = To(pose.Position), position = transform.position;
+                transform.position = Vector3.Distance(position, target) > 3 ? target : Vector3.Lerp(position, target, blend);
+                transform.rotation = Quaternion.Slerp(transform.rotation, To(pose.Rotation), blend);
+                if ((transform.position - target).sqrMagnitude < 0.00000001f && Math.Abs(Quaternion.Dot(transform.rotation, To(pose.Rotation))) > 0.9999999f) { transform.position = target; transform.rotation = To(pose.Rotation); completedMotion.Add(id); }
             }
-            if (completedMotion.Count > 0) { foreach (string id in completedMotion) motionTargets.Remove(id); motionOrder.RemoveAll(delegate(string id) { return !motionTargets.ContainsKey(id); }); }
+            if (completedMotion.Count > 0) { foreach (string id in completedMotion) motionTargets.Remove(id); motionOrder.RemoveAll(completedMotionPredicate); }
         }
         private static int NativeDepth(GameObject go) { int depth = 0; if (go != null) for (Transform t = go.transform; t.parent != null; t = t.parent) depth++; return depth; }
         public static void DescribeRequests(FsmBinding b)

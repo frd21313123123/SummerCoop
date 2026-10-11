@@ -12,6 +12,8 @@ namespace SummerCoop.Game
     {
         private readonly WorldRegistry registry;
         private readonly Dictionary<string, float> leases = new Dictionary<string, float>();
+        private readonly List<string> leaseScan = new List<string>();
+        private readonly List<string> driverScan = new List<string>();
         private readonly Dictionary<string, string> originals = new Dictionary<string, string>();
         public readonly Dictionary<string, DriveInput> Drivers = new Dictionary<string, DriveInput>();
         private readonly Dictionary<string, Dictionary<Behaviour, bool>> controllerStates = new Dictionary<string, Dictionary<Behaviour, bool>>();
@@ -161,11 +163,14 @@ namespace SummerCoop.Game
                 if (p.Id == "host" || p.Held == "") continue;
                 MoveHeld(p);
             }
-            foreach (string id in new List<string>(leases.Keys)) if (Time.realtimeSinceStartup > leases[id])
+            leaseScan.Clear(); leaseScan.AddRange(leases.Keys);
+            foreach (string id in leaseScan) if (Time.realtimeSinceStartup > leases[id])
             {
                 FsmBinding b = registry.FsmOf(id); if (b != null && b.WaitingState != "") ExecuteState(b, b.WaitingState); leases.Remove(id);
             }
-            foreach (string id in new List<string>(Drivers.Keys)) if (Time.realtimeSinceStartup - Drivers[id].Updated > 0.35f) Drivers.Remove(id);
+            driverScan.Clear(); driverScan.AddRange(Drivers.Keys);
+            foreach (string id in driverScan) if (Time.realtimeSinceStartup - Drivers[id].Updated > 0.35f) Drivers.Remove(id);
+            leaseScan.Clear(); driverScan.Clear();
         }
         private static Vector3 HeldPosition(Player player) { return WorldRegistry.To(player.Position) + Vector3.up * 1.35f + WorldRegistry.To(player.Rotation) * Quaternion.Euler(player.Pitch, 0, 0) * Vector3.forward * 1.2f; }
         private void MoveHeld(Player player) { GameObject go = registry.ObjectOf(player.Held); if (go != null) { go.transform.position = HeldPosition(player); go.transform.rotation = WorldRegistry.To(player.Rotation); } }

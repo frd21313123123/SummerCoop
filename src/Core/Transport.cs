@@ -59,6 +59,7 @@ namespace SummerCoop.Core
         {
             public string Id;
             public TcpClient Client;
+            public IPAddress RemoteAddress;
             public byte[] Token;
             public IPEndPoint DatagramEndpoint;
             public Queue<byte[]> Outbound = new Queue<byte[]>();
@@ -84,7 +85,7 @@ namespace SummerCoop.Core
             {
                 t.udp = new UdpClient(new IPEndPoint(IPAddress.Any, port));
                 t.listener = new TcpListener(IPAddress.Any, port); t.listener.Start(4);
-                t.Background(t.Accept); t.Background(t.ReadDatagrams); return t;
+                t.Background(t.ReadDatagrams); t.Background(t.Accept); return t;
             }
             catch { t.Dispose(); throw; }
         }
@@ -127,7 +128,14 @@ namespace SummerCoop.Core
         }
         private void Register(Connection c)
         {
-            c.Client.NoDelay = true; c.Client.SendTimeout = 5000;
+            try
+            {
+                c.Client.NoDelay = true; c.Client.SendTimeout = 5000;
+                // A TCP connection's peer IP is fixed. Legacy Mono resolves and
+                // allocates RemoteEndPoint on every getter; never do that under gate.
+                c.RemoteAddress = ((IPEndPoint)c.Client.Client.RemoteEndPoint).Address;
+            }
+            catch { c.Client.Close(); throw; }
             lock (gate) { if (closed) { c.Client.Close(); return; } connections.Add(c.Id, c); }
             Background(delegate { WriteStream(c); });
             Background(delegate { ReadStream(c); });
@@ -159,7 +167,7 @@ namespace SummerCoop.Core
                     {
                         if (count != 17 || bytes[0] != 255) throw new ProtocolException("Missing transport negotiation");
                         c.Token = new byte[16]; Array.Copy(bytes, 1, c.Token, 0, 16);
-                        c.DatagramEndpoint = new IPEndPoint(((IPEndPoint)c.Client.Client.RemoteEndPoint).Address, port);
+                        c.DatagramEndpoint = new IPEndPoint(c.RemoteAddress, port);
                         events.Add(new TransportEvent { Kind = TransportEventKind.Connected, Peer = c.Id }); continue;
                     }
                     // Validate before queueing, so invalid input cannot affect game state.
@@ -215,7 +223,7 @@ namespace SummerCoop.Core
                         foreach (Connection c in connections.Values)
                         {
                             if (c.Token == null || c.Closed) continue;
-                            if (!((IPEndPoint)c.Client.Client.RemoteEndPoint).Address.Equals(sender.Address)) continue;
+                            if (!c.RemoteAddress.Equals(sender.Address)) continue;
                             bool equal = true; for (int i = 0; i < 16; i++) if (c.Token[i] != receiveBuffer[i]) equal = false;
                             if (equal) { found = c; break; }
                         }
@@ -231,6 +239,7 @@ namespace SummerCoop.Core
         }
         public void Send(string peer, byte[] bytes, bool reliable)
         {
+            if (closed) return;
             Connection c; lock (gate) { if (!connections.TryGetValue(peer, out c)) return; }
             if (reliable) { if (bytes.Length > Protocol.MaxFrame) throw new ProtocolException("Frame too large"); Queue(c, bytes); return; }
             if (bytes.Length + 16 > Protocol.MaxDatagram) throw new ProtocolException("Datagram too large");

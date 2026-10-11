@@ -201,6 +201,37 @@ internal static class TestRunner
     }
     private static void ProtocolTests()
     {
+        Test("direct motion and pose packets preserve wire bytes, ownership, nesting and failed writer recovery", delegate
+        {
+            Pose pose = new Pose { Id = "тест", Sequence = 321, Pitch = -0.0f, Position = new V3(1.125f, -3.75f, 0.1f), Rotation = new Q4(0.25f, -0.5f, 0.125f, 1) };
+            Check(Codec.Hash(Codec.PoseFrame(pose)) == Codec.Hash(Codec.Packet(MessageKind.Pose, Codec.Pose(pose))), "Direct pose frame changed wire bytes");
+            MotionFrame motion = new MotionFrame { Sequence = 91 };
+            for (int i = 0; i < 13; i++) motion.Bodies.Add(new BodyPose { Id = "part-" + i, Position = new V3(i * 0.125f, -0.0f, 0.1f), Velocity = new V3(0, i * 0.01f, 0), Rotation = new Q4(0.25f, -0.5f, 0.125f, 1) });
+            byte[] packet = Codec.MotionPacket(motion); string hash = Codec.Hash(packet);
+            Check(hash == Codec.Hash(Codec.Packet(MessageKind.Motion, Codec.Motion(motion))), "Direct motion frame changed wire bytes");
+            MotionFrame first = Codec.Motion(Codec.View(packet));
+            byte[] nested = null;
+            byte[] outer = Codec.MakeFrame(MessageKind.Ping, delegate(BinaryWriter w) { w.Write(7); nested = Codec.MotionPacket(motion); w.Write(9); });
+            Check(Codec.Hash(nested) == hash && Codec.Hash(outer) == Codec.Hash(Codec.Packet(MessageKind.Ping, Codec.Make(delegate(BinaryWriter w) { w.Write(7); w.Write(9); }))), "Nested writer overwrote a live frame");
+            Throws(delegate { Codec.MakeFrame(MessageKind.Motion, delegate(BinaryWriter w) { w.Write(99); throw new IOException("writer failed"); }); });
+            Check(Codec.Hash(Codec.MotionPacket(motion)) == hash, "Failed writer retained stale prefix or payload");
+            motion.Bodies[0].Position = new V3(100, 200, 300); Codec.MotionPacket(motion); MotionFrame second = Codec.Motion(Codec.View(Codec.MotionPacket(motion)));
+            Check(Codec.Hash(packet) == hash && first.Bodies.Count == 13 && first.Bodies[0].Position.X == 0 && second.Bodies[0].Position.X == 100, "Returned packet or retained decoded body was reused");
+            Throws(delegate { Codec.MakeFrame(MessageKind.Motion, delegate(BinaryWriter w) { w.Write(new byte[Protocol.MaxFrame]); }); });
+            Check(Codec.Hash(Codec.PoseFrame(pose)) == Codec.Hash(Codec.Packet(MessageKind.Pose, Codec.Pose(pose))), "Oversized frame poisoned the reusable writer");
+        });
+        Test("colliding hot UTF8 strings retain independent exact values in the bounded cache", delegate
+        {
+            // These different ASCII strings have the same 32-bit FNV-1a hash.
+            byte[] bytes = Codec.Make(delegate(BinaryWriter w) { foreach (string s in new string[] { "costarring", "liquid", "costarring", "liquid", "дверь 🚗", "дверь 🚗" }) Codec.Text(w, s); });
+            Codec.Read(bytes, delegate(BinaryReader r)
+            {
+                string a = Codec.Text(r), b = Codec.Text(r);
+                Check(a == "costarring" && b == "liquid", "Hash collision aliased different strings");
+                Check(object.ReferenceEquals(a, Codec.Text(r)) && object.ReferenceEquals(b, Codec.Text(r)), "Colliding hot values allocated new strings");
+                string unicode = Codec.Text(r); Check(unicode == "дверь 🚗" && object.ReferenceEquals(unicode, Codec.Text(r)), "UTF8 cache changed a multi-byte value");
+            });
+        });
         Test("packet views decode bounded immutable slices and snapshot chunks without copying", delegate
         {
             Command command = Cmd(17, CommandKind.Attach, "part"); command.Argument = "Assemble";
@@ -684,13 +715,19 @@ internal static class TestRunner
                     for (int n = 0; n < 8; n++)
                     {
                         byte[] packet = Codec.Packet(MessageKind.Pose, Codec.Pose(new Pose { Id = "buffer-proof-" + new string('x', n * 9), Sequence = n + 100, Position = new V3(n, -n, n * 0.25f) }));
-                        sent.Add(packet); clients[1].Send("host", packet, false);
+                        sent.Add(packet); byte[] outbound = (byte[])packet.Clone(); clients[1].Send("host", outbound, false);
+                        // UDP Send owns an envelope before returning, even when the
+                        // operating-system send happens later on the background writer.
+                        Array.Clear(outbound, 0, outbound.Length);
                     }
                     clock.Restart();
                     while (clock.ElapsedMilliseconds < 3000 && (retainedHost.Count < 8 || retainedClient.Count < 8))
                     {
                         TransportEvent e;
-                        while (host.Poll(out e)) if (e.Kind == TransportEventKind.Data && !e.Reliable) { retainedHost.Add(e.Data); host.Send(e.Peer, e.Data, false); }
+                        while (host.Poll(out e)) if (e.Kind == TransportEventKind.Data && !e.Reliable)
+                        {
+                            retainedHost.Add(e.Data); byte[] outbound = (byte[])e.Data.Clone(); host.Send(e.Peer, outbound, false); Array.Clear(outbound, 0, outbound.Length);
+                        }
                         while (clients[1].Poll(out e)) if (e.Kind == TransportEventKind.Data && !e.Reliable) retainedClient.Add(e.Data);
                         Thread.Sleep(2);
                     }

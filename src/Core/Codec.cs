@@ -49,7 +49,7 @@ namespace SummerCoop.Core
         [ThreadStatic] private static CachedText[] readTextCache;
         [ThreadStatic] private static Atom[] readNumbers, readBooleans, readZeroVectors, readIdentityRotations;
         [ThreadStatic] private static Atom readUnitVector;
-        private sealed class CachedText { public byte[] Bytes; public int Length; public string Value; }
+        private sealed class CachedText { public byte[] Bytes; public int Length; public uint Hash; public string Value; }
         private static readonly UTF8Encoding StrictUtf8 = new UTF8Encoding(false, true);
         private sealed class WriteBuffer
         {
@@ -96,9 +96,31 @@ namespace SummerCoop.Core
         }
         public static byte[] Make(Action<BinaryWriter> write)
         {
+            return WriteBuffered(0, false, write);
+        }
+        // Encode a complete immutable packet in one owned array, without first
+        // materializing and then copying a separate payload. Wire bytes are unchanged.
+        public static byte[] MakeFrame(MessageKind kind, Action<BinaryWriter> write)
+        {
+            return WriteBuffered(kind, true, write);
+        }
+        private static byte[] WriteBuffered(MessageKind kind, bool framed, Action<BinaryWriter> write)
+        {
             if (writeBuffers == null) writeBuffers = new Stack<WriteBuffer>();
             WriteBuffer buffer = writeBuffers.Count == 0 ? new WriteBuffer() : writeBuffers.Pop();
-            try { write(buffer.Writer); buffer.Writer.Flush(); return buffer.Stream.ToArray(); }
+            try
+            {
+                if (framed) { buffer.Stream.SetLength(15); buffer.Stream.Position = 15; }
+                write(buffer.Writer); buffer.Writer.Flush();
+                if (framed && (buffer.Stream.Length < 15 || buffer.Stream.Length > Protocol.MaxFrame)) throw new ProtocolException("Packet too large");
+                byte[] bytes = buffer.Stream.ToArray();
+                if (framed)
+                {
+                    Store32(bytes, 0, Magic); bytes[4] = (byte)Protocol.Version; bytes[5] = (byte)(Protocol.Version >> 8); bytes[6] = (byte)kind;
+                    Store32(bytes, 7, (uint)(bytes.Length - 15)); Store32(bytes, 11, ~CrcAppend(0xffffffff, bytes, 15, bytes.Length - 15));
+                }
+                return bytes;
+            }
             finally
             {
                 // Returned byte arrays own their storage. Reentrant and other-thread calls get separate writers.
@@ -141,18 +163,25 @@ namespace SummerCoop.Core
             if (n > 256) return StrictUtf8.GetString(readTextBuffer, 0, n);
             uint hash = 2166136261; for (int i = 0; i < n; i++) hash = (hash ^ readTextBuffer[i]) * 16777619;
             if (readTextCache == null) readTextCache = new CachedText[8192];
-            int slot = (int)(hash & 8191); CachedText cached = readTextCache[slot];
-            if (cached != null && cached.Length == n)
+            int slot = (int)(hash & 2047) * 4; CachedText cached;
+            for (int way = 0; way < 4; way++)
             {
+                cached = readTextCache[slot + way];
+                if (cached == null) break;
+                if (cached.Hash != hash || cached.Length != n) continue;
                 bool same = true; for (int i = 0; i < n; i++) if (cached.Bytes[i] != readTextBuffer[i]) { same = false; break; }
-                if (same) return cached.Value;
+                if (!same) continue;
+                for (int i = way; i > 0; i--) readTextCache[slot + i] = readTextCache[slot + i - 1];
+                readTextCache[slot] = cached; return cached.Value;
             }
             string value = StrictUtf8.GetString(readTextBuffer, 0, n);
-            // Replace only this slot. A large snapshot must not flush every hot property name.
-            // Compare bytes on hits; hash collisions never alias different strings.
-            if (cached == null) readTextCache[slot] = cached = new CachedText();
+            // Four entries per bucket keep colliding hot names and IDs without
+            // increasing the 8192-entry bound. Hits still compare every byte.
+            cached = readTextCache[slot + 3]; if (cached == null) cached = new CachedText();
             if (cached.Bytes == null || cached.Bytes.Length < n) cached.Bytes = new byte[n];
-            Array.Copy(readTextBuffer, cached.Bytes, n); cached.Length = n; cached.Value = value; return value;
+            Array.Copy(readTextBuffer, cached.Bytes, n); cached.Length = n; cached.Hash = hash; cached.Value = value;
+            for (int i = 3; i > 0; i--) readTextCache[slot + i] = readTextCache[slot + i - 1];
+            readTextCache[slot] = cached; return value;
         }
         public static int Count(BinaryReader r, int maximum)
         {
@@ -433,7 +462,9 @@ namespace SummerCoop.Core
         }
         public static CommandResult Result(PacketView packet) { CommandResult a = null; Read(packet, delegate(BinaryReader r) { a = ReadResult(r); }); return a; }
         private static CommandResult ReadResult(BinaryReader r) { return new CommandResult { Sequence = r.ReadInt64(), Revision = r.ReadInt64(), Accepted = r.ReadBoolean(), Reason = Text(r) }; }
-        public static byte[] Pose(Pose p) { return Make(delegate(BinaryWriter w) { Text(w, p.Id); w.Write(p.Sequence); Vector(w, p.Position); Rotation(w, p.Rotation); w.Write(p.Pitch); }); }
+        private static void WritePose(BinaryWriter w, Pose p) { Text(w, p.Id); w.Write(p.Sequence); Vector(w, p.Position); Rotation(w, p.Rotation); w.Write(p.Pitch); }
+        public static byte[] Pose(Pose p) { return Make(delegate(BinaryWriter w) { WritePose(w, p); }); }
+        public static byte[] PoseFrame(Pose p) { return MakeFrame(MessageKind.Pose, delegate(BinaryWriter w) { WritePose(w, p); }); }
         public static Pose Pose(byte[] data)
         {
             Pose p = null; Read(data, delegate(BinaryReader r) { p = ReadPose(r); }); return p;
@@ -445,8 +476,10 @@ namespace SummerCoop.Core
         }
         public static byte[] Motion(MotionFrame frame)
         {
-            return Make(delegate(BinaryWriter w) { w.Write(frame.Sequence); w.Write(frame.Bodies.Count); foreach (BodyPose b in frame.Bodies) { Text(w, b.Id); Vector(w, b.Position); Rotation(w, b.Rotation); Vector(w, b.Velocity); } });
+            return Make(delegate(BinaryWriter w) { WriteMotion(w, frame); });
         }
+        private static void WriteMotion(BinaryWriter w, MotionFrame frame) { w.Write(frame.Sequence); w.Write(frame.Bodies.Count); foreach (BodyPose b in frame.Bodies) { Text(w, b.Id); Vector(w, b.Position); Rotation(w, b.Rotation); Vector(w, b.Velocity); } }
+        public static byte[] MotionPacket(MotionFrame frame) { return MakeFrame(MessageKind.Motion, delegate(BinaryWriter w) { WriteMotion(w, frame); }); }
         public static MotionFrame Motion(byte[] data)
         {
             MotionFrame f = null; Read(data, delegate(BinaryReader r) { f = ReadMotion(r); }); return f;
@@ -454,7 +487,7 @@ namespace SummerCoop.Core
         public static MotionFrame Motion(PacketView packet) { MotionFrame f = null; Read(packet, delegate(BinaryReader r) { f = ReadMotion(r); }); return f; }
         private static MotionFrame ReadMotion(BinaryReader r)
         {
-            MotionFrame f = new MotionFrame(); f.Sequence = r.ReadInt64(); int n = Count(r, 16); for (int i = 0; i < n; i++) f.Bodies.Add(new BodyPose { Id = Text(r), Position = Vector(r), Rotation = Rotation(r), Velocity = Vector(r) }); return f;
+            long sequence = r.ReadInt64(); int n = Count(r, 16); MotionFrame f = new MotionFrame(n) { Sequence = sequence }; for (int i = 0; i < n; i++) f.Bodies.Add(new BodyPose { Id = Text(r), Position = Vector(r), Rotation = Rotation(r), Velocity = Vector(r) }); return f;
         }
         private static readonly uint[] CrcTable = MakeCrcTable();
         private static uint[] MakeCrcTable()

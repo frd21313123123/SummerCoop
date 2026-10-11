@@ -118,7 +118,7 @@ namespace SummerCoop.Game
                     if (e.Kind == EntityKind.Fsm || e.Kind == EntityKind.Globals) continue;
                     GameObject go = r.Registry.ObjectOf(e.Id);
                     if (go == null) { missing++; if (e.Active) missingActive++; if (missing <= 12) w.WriteLine("MISSING=" + e.Key + " active=" + e.Active); continue; }
-                    if (go.activeSelf != e.Active) mismatched++;
+                    if (go.activeSelf != e.Active) { mismatched++; if (mismatched <= 12) w.WriteLine("ACTIVE_MISMATCH=" + e.Key + " expected=" + e.Active + " actual=" + go.activeSelf); }
                     Rigidbody body = go.GetComponent<Rigidbody>(); if (body != null && !body.isKinematic) dynamic++;
                 }
                 w.WriteLine("MISSING_OBJECTS=" + missing); w.WriteLine("MISSING_ACTIVE_OBJECTS=" + missingActive); w.WriteLine("ACTIVE_MISMATCHES=" + mismatched); w.WriteLine("DYNAMIC_BODIES=" + dynamic);

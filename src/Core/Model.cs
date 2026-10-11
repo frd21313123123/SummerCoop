@@ -172,7 +172,9 @@ namespace SummerCoop.Core
     public sealed class MotionFrame
     {
         public long Sequence;
-        public List<BodyPose> Bodies = new List<BodyPose>();
+        public List<BodyPose> Bodies;
+        public MotionFrame() : this(0) { }
+        public MotionFrame(int capacity) { Bodies = new List<BodyPose>(capacity); }
     }
 
     public static class Identity

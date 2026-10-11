@@ -87,8 +87,9 @@ namespace SummerCoop.Game
         public static bool BoatAxisPrefix(HutongGames.PlayMaker.Actions.GetAxis __instance)
         {
             CoopRuntime r = CoopRuntime.Instance;
-            if (r == null || !r.Active || !r.Session.IsHost || r.Adapter == null || __instance.Owner == null || __instance.Owner.transform.root.name != "BOAT") return true;
+            if (r == null || !r.Active || !r.Session.IsHost || r.Adapter == null) return true;
             DriveInput input = r.Adapter.BoatInput(r.Session.World); if (input == null) return true;
+            if (__instance.Owner == null || __instance.Owner.transform.root.name != "BOAT") return true;
             string axis = __instance.axisName.Value.ToLowerInvariant(); float value;
             if (axis.IndexOf("steer", StringComparison.Ordinal) >= 0 || axis == "horizontal") value = input.Steering;
             else if (axis.IndexOf("throttle", StringComparison.Ordinal) >= 0 || axis == "vertical") value = input.Throttle;

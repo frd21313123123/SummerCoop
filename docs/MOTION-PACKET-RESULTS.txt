@@ -1,0 +1,24 @@
+Offline CLR allocation replay; not Unity/Mono FPS proof
+Runtime=10.0.11, frames=20000, bodies=13, rounds=4, packetSHA256=fdafdcda2c78fba0ad787300b7e551e0e4004f69686b165793d56cd58dba1fb2
+round=0 peers=1 mode=0 allocated=57920000 elapsedMs=129.14
+round=0 peers=1 mode=1 allocated=39520000 elapsedMs=121.68
+round=1 peers=1 mode=1 allocated=39520000 elapsedMs=127.75
+round=1 peers=1 mode=0 allocated=57920000 elapsedMs=131.18
+round=2 peers=1 mode=0 allocated=57920000 elapsedMs=140.27
+round=2 peers=1 mode=1 allocated=39520000 elapsedMs=143.96
+round=3 peers=1 mode=1 allocated=39520000 elapsedMs=61.30
+round=3 peers=1 mode=0 allocated=57920000 elapsedMs=65.52
+MEAN peers=1 mode=0 allocated=57920000
+MEAN peers=1 mode=1 allocated=39520000
+round=0 peers=3 mode=0 allocated=133440000 elapsedMs=149.02
+round=0 peers=3 mode=1 allocated=77600000 elapsedMs=69.57
+round=1 peers=3 mode=1 allocated=77600000 elapsedMs=69.54
+round=1 peers=3 mode=0 allocated=133440000 elapsedMs=150.29
+round=2 peers=3 mode=0 allocated=133440000 elapsedMs=152.93
+round=2 peers=3 mode=1 allocated=77600000 elapsedMs=70.00
+round=3 peers=3 mode=1 allocated=77600000 elapsedMs=69.38
+round=3 peers=3 mode=0 allocated=133440000 elapsedMs=150.77
+MEAN peers=3 mode=0 allocated=133440000
+MEAN peers=3 mode=1 allocated=77600000
+Modes: 0=payload + per-peer packet, 1=one shared immutable packet; both include independent LAN token envelopes. sink=647208000
+
