@@ -147,9 +147,39 @@ internal static class LocalHierarchyTests
             World before = world.ReferenceSnapshot();
             Check(LocalHierarchy.RemoveFromCheckpoint(world) == 2 && world.Entities.Count == 6, "Settings scope deleted similarly named gameplay objects");
             foreach (Entity survivor in world.Entities.Values) Check(object.ReferenceEquals(before.Entities[survivor.Id], survivor), "Settings scope rewrote a surviving object");
-            Check(LocalHierarchy.IsSystemMenuName("Systems", "OptionsMenu") && LocalHierarchy.IsSystemMenuName("Systems", "Options")
-                && LocalHierarchy.IsSystemMenuName("Systems", "InitializeControls") && !LocalHierarchy.IsSystemMenuName("STORE", "OptionsMenu")
-                && !LocalHierarchy.IsSystemMenuName("Systems", "OptionsMenuSign"), "Native settings name matching extends beyond the three local nodes");
+            Check(LocalHierarchy.IsPersonalSystemName("Systems", "OptionsMenu") && LocalHierarchy.IsPersonalSystemName("Systems", "Options")
+                && LocalHierarchy.IsPersonalSystemName("Systems", "InitializeControls") && !LocalHierarchy.IsPersonalSystemName("STORE", "OptionsMenu")
+                && !LocalHierarchy.IsPersonalSystemName("Systems", "OptionsMenuSign"), "Native settings name matching extends beyond the local nodes");
+        });
+        test("seated first-person camera is personal while carried parts remain shared", delegate
+        {
+            var world = new World { Revision = 17, Money = 3000 };
+            Add(world, "moped", "vehicle/JONNEZ", EntityKind.Vehicle, "JONNEZ", "Untagged", "");
+            Add(world, "pivot", "vehicle/JONNEZ/CameraPivot[0]", EntityKind.Object, "CameraPivot", "Untagged", "moped");
+            Add(world, "camera", "spawn/detached-camera", EntityKind.Object, "FPSCamera", "MainCamera", "pivot");
+            Add(world, "hand", "spawn/detached-camera/Hand[0]", EntityKind.Object, "Hand", "Untagged", "camera");
+            Add(world, "hand-fsm", "spawn/detached-camera/Hand[0]|fsm/PickUp/0", EntityKind.Fsm, "", "", "hand");
+            Entity part = Add(world, "part", "spawn/detached-camera/Hand[0]/starter[0]", EntityKind.Rigidbody, "starter(Clone)", "PART", "hand"); part.Prefab = "prefab/starter";
+            Entity use = Add(world, "use", "vehicle/JONNEZ/DriveTrigger[0]|fsm/PlayerTrigger/0", EntityKind.Fsm, "", "", "moped");
+            use.Properties["v/Camera"] = Atom.R("camera#UnityEngine.Camera"); use.Properties["v/Gear"] = Atom.N(1);
+            World before = world.ReferenceSnapshot();
+            Check(LocalHierarchy.RemoveFromCheckpoint(world) == 3, "Detached first-person camera was kept in the shared world");
+            Check(world.Entities.Count == 4 && world.Entities["part"].Parent == "" && world.Entities["part"].Prefab == "prefab/starter", "Camera recovery removed a held part or its identity");
+            Check(!world.Entities["use"].Properties.ContainsKey("v/Camera") && world.Entities["use"].Properties["v/Gear"].Number == 1, "Camera recovery changed shared moped state");
+            Check(before.Entities.Count == 7 && before.Entities["part"].Parent == "hand" && before.Entities["use"].Properties.ContainsKey("v/Camera"), "Camera recovery mutated the retained snapshot");
+            Check(LocalHierarchy.IsNestedName("FPSCamera") && LocalHierarchy.IsNestedName("FPSCamera(Clone)") && !LocalHierarchy.IsNestedName("CameraPivot"), "Camera matching includes shared vehicle pivots");
+        });
+        test("personal death lifecycle is removed while vehicle damage and NPC deaths survive", delegate
+        {
+            var world = new World();
+            Add(world, "death", "scene/Systems[0]/Death[0]", EntityKind.Object, "Death", "Untagged", "");
+            Add(world, "death-fsm", "scene/Systems[0]/Death[0]|fsm/Activate Dead Body/0", EntityKind.Fsm, "", "", "death");
+            Add(world, "screen", "scene/Systems[0]/Death[0]/GameOverScreen[0]", EntityKind.Object, "GameOverScreen", "Untagged", "death");
+            Add(world, "moped", "vehicle/JONNEZ", EntityKind.Vehicle, "JONNEZ", "Untagged", "");
+            Add(world, "damage", "vehicle/JONNEZ/DriverHeadPivot[0]|fsm/Death/0", EntityKind.Fsm, "", "", "moped");
+            Add(world, "npc", "scene/NPC[0]/Death[0]", EntityKind.Object, "Death", "Untagged", "");
+            Check(LocalHierarchy.RemoveFromCheckpoint(world) == 3 && world.Entities.Count == 3 && world.Entities.ContainsKey("damage") && world.Entities.ContainsKey("npc"), "Death repair affected shared damage or NPC state");
+            Check(LocalHierarchy.IsPersonalSystemName("Systems", "Death") && !LocalHierarchy.IsPersonalSystemName("NPC", "Death"), "Personal death scope is too broad");
         });
         test("repaired checkpoint restarts with purchases, bolts and wiring intact", delegate
         {

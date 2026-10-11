@@ -86,10 +86,23 @@ namespace SummerCoop.Game
             CoopRuntime r = CoopRuntime.Instance;
             FsmBinding b = r.Registry.Binding(__instance);
             if (b == null || b.Personal) return true;
-            if (b.Requests.Count == 0 || !CanRunLocally(state)) return false;
+            if (b.Requests.Count == 0) return false;
+            if (!CanRunLocally(state)) { ResumeInput(b); return false; }
             // The scene can have entered this state before multiplayer became active.
             // Remove its shared effects from the already initialized update list too.
             if (!SafeState(state)) foreach (FsmStateAction effect in Projection(state).Effects) state.ActiveActions.Remove(effect);
+            return true;
+        }
+        public static bool ResumeInput(FsmBinding binding)
+        {
+            if (binding == null || binding.Component == null || binding.WaitingState == "") return false;
+            FsmState waiting = binding.Component.Fsm.GetState(binding.WaitingState);
+            if (!CanRunLocally(waiting)) return false;
+            ClientProjection projection = Projection(waiting); bool replaying = Replaying;
+            projection.Suspend(); Replaying = true;
+            try { NativeAdapter.ExecuteState(binding, waiting.Name); }
+            finally { Replaying = replaying; projection.Restore(); }
+            foreach (FsmStateAction effect in projection.Effects) waiting.ActiveActions.Remove(effect);
             return true;
         }
         public static bool SafeState(FsmState state)

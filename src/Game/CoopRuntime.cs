@@ -161,12 +161,14 @@ namespace SummerCoop.Game
             Session.JoinBarrier = delegate(bool waiting)
             {
                 if (Joining == waiting) return;
+                InteractionProbe.Sample(this, "BARRIER_BEFORE=" + waiting);
                 Joining = waiting;
                 RefreshHooks();
                 if (waiting) { previousScale = Time.timeScale; Time.timeScale = 0; SetStatus("Синхронизация нового игрока…"); }
                 else { Time.timeScale = previousScale; }
+                InteractionProbe.Sample(this, "BARRIER_AFTER=" + waiting);
             };
-            Session.PrepareNativeSave = delegate { SetStatus("Подготовка сохранения…"); NativeSave.Capture(Registry, saves.CurrentDirectory); byte[] bytes = SaveIsolation.Pack(saves.CurrentDirectory); SetStatus("Передача сохранения: " + bytes.Length + " байт"); return bytes; };
+            Session.PrepareNativeSave = delegate { SetStatus("Подготовка сохранения…"); InteractionProbe.Sample(this, "SAVE_BEFORE"); NativeSave.Capture(Registry, saves.CurrentDirectory); InteractionProbe.Sample(this, "SAVE_AFTER"); byte[] bytes = SaveIsolation.Pack(saves.CurrentDirectory); SetStatus("Передача сохранения: " + bytes.Length + " байт"); return bytes; };
             Session.NativeSaveReceived = delegate(byte[] bytes)
             {
                 SaveIsolation.Unpack(saves.CurrentDirectory, bytes); ConfigureLoad();
@@ -227,6 +229,7 @@ namespace SummerCoop.Game
             if (Argument("--summercoop-test-report") != "" && Argument("--summercoop-test-save-restore") == "yes") gameObject.AddComponent<SaveRestoreProbe>();
             if (Argument("--summercoop-test-report") != "" && Argument("--summercoop-test-real-input") != "") gameObject.AddComponent<RealInputProbe>();
             if (Argument("--summercoop-test-report") != "" && Argument("--summercoop-test-native-menu") == "yes") gameObject.AddComponent<NativeMenuProbe>();
+            if (InteractionProbe.Enabled) gameObject.AddComponent<InteractionProbe>();
         }
         private void RefreshHooks() { NativeHooks.UpdateMode = Registry != null && Active ? (Joining ? 1 : Session.IsHost ? 0 : 2) : 0; }
         private void Update()
@@ -356,7 +359,7 @@ namespace SummerCoop.Game
             if (binding != null && fsm.Name == "PlayerTrigger")
             {
                 Player player = Session.World.Players[Session.LocalId];
-                if (state.Name == "Player in car" || state.Name.StartsWith("Get positions", StringComparison.OrdinalIgnoreCase))
+                if (state.Name == "Player in car" || state.Name == "Reset view" || state.Name.StartsWith("Get positions", StringComparison.OrdinalIgnoreCase))
                 {
                     if (player.Seat == binding.Id) return true;
                     return RequestPersonal(CommandKind.EnterSeat, binding.Id, fsm, state.Name);

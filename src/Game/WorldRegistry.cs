@@ -99,7 +99,7 @@ namespace SummerCoop.Game
             if (go == null) return true;
             if (LocalHierarchy.IsRootName(go.transform.root.name)) return true;
             for (Transform cursor = go.transform; cursor != null; cursor = cursor.parent)
-                if (LocalHierarchy.IsNestedName(cursor.name) || cursor.parent != null && LocalHierarchy.IsSystemMenuName(cursor.parent.name, cursor.name)) return true;
+                if (LocalHierarchy.IsNestedName(cursor.name) || cursor.parent != null && LocalHierarchy.IsPersonalSystemName(cursor.parent.name, cursor.name)) return true;
             return false;
         }
         public static bool PersonalVariable(string name)
@@ -895,7 +895,13 @@ namespace SummerCoop.Game
         {
             if (host) return false;
             CoopRuntime runtime = CoopRuntime.Instance; Player actor;
-            return runtime != null && runtime.Session != null && runtime.Session.World != null && runtime.Session.World.Players.TryGetValue(runtime.Session.LocalId, out actor) && actor.Held == id;
+            if (runtime == null || runtime.Session == null || runtime.Session.World == null
+                || !runtime.Session.World.Players.TryGetValue(runtime.Session.LocalId, out actor) || actor.Held == "") return false;
+            if (actor.Held == id) return true;
+            // A carried vehicle has independently registered wheels and controls.
+            // Their world poses must follow the local hand with the carried root.
+            GameObject held = ObjectOf(actor.Held), child = ObjectOf(id);
+            return held != null && child != null && child.transform.IsChildOf(held.transform);
         }
         public static void DescribeRequests(FsmBinding b)
         {

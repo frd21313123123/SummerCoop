@@ -11,23 +11,25 @@ namespace SummerCoop.Core
             if (name == null) return false;
             if (name.EndsWith("(Clone)", StringComparison.Ordinal)) name = name.Substring(0, name.Length - 7);
             return name == "PLAYER" || name == "GUI" || name == "HUD" || name == "Steam"
+                || name == "FPSCamera"
                 || name.StartsWith("MSCLoader", StringComparison.Ordinal) || name.StartsWith("SummerCoop", StringComparison.Ordinal);
         }
         public static bool IsNestedName(string name)
         {
             return name != null && (name == "PLAYER" || name == "PLAYER(Clone)"
+                || name == "FPSCamera" || name == "FPSCamera(Clone)"
                 || name.StartsWith("MSCLoader", StringComparison.Ordinal) || name.StartsWith("SummerCoop", StringComparison.Ordinal));
         }
-        public static bool IsSystemMenuName(string parent, string name)
+        public static bool IsPersonalSystemName(string parent, string name)
         {
-            return parent == "Systems" && (name == "Options" || name == "OptionsMenu" || name == "InitializeControls");
+            return parent == "Systems" && (name == "Options" || name == "OptionsMenu" || name == "InitializeControls" || name == "Death");
         }
-        private static bool IsSystemMenuKey(string key)
+        private static bool IsPersonalSystemKey(string key)
         {
             // Collect only these roots. Their descendants are removed by Contains
-            // below, without adding every menu label and button as another root.
+            // below, without adding every menu label or death overlay as a root.
             return key == "scene/Systems[0]/Options[0]" || key == "scene/Systems[0]/OptionsMenu[0]"
-                || key == "scene/Systems[0]/InitializeControls[0]";
+                || key == "scene/Systems[0]/InitializeControls[0]" || key == "scene/Systems[0]/Death[0]";
         }
 
         private static bool Contains(string root, string key)
@@ -57,7 +59,7 @@ namespace SummerCoop.Core
         {
             var roots = new List<string>();
             foreach (Entity entity in world.Entities.Values)
-                if (PersonalRoot(entity) || IsSystemMenuKey(entity.Key) && entity.Kind != EntityKind.Fsm) roots.Add(entity.Key);
+                if (PersonalRoot(entity) || IsPersonalSystemKey(entity.Key) && entity.Kind != EntityKind.Fsm) roots.Add(entity.Key);
             if (roots.Count == 0) return 0;
             // Held parts retain their own identity, even if an old build registered
             // one beneath a personal key. Preserve their complete subtrees.
