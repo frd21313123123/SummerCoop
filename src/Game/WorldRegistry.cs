@@ -641,10 +641,13 @@ namespace SummerCoop.Game
                     ObjectBinding b;
                     if (!Objects.TryGetValue(e.Id, out b) || b.Object == null) continue;
                     if (e.Key == "__deleted") { UnityEngine.Object.Destroy(b.Object); continue; }
-                    Transform parent = e.Parent == "" ? null : ObjectOf(e.Parent) == null ? null : ObjectOf(e.Parent).transform;
-                    if (e.Parent != "" && parent == null) { Entity missing; throw new ProtocolException("Missing native parent for " + e.Key + ": " + (world.Entities.TryGetValue(e.Parent, out missing) ? missing.Key : e.Parent)); }
-                    if (b.Transform.parent != parent) { b.Transform.parent = parent; motionOrderDirty = true; }
-                    if (full || !motionTargets.ContainsKey(e.Id)) { b.Transform.position = To(e.Position); b.Transform.rotation = To(e.Rotation); }
+                    if (!LocallyHeld(e.Id))
+                    {
+                        Transform parent = e.Parent == "" ? null : ObjectOf(e.Parent) == null ? null : ObjectOf(e.Parent).transform;
+                        if (e.Parent != "" && parent == null) { Entity missing; throw new ProtocolException("Missing native parent for " + e.Key + ": " + (world.Entities.TryGetValue(e.Parent, out missing) ? missing.Key : e.Parent)); }
+                        if (b.Transform.parent != parent) { b.Transform.parent = parent; motionOrderDirty = true; }
+                        if (full || !motionTargets.ContainsKey(e.Id)) { b.Transform.position = To(e.Position); b.Transform.rotation = To(e.Rotation); }
+                    }
                     bool activationChanged = b.Object.activeSelf != e.Active;
                     if (activationChanged) b.Object.SetActive(e.Active);
                     if (!host && !full && !activationChanged && object.ReferenceEquals(b.AppliedProperties, e.Properties))
@@ -851,7 +854,7 @@ namespace SummerCoop.Game
         {
             foreach (BodyPose body in frame.Bodies)
             {
-                long last; if (!Objects.ContainsKey(body.Id) || (motionSequences.TryGetValue(body.Id, out last) && frame.Sequence <= last)) continue;
+                long last; if (!Objects.ContainsKey(body.Id) || LocallyHeld(body.Id) || (motionSequences.TryGetValue(body.Id, out last) && frame.Sequence <= last)) continue;
                 if (!motionTargets.ContainsKey(body.Id)) motionOrderDirty = true;
                 motionSequences[body.Id] = frame.Sequence; motionTargets[body.Id] = body;
             }
@@ -870,6 +873,7 @@ namespace SummerCoop.Game
             }
             foreach (string id in motionOrder)
             {
+                if (LocallyHeld(id)) { completedMotion.Add(id); continue; }
                 BodyPose pose = motionTargets[id];
                 ObjectBinding binding;
                 if (!Objects.TryGetValue(pose.Id, out binding) || binding.Object == null) { completedMotion.Add(id); continue; }
@@ -881,8 +885,17 @@ namespace SummerCoop.Game
             if (completedMotion.Count > 0) { foreach (string id in completedMotion) motionTargets.Remove(id); motionOrder.RemoveAll(completedMotionPredicate); }
         }
         private static int NativeDepth(GameObject go) { int depth = 0; if (go != null) for (Transform t = go.transform; t.parent != null; t = t.parent) depth++; return depth; }
+        private bool LocallyHeld(string id)
+        {
+            if (host) return false;
+            CoopRuntime runtime = CoopRuntime.Instance; Player actor;
+            return runtime != null && runtime.Session != null && runtime.Session.World != null && runtime.Session.World.Players.TryGetValue(runtime.Session.LocalId, out actor) && actor.Held == id;
+        }
         public static void DescribeRequests(FsmBinding b)
         {
+            // FINISHED can be the native click event. Follow the read-only checks
+            // from input to the effect boundary, which must execute on the host.
+            Queue<string> pending = new Queue<string>(); HashSet<string> visited = new HashSet<string>(StringComparer.Ordinal);
             foreach (FsmState s in b.Component.FsmStates)
             {
                 bool input = false;
@@ -893,7 +906,14 @@ namespace SummerCoop.Game
                 }
                 if (!input) continue;
                 if (b.WaitingState == "") b.WaitingState = s.Name;
-                foreach (FsmTransition t in s.Transitions) if (t.EventName != "FINISHED" && t.EventName != "LOOP" && t.EventName != "RESET" && t.EventName != "STOP") b.Requests.Add(t.ToState);
+                foreach (FsmTransition t in s.Transitions) if (t.EventName != "LOOP" && t.EventName != "RESET" && t.EventName != "STOP") pending.Enqueue(t.ToState);
+            }
+            while (pending.Count > 0)
+            {
+                string destination = pending.Dequeue(); if (!visited.Add(destination)) continue;
+                FsmState state = b.Component.Fsm.GetState(destination); if (state == null) continue;
+                b.Requests.Add(destination);
+                if (NativeHooks.CanRunLocally(state)) foreach (FsmTransition transition in state.Transitions) pending.Enqueue(transition.ToState);
             }
             string name = b.Component.FsmName;
             if (name == "Screw") { if (b.Component.Fsm.GetState("Screw 2") != null) b.Requests.Add("Screw 2"); if (b.Component.Fsm.GetState("Unscrew 2") != null) b.Requests.Add("Unscrew 2"); }

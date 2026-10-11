@@ -1,6 +1,6 @@
 # Установщик Windows
 
-Готовый [SummerCoop-Setup.exe](https://github.com/frd21313123123/SummerCoop/releases/download/v0.1.0-alpha/SummerCoop-Setup.exe) содержит две DLL проверенной сборки `performance-packets` и вспомогательный EXE обновления совместимого мира. Скачивание DLL, PowerShell, регистрация сервисов и локальный GitHub runner ему не нужны. Установщик использует .NET Framework 4.x, входящий в Windows 10/11. MSCLoader устанавливается отдельно в режиме **Game Folder**.
+Готовый [SummerCoop-Setup.exe](https://github.com/frd21313123123/SummerCoop/releases/download/v0.1.1-alpha/SummerCoop-Setup.exe) содержит две DLL сборки `0.1.1-alpha` с исправлением меню и клиентских взаимодействий и вспомогательный EXE обновления совместимого мира. Передайте всем участникам тот же EXE и обновите хоста и клиентов. Установщик использует .NET Framework 4.x, входящий в Windows 10/11. MSCLoader устанавливается отдельно в режиме **Game Folder**.
 
 Он читает расположение Steam из реестра, `libraryfolders.vdf` и манифест игры `516750`. Поддерживаются несколько библиотек, старый и новый формат VDF, пробелы и кириллица в путях. Найденную папку можно изменить через «Обзор». При нескольких установках выбирайте нужную копию в списке.
 

@@ -42,10 +42,16 @@ namespace SummerCoop.Game
         private long sleepEpoch;
         private bool requestAccepted;
         private Fsm requestedFsm;
+        private string nativeHeld = "";
+        private PlayMakerFSM nativeHand;
+        private PlayMakerFSM recoverInput;
+        private string recoverState;
+        private int recoverAfterFrame;
         private CommandKind requestedKind;
         private static ulong pendingLobby;
         private float respawnTime;
-        private Rect panel = new Rect(20, 20, 450, 410);
+        private Rect panel = new Rect(20, 20, 500, 0);
+        private CoopMenuSkin menuSkin;
         private readonly Dictionary<string, float> requests = new Dictionary<string, float>();
         public string SaveRoot { get { return root; } }
         public string StatusText { get { return status; } }
@@ -134,7 +140,7 @@ namespace SummerCoop.Game
         public void PreLoad()
         {
             if (!awaitingScene || Application.loadedLevelName != "GAME") return;
-            ConfigureLoad(); if (NativeBaseline) return;
+            ConfigureLoad(); NativeHooks.ResetScene(); if (NativeBaseline) return;
             pendingRegistry = new WorldRegistry(hostPending, gameHash); pendingRegistry.IndexScene();
         }
         public void Loaded() { if (awaitingScene && Application.loadedLevelName == "GAME") { nativeLoaded = true; sceneBegan = Time.realtimeSinceStartup; } }
@@ -167,7 +173,7 @@ namespace SummerCoop.Game
             };
             Session.WorldReceived = delegate(World world, bool full)
             {
-                Registry.Apply(world, full); if (avatars != null) avatars.Reconcile(Session.World, Session.LocalId); ResumeHand();
+                Registry.Apply(world, full); if (avatars != null) avatars.Reconcile(Session.World, Session.LocalId); ResumeHand(); ReconcileHand();
                 if (!full && Session.World.SleepEpoch > sleepEpoch) { FsmFloat fatigue = FsmVariables.GlobalVariables.FindFsmFloat("PlayerFatigue"); if (fatigue != null) fatigue.Value = 0; }
                 sleepEpoch = Session.World.SleepEpoch;
                 if (full) SetStatus("Подключено. F6 — меню сессии");
@@ -213,6 +219,7 @@ namespace SummerCoop.Game
                 Registry.DumpPrefabs(Path.Combine(root, "prefabs.txt"));
             }
             if (Argument("--summercoop-test-report") != "") gameObject.AddComponent<IntegrationProbe>();
+            if (Argument("--summercoop-test-report") != "" && Argument("--summercoop-test-native-input") == "yes") gameObject.AddComponent<NativeInputProbe>();
         }
         private void RefreshHooks() { NativeHooks.UpdateMode = Registry != null && Active ? (Joining ? 1 : Session.IsHost ? 0 : 2) : 0; }
         private void Update()
@@ -227,6 +234,11 @@ namespace SummerCoop.Game
                 long stage = System.Diagnostics.Stopwatch.GetTimestamp();
                 HeapStamp heapStage = HeapBegin();
                 if (Session != null) Session.Update(Time.realtimeSinceStartup);
+                if (recoverInput != null && Time.frameCount > recoverAfterFrame)
+                {
+                    PlayMakerFSM component = recoverInput; string state = recoverState; recoverInput = null;
+                    if (Active && component.Fsm.GetState(state) != null) NativeAdapter.ExecuteState(new FsmBinding { Component = component }, state);
+                }
                 RefreshHooks();
                 HeapEnd(0, heapStage);
                 LastStages[0] = Elapsed(stage);
@@ -307,8 +319,10 @@ namespace SummerCoop.Game
             if (!Session.World.Entities.ContainsKey(b.Id)) return;
             if (!Active || Joining || b.Component == null) return;
             Player actor = Session.World.Players[Session.LocalId];
-            if (Vector3.Distance(WorldRegistry.To(actor.Position), b.Component.transform.position) > 5) return;
-            bool input = Input.anyKey || Input.GetMouseButton(0) || Input.GetMouseButton(1) || Input.GetMouseButtonUp(0) || Input.GetMouseButtonUp(1) || Math.Abs(Input.GetAxis("Mouse ScrollWheel")) > 0.001f;
+            Vector3 position = localPlayer == null ? WorldRegistry.To(actor.Position) : localPlayer.transform.position;
+            if (Vector3.Distance(position, b.Component.transform.position) > 5) return;
+            bool input = Input.anyKey || Input.GetMouseButton(0) || Input.GetMouseButton(1) || Input.GetMouseButtonUp(0) || Input.GetMouseButtonUp(1) || Math.Abs(Input.GetAxis("Mouse ScrollWheel")) > 0.001f
+                || NativeInputProbe.InputActive && Argument("--summercoop-test-native-input") == "yes" && Argument("--summercoop-test-report") != "";
             if (!input && !(b.Component.FsmName == "Assembly" && actor.Held != "")) return;
             float last; if (requests.TryGetValue(b.Id, out last) && Time.realtimeSinceStartup - last < 0.08f) return; requests[b.Id] = Time.realtimeSinceStartup;
             CommandKind kind = CommandKind.Interact;
@@ -367,7 +381,7 @@ namespace SummerCoop.Game
         {
             if (requestedSeat != "") return false;
             Command command = new Command { Kind = kind, Target = target };
-            CommandResult result = Session.Submit(command); if (result != null) return result.Accepted;
+            CommandResult result = Session.Submit(command); if (result != null) { if (!result.Accepted) RecoverInput(fsm); return result.Accepted; }
             requestedSeat = target; requestedState = state; requestedSequence = command.Sequence; requestedKind = kind; requestedFsm = fsm; requestAccepted = false;
             SetStatus("Ожидание подтверждения хоста…"); return false;
         }
@@ -376,8 +390,21 @@ namespace SummerCoop.Game
             if (!result.Accepted) SetStatus(result.Reason);
             if (requestedSeat == "" || Session == null || Session.IsHost || result.Sequence != requestedSequence) return;
             requestAccepted = result.Accepted;
-            if (!result.Accepted) { requestedSeat = requestedState = ""; requestedSequence = 0; return; }
+            if (!result.Accepted) { RecoverInput(requestedFsm); requestedSeat = requestedState = ""; requestedSequence = 0; requestedFsm = null; return; }
             ResumeHand();
+        }
+        private void RecoverInput(Fsm fsm)
+        {
+            if (fsm == null) return;
+            FsmBinding binding = Registry.Binding(fsm);
+            string state = fsm.Name == "PickUp" ? "Look for object" : binding == null ? "" : binding.WaitingState;
+            if (state == "") return;
+            recoverInput = fsm.Owner as PlayMakerFSM; recoverState = state; recoverAfterFrame = Time.frameCount;
+        }
+        private void ClearNativeRequests()
+        {
+            requestedSeat = requestedState = nativeHeld = ""; requestedSequence = 0; requestedFsm = null; requestAccepted = false;
+            nativeHand = recoverInput = null; requests.Clear();
         }
         private void ResumeHand()
         {
@@ -389,7 +416,26 @@ namespace SummerCoop.Game
                 try { PlayMakerFSM component = requestedFsm.Owner as PlayMakerFSM; if (component != null) NativeAdapter.ExecuteState(new FsmBinding { Component = component }, requestedState); }
                 finally { NativeHooks.Replaying = false; }
                 requestedSeat = requestedState = ""; requestedSequence = 0; requestAccepted = false;
+                requestedFsm = null; SetStatus("Подключено. F6 — меню сессии");
             }
+        }
+        private void ReconcileHand()
+        {
+            if (Session == null || Session.IsHost) return;
+            Player actor; if (!Session.World.Players.TryGetValue(Session.LocalId, out actor)) return;
+            if (nativeHeld != "" && actor.Held == "")
+            {
+                if (nativeHand == null)
+                    foreach (PlayMakerFSM component in UnityEngine.Object.FindObjectsOfType<PlayMakerFSM>())
+                        if (component.FsmName == "PickUp" && component.transform.root.name == "PLAYER") { nativeHand = component; break; }
+                if (nativeHand != null && (nativeHand.ActiveStateName == "Part picked" || nativeHand.ActiveStateName == "Item picked" || nativeHand.ActiveStateName == "Tool picked"))
+                {
+                    bool replaying = NativeHooks.Replaying; NativeHooks.Replaying = true;
+                    try { NativeAdapter.ExecuteState(new FsmBinding { Component = nativeHand }, "Wait"); }
+                    finally { NativeHooks.Replaying = replaying; }
+                }
+            }
+            nativeHeld = actor.Held;
         }
         private void OnInvite(GameLobbyJoinRequested_t data)
         {
@@ -408,6 +454,7 @@ namespace SummerCoop.Game
             finally
             {
                 if (Session != null) { Session.Ended = null; Session.Close(reason); Session = null; }
+                ClearNativeRequests();
                 NativeHooks.UpdateMode = 0;
                 DisposeStore();
                 if (pendingTransport != null) { pendingTransport.Dispose(); pendingTransport = null; }
@@ -422,6 +469,7 @@ namespace SummerCoop.Game
         {
             NativeHooks.UpdateMode = 0;
             Session = null; Joining = false; Time.timeScale = previousScale;
+            ClearNativeRequests();
             DisposeStore();
             if (avatars != null) { avatars.Dispose(); avatars = null; }
             SetStatus(reason);
@@ -446,14 +494,28 @@ namespace SummerCoop.Game
             DisposeStore();
             // Keep the isolated ES2 path until the engine has completed ALL native quit callbacks.
         }
-        private void OnDestroy() { if (invitation != null) invitation.Dispose(); if (avatars != null) avatars.Dispose(); if (Instance == this) { Instance = null; NativeHooks.Uninstall(); } }
+        private void OnDestroy() { if (menuSkin != null) menuSkin.Dispose(); if (invitation != null) invitation.Dispose(); if (avatars != null) avatars.Dispose(); if (Instance == this) { Instance = null; NativeHooks.Uninstall(); } }
         private void OnGUI()
         {
             if (!visible || saves == null) return;
-            panel = GUI.Window(516750, panel, DrawPanel, "SummerCoop " + Protocol.ModVersion);
+            if (menuSkin == null) menuSkin = new CoopMenuSkin();
+            GUISkin previousSkin = GUI.skin; Matrix4x4 previousMatrix = GUI.matrix;
+            Color previousColor = GUI.color, previousBackground = GUI.backgroundColor, previousContent = GUI.contentColor;
+            bool previousEnabled = GUI.enabled;
+            try
+            {
+                GUI.skin = menuSkin.Skin; GUI.color = GUI.backgroundColor = GUI.contentColor = Color.white; GUI.enabled = true;
+                float scale = Mathf.Min(1, Mathf.Min(Screen.width / 640f, Screen.height / 650f));
+                GUI.matrix = Matrix4x4.TRS(Vector3.zero, Quaternion.identity, new Vector3(scale, scale, 1));
+                panel.x = Mathf.Clamp(panel.x, 0, Mathf.Max(0, Screen.width / scale - panel.width));
+                panel.y = Mathf.Clamp(panel.y, 0, Mathf.Max(0, Screen.height / scale - panel.height));
+                panel = GUILayout.Window(516750, panel, DrawPanel, "", GUILayout.Width(500));
+            }
+            finally { GUI.skin = previousSkin; GUI.matrix = previousMatrix; GUI.color = previousColor; GUI.backgroundColor = previousBackground; GUI.contentColor = previousContent; GUI.enabled = previousEnabled; }
         }
         private void DrawPanel(int id)
         {
+            GUILayout.Label("SummerCoop " + Protocol.ModVersion);
             GUILayout.Label("Экспериментальная версия. Полная сборка Satsuma проходит проверку.");
             GUILayout.Label(status);
             try
@@ -491,7 +553,7 @@ namespace SummerCoop.Game
                 if (GUILayout.Button("Скрыть (F6)")) visible = false;
             }
             catch (Exception e) { SetStatus(e.Message); }
-            GUI.DragWindow();
+            GUI.DragWindow(new Rect(0, 0, panel.width, 40));
         }
         private ITransport SessionTransport() { return Session == null ? null : Session.Transport; }
         public void Respawn()

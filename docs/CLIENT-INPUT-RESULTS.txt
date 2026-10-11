@@ -1,0 +1,212 @@
+SummerCoop 0.1.1-alpha / native-input-verified / 2026-10-11
+Local Windows game copies, LAN loopback. Native FSM transitions, no hardware mouse automation.
+SummerCoop.dll SHA256 EA41825438E81EC360B242786646DD19E4DF404F49A57FA9EA028E1DDA714DF2
+SummerCoop.Core.dll SHA256 6385F3BDF263AB69B826DEB98A82D9C1F0BAF3F4FBE7298C50E1AEC4CFF85B9C
+
+Reproduction before held-parent fix: HAND_ACCEPTED=Part picked parent=ItemPivot; HAND_SETTLED=Part picked parent=NONE
+
+Verified candidate:
+BLOCKED=scene/YARD[0]/Building[0]/Dynamics[0]/LightSwitches[0]/switch_hallway[0]|fsm/Use/0 state=Wait player actions=ActivateGameObject,SetBoolValue,MousePickEvent,
+BLOCKED=scene/YARD[0]/Building[0]/LIVINGROOM[0]/TV[0]/Switch[0]|fsm/Use/0 state=Wait player actions=SetBoolValue,EnableFSM,MousePickEvent,BoolTest,Wait,
+BLOCKED=scene/YARD[0]/Building[0]/Dynamics[0]/LightSwitches[0]/switch_kitchen[0]|fsm/Use/0 state=Wait player actions=ActivateGameObject,SetBoolValue,MousePickEvent,
+BLOCKED=scene/YARD[0]/Building[0]/Dynamics[0]/LightSwitches[0]/switch_entry[0]|fsm/Use/0 state=Wait player actions=ActivateGameObject,SetBoolValue,MousePickEvent,
+BLOCKED=scene/YARD[0]/Building[0]/Dynamics[0]/LightSwitches[0]/switch_bedroomParents[0]|fsm/Use/0 state=Wait player actions=ActivateGameObject,SetBoolValue,MousePickEvent,
+BLOCKED=scene/YARD[0]/Building[0]/Dynamics[0]/LightSwitches[0]/switch_wc[0]|fsm/Use/0 state=Wait player actions=ActivateGameObject,SetBoolValue,MousePickEvent,
+BLOCKED=scene/YARD[0]/Building[0]/Dynamics[0]/LightSwitches[0]/switch_bedroomBoy[0]|fsm/Use/0 state=Wait player actions=ActivateGameObject,SetBoolValue,MousePickEvent,
+BLOCKED=scene/YARD[0]/Building[0]/Dynamics[0]/LightSwitches[0]/switch_garage[0]|fsm/Use/0 state=Wait player actions=ActivateGameObject,SetBoolValue,MousePickEvent,
+BLOCKED=scene/YARD[0]/Building[0]/Dynamics[0]/LightSwitches[0]/switch_bathroom[0]|fsm/Use/0 state=Wait player actions=ActivateGameObject,SetBoolValue,MousePickEvent,
+HAND_BEFORE=Look for object
+HAND_REQUEST=Look for object
+RESULT=True 
+HAND_ACCEPTED=Part picked parent=ItemPivot
+HAND_SETTLED=Part picked parent=ItemPivot
+RESULT=True 
+DROP=PASS
+TAKE_DISTANCE=31.62278
+RESULT=False Target too far away
+REJECT_RECOVERY=PASS: Target too far away
+TAKE_DISTANCE=2
+RESULT=True 
+RETAKE=PASS
+RESULT=True 
+ASSEMBLY=PASS: pivot_starter; hand=Look for object
+BOLT_STATE=Save data 2 local=False request=False GetChild,GetName,GetStringRight,ConvertStringToInt,ArrayListGet,
+BOLT_STATE=1 2 local=False request=False SetPosition,SetRotation,
+BOLT_STATE=Stages 2 local=True request=False IntCompare,IntCompare,IntCompare,IntCompare,IntCompare,IntCompare,IntCompare,IntCompare,IntCompare,
+BOLT_STATE=Get scroll 2 local=False request=False IntClamp,SetFsmInt,ArrayListSet,
+BOLT_STATE=2 2 local=False request=False SetPosition,SetRotation,
+BOLT_STATE=3 2 local=False request=False SetPosition,SetRotation,
+BOLT_STATE=4 2 local=False request=False SetPosition,SetRotation,
+BOLT_STATE=5 2 local=False request=False SetPosition,SetRotation,
+BOLT_STATE=6 2 local=False request=False SetPosition,SetRotation,
+BOLT_STATE=7 2 local=False request=False SetPosition,SetRotation,
+BOLT_STATE=8 2 local=False request=False SetPosition,SetRotation,
+BOLT_STATE=Unscrew 2 local=False request=True IntAdd,IntCompare,
+BOLT_STATE=Screw 2 local=False request=True IntAdd,IntCompare,
+BOLT_STATE=0 2 local=False request=False SetPosition,SetRotation,
+BOLT_STATE=Wait 3 local=False request=False MasterAudioPlaySound,AddFsmFloat,
+BOLT_STATE=Wait 4 local=False request=False MasterAudioPlaySound,AddFsmFloat,
+BOLT_STATE=Setup 2 local=True request=False Wait,
+BOLT_STATE=Idle local=True request=False 
+BOLT_STATE=State 1 local=False request=False SetProperty,
+BOLT_STATE=State 2 local=False request=False SetProperty,
+RESULT=True 
+BOLT=PASS: 0 -> 1
+RESULT=True 
+UNSCREW=PASS: 1 -> 0
+RESULT=True 
+DOOR=PASS: replicated rotation changed 0.3995839
+MIXED_INPUT=PASS: local polling permitted, shared setup effects filtered
+NATIVE_INPUT=PASS: native hand take/drop, rejected take recovery/retake, assembly hook, hand release, bolt tighten/unscrew, door hook and mixed input state
+
+Fixed-resolution exit check: JOIN=PASS; LEAVE_RETURNED; OnMenuLoad in log; process still alive before controlled stop.
+
+HOST FRAME REPORT (two local game processes, focus unavailable; no stable FPS guarantee):
+SCENE=GAME
+ROLE=host
+RESOLUTION=1280x720
+TARGET_FRAME_RATE=60
+VSYNC=1
+FOCUSED=UNKNOWN
+TIME_SCALE=1
+FIXED_DELTA_SECONDS=0.02
+CAMERA_POSITION=(-11.202, 1.096, 13.134)
+PLAYER_POSITION=(-11.186, -0.294, 13.088)
+PHASE=Playing
+OBJECTS=33259
+FSMS=6311
+INDEX_SAMPLES=138
+INDEX_MISMATCHES=0
+PLAYERS=2
+REVISION=372
+SNAPSHOT_BYTES=18223147
+SCHEMA=645ac989332811e0bcb441c19a6c9bdeff1b880255eb48c21a55815e62c9e98a
+DELTA_BYTES_SENT=13528819
+SAVE_PATH=D:\programing 2\ml-sum\.local\native-input-verified-host
+NATIVE_ACTIONS=NOT_REQUESTED
+NATIVE_MESH=NOT_REQUESTED
+FPS_MEAN=66.3
+MOD_UPDATE_P95_MS=5.60
+MOD_UPDATE_MAX_MS=122.49
+FRAME_P95_MS=19.08
+FRAME_MAX_MS=159.91
+FRAMES_OVER_50_MS=7
+FRAMES_OVER_100_MS=2
+MEASURED_FRAMES=3977
+GC_COLLECTIONS=1
+GC_FRAMES=1
+MONO_USED_BYTES=586604544
+OBJECT_VISITS=1016045
+FSM_VISITS=473978
+OUTLIER=t=7.12 frame=56.03 update=2.84 gc=0 heapDelta=20480 stages=0.03,0.00,0.00,2.79,0.00,0.00,0.00,0.00,0.00,0.00,
+OUTLIER=t=9.30 frame=14.46 update=122.49 gc=0 heapDelta=1818624 stages=116.72,0.02,0.00,2.96,0.07,0.19,2.50,0.00,2.16,0.28,
+OUTLIER=t=9.32 frame=131.79 update=2.47 gc=0 heapDelta=16384 stages=0.03,0.01,0.00,2.41,0.00,0.00,0.00,0.00,0.00,0.00,
+OUTLIER=t=12.77 frame=14.85 update=57.00 gc=0 heapDelta=1380352 stages=51.39,0.53,0.00,2.91,0.00,0.00,2.16,0.00,1.84,0.23,
+OUTLIER=t=12.79 frame=69.87 update=2.83 gc=0 heapDelta=20480 stages=0.03,0.01,0.00,2.78,0.00,0.00,0.00,0.00,0.00,0.00,
+OUTLIER=t=35.19 frame=159.91 update=10.26 gc=1 heapDelta=-203927552 stages=0.06,0.00,5.35,2.52,0.00,0.00,2.31,0.00,1.99,0.24,
+OUTLIER=t=53.14 frame=14.52 update=57.59 gc=0 heapDelta=28672 stages=53.17,0.00,0.00,2.50,0.00,0.00,1.90,0.00,1.68,0.16,
+OUTLIER=t=53.16 frame=68.98 update=4.28 gc=0 heapDelta=405504 stages=0.04,0.01,0.00,2.79,0.33,1.10,0.00,0.00,0.00,0.00,
+OUTLIER=t=59.52 frame=53.49 update=18.30 gc=0 heapDelta=172032 stages=0.07,0.00,1.00,4.55,0.06,5.56,7.04,0.00,6.54,0.42,
+OUTLIER=t=59.55 frame=62.21 update=4.30 gc=0 heapDelta=81920 stages=0.06,0.00,1.21,3.01,0.00,0.00,0.00,0.00,0.00,0.00,
+NETWORK_P95_MAX_MS=0.07,116.72
+ADAPTER_P95_MAX_MS=0.01,0.53
+DISCOVER_P95_MAX_MS=0.00,6.43
+CAPTURE_ENFORCE_P95_MAX_MS=3.06,4.55
+JOURNAL_P95_MAX_MS=0.19,0.99
+PUBLISH_P95_MAX_MS=0.54,5.56
+MOTION_P95_MAX_MS=2.33,7.04
+SAVE_P95_MAX_MS=0.00,5.77
+MOTION_CAPTURE_P95_MAX_MS=2.00,6.54
+MOTION_SEND_P95_MAX_MS=0.24,2.46
+MESH_READ_BYTES=28253040
+SHARED_PROPERTY_MAPS=123962
+NEW_PROPERTY_MAP_ENTRIES=118210
+CAPTURE_HEAP_0=0,samples=0
+CAPTURE_HEAP_1=0,samples=0
+CAPTURE_HEAP_2=0,samples=0
+RUNTIME_HEAP_NETWORK=0,samples=0
+RUNTIME_HEAP_AVATAR=0,samples=0
+RUNTIME_HEAP_INTERPOLATE=0,samples=0
+RUNTIME_HEAP_ENFORCE=0,samples=0
+RUNTIME_HEAP_POSE=0,samples=0
+RUNTIME_HEAP_BETWEEN_UPDATES=0,samples=0
+INPUT_STATE_REENTRIES=0
+ACTIVE_MISMATCH=scene/YARD[0]/Building[0]/LIVINGROOM[0]/LOD_livingroom[0]/SmokeDetector[0]/Light[0] expected=True actual=False
+MISSING_OBJECTS=0
+MISSING_ACTIVE_OBJECTS=0
+ACTIVE_MISMATCHES=1
+DYNAMIC_BODIES=1305
+
+CLIENT FRAME REPORT:
+SCENE=GAME
+ROLE=client
+RESOLUTION=1280x720
+TARGET_FRAME_RATE=60
+VSYNC=1
+FOCUSED=UNKNOWN
+TIME_SCALE=1
+FIXED_DELTA_SECONDS=0.02
+CAMERA_POSITION=(-15.870, 1.149, 7.369)
+PLAYER_POSITION=(-15.874, -0.294, 7.395)
+PHASE=Playing
+OBJECTS=33261
+FSMS=6311
+INDEX_SAMPLES=138
+INDEX_MISMATCHES=0
+PLAYERS=2
+REVISION=372
+SNAPSHOT_BYTES=18223147
+SCHEMA=645ac989332811e0bcb441c19a6c9bdeff1b880255eb48c21a55815e62c9e98a
+DELTA_BYTES_SENT=0
+SAVE_PATH=D:\programing 2\ml-sum\.local\native-input-verified-client
+NATIVE_ACTIONS=NOT_REQUESTED
+NATIVE_MESH=NOT_REQUESTED
+FPS_MEAN=127.1
+MOD_UPDATE_P95_MS=2.21
+MOD_UPDATE_MAX_MS=13.74
+FRAME_P95_MS=10.23
+FRAME_MAX_MS=168.15
+FRAMES_OVER_50_MS=1
+FRAMES_OVER_100_MS=1
+MEASURED_FRAMES=7631
+GC_COLLECTIONS=1
+GC_FRAMES=1
+MONO_USED_BYTES=552685568
+OBJECT_VISITS=0
+FSM_VISITS=0
+OUTLIER=t=18.89 frame=168.15 update=2.39 gc=1 heapDelta=-119750656 stages=0.54,0.00,0.00,1.73,0.00,0.00,0.12,0.00,0.00,0.00,
+NETWORK_P95_MAX_MS=0.32,12.04
+ADAPTER_P95_MAX_MS=0.00,0.00
+DISCOVER_P95_MAX_MS=0.00,0.00
+CAPTURE_ENFORCE_P95_MAX_MS=1.81,2.71
+JOURNAL_P95_MAX_MS=0.00,0.00
+PUBLISH_P95_MAX_MS=0.00,0.00
+MOTION_P95_MAX_MS=0.09,0.13
+SAVE_P95_MAX_MS=0.00,0.00
+MOTION_CAPTURE_P95_MAX_MS=0.00,0.00
+MOTION_SEND_P95_MAX_MS=0.00,0.00
+MESH_READ_BYTES=0
+SHARED_PROPERTY_MAPS=0
+NEW_PROPERTY_MAP_ENTRIES=0
+CAPTURE_HEAP_0=0,samples=0
+CAPTURE_HEAP_1=0,samples=0
+CAPTURE_HEAP_2=0,samples=0
+RUNTIME_HEAP_NETWORK=0,samples=0
+RUNTIME_HEAP_AVATAR=0,samples=0
+RUNTIME_HEAP_INTERPOLATE=0,samples=0
+RUNTIME_HEAP_ENFORCE=0,samples=0
+RUNTIME_HEAP_POSE=0,samples=0
+RUNTIME_HEAP_BETWEEN_UPDATES=0,samples=0
+INPUT_STATE_REENTRIES=0
+MISSING=scene/Spawn[0]/JunkCar4[0]/Parts[0]/center console gt(Clone)[0] active=True
+MISSING=scene/Spawn[0]/JunkCar4[0]/Parts[0]/center console gt(Clone)[0]/gear_stick[0] active=True
+MISSING_OBJECTS=2
+MISSING_ACTIVE_OBJECTS=2
+ACTIVE_MISMATCHES=0
+DYNAMIC_BODIES=1
+
+INSTALLER: 12 tests passed; fresh, compatible update and repeat passed on isolated profile.
+Real installation: tested DLL pair installed; canonical state and all observed top-level native files unchanged.
+
+66b22d6c8e03fee5381f6dd5277878411d196d81840ec83e0b52548789259b6f
+e88d240e5bc048ffa21f284313e575f7 revision=1969 entities=40255 money=3000
