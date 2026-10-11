@@ -77,6 +77,80 @@ internal static class LocalHierarchyTests
             Add(world, "hud", "scene/SAUNA[0]/HUD[0]", EntityKind.Object, "HUD", "Untagged", "sauna");
             Check(LocalHierarchy.RemoveFromCheckpoint(world) == 1 && world.Entities.ContainsKey("steam") && world.Entities.ContainsKey("hud"), "Recovery removed world objects with local root names");
         });
+        test("native menu recovery preserves world progress and the original input snapshot", delegate
+        {
+            var world = new World { Id = "menu-world", Revision = 24, Money = 1250 };
+            Add(world, "systems", "scene/Systems[0]", EntityKind.Object, "Systems", "Untagged", "");
+            Entity options = Add(world, "options", "scene/Systems[0]/Options[0]", EntityKind.Object, "Options", "Untagged", "systems");
+            options.Properties["@array/0/count"] = Atom.N(2);
+            options.Properties["@array/0/0"] = Atom.S("Use=Mouse0"); options.Properties["@array/0/1"] = Atom.S("Pick=Mouse1");
+            Entity controls = Add(world, "controls", options.Key + "|fsm/Controls/0", EntityKind.Fsm, "", "", "options");
+            controls.Properties["v/SteeringSensitivity"] = Atom.N(0.75);
+            Add(world, "menu", "scene/Systems[0]/OptionsMenu[0]", EntityKind.Object, "OptionsMenu", "Untagged", "systems");
+            Add(world, "button", "scene/Systems[0]/OptionsMenu[0]/Menu[0]/Close[0]", EntityKind.Object, "Close", "Untagged", "menu");
+            Add(world, "button-fsm", "scene/Systems[0]/OptionsMenu[0]/Menu[0]/Close[0]|fsm/Button/0", EntityKind.Fsm, "", "", "button");
+            Entity initialize = Add(world, "initialize", "scene/Systems[0]/InitializeControls[0]", EntityKind.Object, "InitializeControls", "Untagged", "systems");
+            Add(world, "initialize-fsm", initialize.Key + "|fsm/Setup/0", EntityKind.Fsm, "", "", "initialize");
+            Entity car = Add(world, "car", "vehicle/SATSUMA", EntityKind.Vehicle, "SATSUMA", "Untagged", "");
+            car.Properties["bolt"] = Atom.N(8); car.Properties["wired"] = Atom.B(true);
+            Entity shop = Add(world, "shop", "scene/STORE[0]|fsm/CashRegister/0", EntityKind.Fsm, "", "", "");
+            shop.Properties["v/Purchases"] = Atom.N(3);
+            Add(world, "computer", "scene/COMPUTER[0]", EntityKind.Object, "COMPUTER", "Untagged", "");
+            Entity hud = Add(world, "computer-hud", "scene/COMPUTER[0]/Game[0]/HUD[0]", EntityKind.Object, "HUD", "Untagged", "computer");
+            hud.Properties["v/Score"] = Atom.N(150);
+            World before = world.ReferenceSnapshot();
+            Check(LocalHierarchy.RemoveFromCheckpoint(world) == 7 && world.Entities.Count == 5, "Menu/control subtree was not removed completely");
+            Check(world.Id == "menu-world" && world.Revision == 24 && world.Money == 1250, "Menu recovery changed shared world metadata");
+            foreach (string id in new[] { "systems", "car", "shop", "computer", "computer-hud" })
+                Check(object.ReferenceEquals(before.Entities[id], world.Entities[id]), "Recovery rewrote an unrelated shared entity: " + id);
+            Check(world.Entities["car"].Properties["bolt"].Number == 8 && world.Entities["car"].Properties["wired"].Number == 1
+                && world.Entities["shop"].Properties["v/Purchases"].Number == 3 && world.Entities["computer-hud"].Properties["v/Score"].Number == 150, "Recovery lost shared gameplay progress");
+            Check(before.Entities["options"].Properties["@array/0/count"].Number == 2
+                && before.Entities["options"].Properties["@array/0/0"].Text == "Use=Mouse0"
+                && before.Entities["options"].Properties["@array/0/1"].Text == "Pick=Mouse1"
+                && before.Entities["controls"].Properties["v/SteeringSensitivity"].Number == 0.75 && before.Entities.Count == 12, "Repair mutated copied options, bindings, or the previous snapshot");
+            Check(LocalHierarchy.RemoveFromCheckpoint(world) == 0, "Repeated menu recovery changed the world");
+        });
+        test("obsolete menu references are removed without mutating shared snapshots", delegate
+        {
+            var world = new World();
+            Add(world, "menu", "scene/Systems[0]/OptionsMenu[0]", EntityKind.Object, "OptionsMenu", "Untagged", "");
+            Add(world, "camera", "scene/Systems[0]/OptionsMenu[0]/CAM[0]", EntityKind.Object, "CAM", "Untagged", "menu");
+            Entity consumer = Add(world, "consumer", "scene/Systems[0]/Other[0]|fsm/Use/0", EntityKind.Fsm, "", "", "");
+            consumer.Properties["v/Menu"] = Atom.R("menu"); consumer.Properties["v/MenuCamera"] = Atom.R("camera#UnityEngine.Transform");
+            consumer.Properties["v/SharedCamera"] = Atom.R("shared-camera#UnityEngine.Transform");
+            consumer.Properties["v/MenuTexture"] = Atom.R("asset/UnityEngine.Texture2D/OptionsMenu");
+            consumer.Properties["v/Value"] = Atom.N(42);
+            Entity item = Add(world, "item", "spawn/shop-purchase", EntityKind.Rigidbody, "beer", "ITEM", "camera"); item.Prefab = "prefab/beer";
+            World before = world.ReferenceSnapshot();
+            Check(LocalHierarchy.RemoveFromCheckpoint(world) == 2, "Wrong menu reference recovery size");
+            Entity repaired = world.Entities["consumer"];
+            Check(!repaired.Properties.ContainsKey("v/Menu") && !repaired.Properties.ContainsKey("v/MenuCamera"), "Removed menu object/component reference survived");
+            Check(repaired.Properties["v/SharedCamera"].Text == "shared-camera#UnityEngine.Transform"
+                && repaired.Properties["v/MenuTexture"].Text == "asset/UnityEngine.Texture2D/OptionsMenu"
+                && repaired.Properties["v/Value"].Number == 42, "Reference recovery changed unrelated values or assets");
+            Check(world.Entities["item"].Parent == "" && world.Entities["item"].Position.X == 1 && world.Entities["item"].Prefab == "prefab/beer", "Recovered item lost its prefab or world position");
+            Check(before.Entities["consumer"].Properties.ContainsKey("v/Menu") && before.Entities["consumer"].Properties.ContainsKey("v/MenuCamera")
+                && before.Entities["item"].Parent == "camera" && before.Entities.ContainsKey("menu"), "Menu repair mutated the retained snapshot");
+        });
+        test("similarly named gameplay objects outside the native settings roots survive", delegate
+        {
+            var world = new World();
+            Add(world, "menu", "scene/Systems[0]/OptionsMenu[0]", EntityKind.Object, "OptionsMenu", "Untagged", "");
+            Add(world, "close", "scene/Systems[0]/OptionsMenu[0]/Close[0]", EntityKind.Object, "Close", "Untagged", "menu");
+            Add(world, "outside", "scene/YARD[0]/OptionsMenu[0]", EntityKind.Object, "OptionsMenu", "Untagged", "");
+            Add(world, "nested", "scene/Systems[0]/Other[0]/OptionsMenu[0]", EntityKind.Object, "OptionsMenu", "Untagged", "");
+            Add(world, "similar", "scene/Systems[0]/OptionsMenu[0]-sign", EntityKind.Object, "OptionsMenu", "Untagged", "");
+            Add(world, "other-ordinal", "scene/Systems[0]/OptionsMenu[1]", EntityKind.Object, "OptionsMenu", "Untagged", "");
+            Add(world, "outside-options", "scene/STORE[0]/Options[0]", EntityKind.Object, "Options", "Untagged", "");
+            Add(world, "outside-controls", "scene/COMPUTER[0]/InitializeControls[0]", EntityKind.Object, "InitializeControls", "Untagged", "");
+            World before = world.ReferenceSnapshot();
+            Check(LocalHierarchy.RemoveFromCheckpoint(world) == 2 && world.Entities.Count == 6, "Settings scope deleted similarly named gameplay objects");
+            foreach (Entity survivor in world.Entities.Values) Check(object.ReferenceEquals(before.Entities[survivor.Id], survivor), "Settings scope rewrote a surviving object");
+            Check(LocalHierarchy.IsSystemMenuName("Systems", "OptionsMenu") && LocalHierarchy.IsSystemMenuName("Systems", "Options")
+                && LocalHierarchy.IsSystemMenuName("Systems", "InitializeControls") && !LocalHierarchy.IsSystemMenuName("STORE", "OptionsMenu")
+                && !LocalHierarchy.IsSystemMenuName("Systems", "OptionsMenuSign"), "Native settings name matching extends beyond the three local nodes");
+        });
         test("repaired checkpoint restarts with purchases, bolts and wiring intact", delegate
         {
             string path = Path.Combine(Path.GetTempPath(), "SummerCoop-restore-test-" + Guid.NewGuid().ToString("N"));

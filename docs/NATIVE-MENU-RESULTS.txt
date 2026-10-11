@@ -1,0 +1,49 @@
+My Summer Car build 20171487; LAN; run ui-input-release-9
+Host: MSCLoader 1.3.5; client: MSCLoader 1.4.2
+PHYSICAL INPUT (manual mode; no Input substitution):
+138.939 OS_MOUSE=button 0 down=True up=False position=(640.0, 372.0, 0.0)
+138.962 OS_MOUSE=button 0 down=False up=True position=(640.0, 372.0, 0.0)
+138.996 TAKE=PASS
+142.003 HOLD=PASS: ItemPivot retained for three seconds
+159.573 OS_MOUSE=button 0 down=True up=False position=(640.0, 372.0, 0.0)
+159.608 OS_MOUSE=button 0 down=False up=True position=(640.0, 372.0, 0.0)
+159.678 DROP=PASS
+172.737 OS_MOUSE=button 1 down=True up=False position=(640.0, 371.0, 0.0)
+172.767 OS_MOUSE=button 1 down=False up=True position=(640.0, 371.0, 0.0)
+172.811 DOOR=PASS: native input produced a replicated door rotation
+172.830 REAL_INPUT=PASS: actual native raycast/button take, settled hand, drop and door interaction
+HOST MENU:
+t=53.02 CHANGE MENU=False/False IN_MENU=False STOP=False SCALE=1.00 OPEN_FSM=Get key OPEN_SHARED=False
+t=177.15 TEXT_MESH labels=408 visible=18 nonempty=16 examples=GUITextLabel:RESUME | GUITextLabelShadow:RESUME | GUITextLabel:GRAPHICS | GUITextLabelShadow:GRAPHICS | GUITextLabel:DRIVING CONTROLS | GUITextLabelShadow:DRIVING CONTROLS | GUITextLabel:VEHICLE CONTROLS | GUITextLabelShadow:VEHICLE CONTROLS
+t=177.18 CHANGE MENU=True/True IN_MENU=True STOP=False SCALE=1.00 OPEN_FSM=Get key OPEN_SHARED=False
+t=177.51 ESC_SETTLED=1 MENU=True/True IN_MENU=True STOP=False SCALE=1.00 OPEN_FSM=Get key OPEN_SHARED=False
+t=177.53 TEXT_MESH labels=408 visible=18 nonempty=16 examples=GUITextLabel:RESUME | GUITextLabelShadow:RESUME | GUITextLabel:GRAPHICS | GUITextLabelShadow:GRAPHICS | GUITextLabel:DRIVING CONTROLS | GUITextLabelShadow:DRIVING CONTROLS | GUITextLabel:VEHICLE CONTROLS | GUITextLabelShadow:VEHICLE CONTROLS
+t=262.21 TEXT_MESH labels=408 visible=18 nonempty=16 examples=GUITextLabel:RESUME | GUITextLabelShadow:RESUME | GUITextLabel:GRAPHICS | GUITextLabelShadow:GRAPHICS | GUITextLabel:DRIVING CONTROLS | GUITextLabelShadow:DRIVING CONTROLS | GUITextLabel:VEHICLE CONTROLS | GUITextLabelShadow:VEHICLE CONTROLS
+t=262.36 CHANGE MENU=False/False IN_MENU=False STOP=False SCALE=1.00 OPEN_FSM=Get key OPEN_SHARED=False
+CLIENT MENU:
+t=73.11 CHANGE MENU=False/False IN_MENU=False STOP=False SCALE=1.00 OPEN_FSM=Get key OPEN_SHARED=False
+t=187.67 TEXT_MESH labels=408 visible=18 nonempty=16 examples=GUITextLabel:RESUME | GUITextLabelShadow:RESUME | GUITextLabel:GRAPHICS | GUITextLabelShadow:GRAPHICS | GUITextLabel:DRIVING CONTROLS | GUITextLabelShadow:DRIVING CONTROLS | GUITextLabel:VEHICLE CONTROLS | GUITextLabelShadow:VEHICLE CONTROLS
+t=187.83 CHANGE MENU=True/True IN_MENU=True STOP=False SCALE=1.00 OPEN_FSM=Get key OPEN_SHARED=False
+t=188.03 ESC_SETTLED=1 MENU=True/True IN_MENU=True STOP=False SCALE=1.00 OPEN_FSM=Get key OPEN_SHARED=False
+t=188.04 TEXT_MESH labels=408 visible=18 nonempty=16 examples=GUITextLabel:RESUME | GUITextLabelShadow:RESUME | GUITextLabel:GRAPHICS | GUITextLabelShadow:GRAPHICS | GUITextLabel:DRIVING CONTROLS | GUITextLabelShadow:DRIVING CONTROLS | GUITextLabel:VEHICLE CONTROLS | GUITextLabelShadow:VEHICLE CONTROLS
+t=195.33 TEXT_MESH labels=408 visible=18 nonempty=16 examples=GUITextLabel:RESUME | GUITextLabelShadow:RESUME | GUITextLabel:GRAPHICS | GUITextLabelShadow:GRAPHICS | GUITextLabel:DRIVING CONTROLS | GUITextLabelShadow:DRIVING CONTROLS | GUITextLabel:VEHICLE CONTROLS | GUITextLabelShadow:VEHICLE CONTROLS
+t=195.61 CHANGE MENU=False/False IN_MENU=False STOP=False SCALE=1.00 OPEN_FSM=Get key OPEN_SHARED=False
+
+ui-input-hooks-10: scripted native PlayMaker hooks; separate from manual OS input
+DROP=PASS
+REJECT_RECOVERY=PASS: Target too far away
+RETAKE=PASS
+ASSEMBLY=PASS: pivot_starter; hand=Look for object
+BOLT=PASS: 0 -> 1
+UNSCREW=PASS: 1 -> 0
+DOOR=PASS: replicated rotation changed 0.556725
+MIXED_INPUT=PASS: local polling permitted, shared setup effects filtered
+NATIVE_INPUT=PASS: native hand take/drop, rejected take recovery/retake, assembly hook, hand release, bolt tighten/unscrew, door hook and mixed input state
+MISSING_ACTIVE_OBJECTS=2 (GT console)
+Native ES2Auto and loader errors remain in this run.
+
+FINAL_EXE_UPDATE=PASS: exact expected repair; native file set/bytes; both tested DLL hashes
+FINAL_EXE_REPEAT=PASS: every profile file and backup byte-identical
+REAL_INSTALL=PASS: exact expected repair; singleplayer/profile native file set/bytes; both tested DLL hashes
+REAL_LOADER=UNCHANGED: MSCLoader 1.3.5
+SETUP_SHA256=C2E3B57D47A7B7A6D4E44E25C3684F1D543E35A7216CC1A01C03101E2E6A0D94

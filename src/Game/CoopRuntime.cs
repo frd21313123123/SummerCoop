@@ -225,6 +225,8 @@ namespace SummerCoop.Game
             if (Argument("--summercoop-test-report") != "") gameObject.AddComponent<IntegrationProbe>();
             if (Argument("--summercoop-test-report") != "" && Argument("--summercoop-test-native-input") == "yes") gameObject.AddComponent<NativeInputProbe>();
             if (Argument("--summercoop-test-report") != "" && Argument("--summercoop-test-save-restore") == "yes") gameObject.AddComponent<SaveRestoreProbe>();
+            if (Argument("--summercoop-test-report") != "" && Argument("--summercoop-test-real-input") != "") gameObject.AddComponent<RealInputProbe>();
+            if (Argument("--summercoop-test-report") != "" && Argument("--summercoop-test-native-menu") == "yes") gameObject.AddComponent<NativeMenuProbe>();
         }
         private void RefreshHooks() { NativeHooks.UpdateMode = Registry != null && Active ? (Joining ? 1 : Session.IsHost ? 0 : 2) : 0; }
         private void Update()

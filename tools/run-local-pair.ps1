@@ -1,4 +1,4 @@
-param([string]$Run = ('pair-' + (Get-Date -Format 'yyyyMMdd-HHmmss')), [int]$Port = 27942, [switch]$Actions, [int]$Duration = 20, [switch]$MeshProof, [int]$Width = 640, [int]$Height = 480, [int]$FrameLimit = -1, [switch]$HostOnly, [switch]$NativeBaseline, [switch]$ImportSave, [switch]$AllocationProbe, [switch]$CorePeer, [string]$HostSaveDirectory, [switch]$NativeInput, [switch]$SaveRestore)
+param([string]$Run = ('pair-' + (Get-Date -Format 'yyyyMMdd-HHmmss')), [int]$Port = 27942, [switch]$Actions, [int]$Duration = 20, [switch]$MeshProof, [int]$Width = 640, [int]$Height = 480, [int]$FrameLimit = -1, [switch]$HostOnly, [switch]$NativeBaseline, [switch]$ImportSave, [switch]$AllocationProbe, [switch]$CorePeer, [string]$HostSaveDirectory, [switch]$NativeInput, [switch]$SaveRestore, [ValidateSet('','manual','simulated')][string]$RealInput = '', [switch]$Interactive, [switch]$NativeMenu)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $localDir = Join-Path $root '.local'
@@ -55,9 +55,11 @@ foreach ($role in $testRoles) {
     if ($Actions) { $arguments += ' --summercoop-test-actions yes' }
     if ($NativeInput) { $arguments += ' --summercoop-test-native-input yes' }
     if ($SaveRestore) { $arguments += ' --summercoop-test-save-restore yes' }
+    if ($RealInput) { $arguments += ' --summercoop-test-real-input ' + $RealInput }
+    if ($NativeMenu) { $arguments += ' --summercoop-test-native-menu yes' }
     $arguments += ' --summercoop-test-duration ' + $Duration
     if ($MeshProof) { $arguments += ' --summercoop-test-mesh-proof "' + (Join-Path $localDir ($Run + '-mesh-proof.bin')) + '"' }
-    $gameProcess = Start-Process -FilePath $exe -WorkingDirectory $gameDir -ArgumentList $arguments -WindowStyle Hidden -PassThru
+    $gameProcess = Start-Process -FilePath $exe -WorkingDirectory $gameDir -ArgumentList $arguments -WindowStyle $(if ($Interactive) { 'Normal' } else { 'Hidden' }) -PassThru
     $gameProcess.Id | Set-Content -LiteralPath $pidFile
     Write-Output ($role + ' PID ' + $gameProcess.Id + ' profile ' + $profile)
     if ($role -eq 'host' -and !$NativeBaseline) {

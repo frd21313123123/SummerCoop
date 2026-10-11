@@ -99,7 +99,7 @@ namespace SummerCoop.Game
             if (go == null) return true;
             if (LocalHierarchy.IsRootName(go.transform.root.name)) return true;
             for (Transform cursor = go.transform; cursor != null; cursor = cursor.parent)
-                if (LocalHierarchy.IsNestedName(cursor.name)) return true;
+                if (LocalHierarchy.IsNestedName(cursor.name) || cursor.parent != null && LocalHierarchy.IsSystemMenuName(cursor.parent.name, cursor.name)) return true;
             return false;
         }
         public static bool PersonalVariable(string name)

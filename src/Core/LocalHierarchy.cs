@@ -18,6 +18,17 @@ namespace SummerCoop.Core
             return name != null && (name == "PLAYER" || name == "PLAYER(Clone)"
                 || name.StartsWith("MSCLoader", StringComparison.Ordinal) || name.StartsWith("SummerCoop", StringComparison.Ordinal));
         }
+        public static bool IsSystemMenuName(string parent, string name)
+        {
+            return parent == "Systems" && (name == "Options" || name == "OptionsMenu" || name == "InitializeControls");
+        }
+        private static bool IsSystemMenuKey(string key)
+        {
+            // Collect only these roots. Their descendants are removed by Contains
+            // below, without adding every menu label and button as another root.
+            return key == "scene/Systems[0]/Options[0]" || key == "scene/Systems[0]/OptionsMenu[0]"
+                || key == "scene/Systems[0]/InitializeControls[0]";
+        }
 
         private static bool Contains(string root, string key)
         {
@@ -45,7 +56,8 @@ namespace SummerCoop.Core
         public static int RemoveFromCheckpoint(World world)
         {
             var roots = new List<string>();
-            foreach (Entity entity in world.Entities.Values) if (PersonalRoot(entity)) roots.Add(entity.Key);
+            foreach (Entity entity in world.Entities.Values)
+                if (PersonalRoot(entity) || IsSystemMenuKey(entity.Key) && entity.Kind != EntityKind.Fsm) roots.Add(entity.Key);
             if (roots.Count == 0) return 0;
             // Held parts retain their own identity, even if an old build registered
             // one beneath a personal key. Preserve their complete subtrees.
