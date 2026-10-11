@@ -36,6 +36,8 @@ namespace SummerCoop.Core
         private bool transferActive, disposed, sceneReady;
         private double now, lastPing, opened;
         private long commandSequence, poseSequence;
+        private DeltaReadBuffer deltaReadBuffer;
+        private bool deltaBufferInUse;
         public bool IsHost { get { return transport.IsHost; } }
         public ITransport Transport { get { return transport; } }
         public string LocalId { get; private set; }
@@ -46,6 +48,10 @@ namespace SummerCoop.Core
         public Action<string> Status;
         public Action<byte[]> NativeSaveReceived;
         public Action<World, bool> WorldReceived;
+        // Opt in only when the delta container is consumed during WorldReceived.
+        // With this option its dictionaries are valid until that callback returns;
+        // retain individual immutable entities or clone the delta to keep it.
+        public bool ReuseDeltaContainers;
         public Action<MotionFrame> MotionReceived;
         public Action<Pose> PoseReceived;
         public Action<CommandResult> CommandCompleted;
@@ -251,11 +257,17 @@ namespace SummerCoop.Core
         private void AcceptDelta(PacketView packet)
         {
             if (Phase != SessionPhase.Playing) throw new ProtocolException("Unexpected delta");
-            long baseline = -1; World delta = null;
-            Codec.Read(packet, delegate(BinaryReader r) { baseline = r.ReadInt64(); int n = Codec.Count(r, Protocol.MaxSnapshot); long began = r.BaseStream.Position; if (n > r.BaseStream.Length - began) throw new EndOfStreamException(); if (baseline != World.Revision) { r.BaseStream.Position += n; return; } delta = Codec.ReadDelta(r, World); if (r.BaseStream.Position - began != n) throw new ProtocolException("Invalid delta length"); });
-            if (baseline != World.Revision) { Send(transport.HostPeer, MessageKind.Resync, new byte[0], true); return; }
-            if (delta.Id != World.Id || delta.GameHash != gameHash || delta.SchemaHash != World.SchemaHash) throw new ProtocolException("Delta identity mismatch");
-            CheckpointStore.ApplyDelta(World, delta, true); if (WorldReceived != null) WorldReceived(delta, false);
+            DeltaReadBuffer buffer = null;
+            if (ReuseDeltaContainers && !deltaBufferInUse) { buffer = deltaReadBuffer ?? (deltaReadBuffer = new DeltaReadBuffer()); deltaBufferInUse = true; }
+            try
+            {
+                long baseline = -1; World delta = null;
+                Codec.Read(packet, delegate(BinaryReader r) { baseline = r.ReadInt64(); int n = Codec.Count(r, Protocol.MaxSnapshot); long began = r.BaseStream.Position; if (n > r.BaseStream.Length - began) throw new EndOfStreamException(); if (baseline != World.Revision) { r.BaseStream.Position += n; return; } delta = buffer == null ? Codec.ReadDelta(r, World) : Codec.ReadDelta(r, World, buffer); if (r.BaseStream.Position - began != n) throw new ProtocolException("Invalid delta length"); });
+                if (baseline != World.Revision) { Send(transport.HostPeer, MessageKind.Resync, new byte[0], true); return; }
+                if (delta.Id != World.Id || delta.GameHash != gameHash || delta.SchemaHash != World.SchemaHash) throw new ProtocolException("Delta identity mismatch");
+                CheckpointStore.ApplyDelta(World, delta, true); if (WorldReceived != null) WorldReceived(delta, false);
+            }
+            finally { if (buffer != null) { buffer.Clear(); deltaBufferInUse = false; } }
         }
         public void Publish()
         {

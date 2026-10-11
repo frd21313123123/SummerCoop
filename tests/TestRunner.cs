@@ -185,7 +185,8 @@ internal static class TestRunner
         });
         Test("immutable checkpoint baseline survives replacements and deletions", delegate
         {
-            string directory = Path.Combine(Path.GetTempPath(), "summercoop-immutable-" + Guid.NewGuid().ToString("N"));
+            string testRoot = Path.GetFullPath(Path.Combine(Environment.CurrentDirectory, ".local"));
+            string directory = Path.GetFullPath(Path.Combine(testRoot, "summercoop-immutable-" + Guid.NewGuid().ToString("N")));
             Directory.CreateDirectory(directory);
             try
             {
@@ -195,7 +196,7 @@ internal static class TestRunner
                 World recovered = new CheckpointStore(directory).Recover();
                 Check(recovered.Revision == 5 && recovered.Entities["part"].Properties["stage"].Number == 4 && !recovered.Entities.ContainsKey("seat"), "Incremental baseline lost a committed change");
             }
-            finally { Directory.Delete(directory, true); }
+            finally { Check(directory.StartsWith(testRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase), "Unsafe cleanup target"); Directory.Delete(directory, true); }
         });
     }
     private static void ProtocolTests()
@@ -634,9 +635,9 @@ internal static class TestRunner
         }
         finally { Check(path.StartsWith(testRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase), "Unsafe cleanup target"); Directory.Delete(path, true); }
     }
-    private static void TransportTests()
+    private static void TransportTests(bool sockets)
     {
-        Test("actual loopback TCP/UDP with host plus three clients", delegate
+        if (sockets) Test("actual loopback TCP/UDP with host plus three clients", delegate
         {
             int port = 30000 + (Environment.TickCount & 8191);
             using (LanTransport host = LanTransport.Host(port))
@@ -710,6 +711,7 @@ internal static class TestRunner
                 finally { foreach (LanTransport c in clients) c.Dispose(); }
             }
         });
+        else Console.WriteLine("SKIP actual loopback TCP/UDP: --no-sockets requested");
         Test("seeded four-player replay / duplicates / UDP loss and reordering", delegate
         {
             Random random = new Random(516750); Adapter a = new Adapter(); Authority h = Auth(a, null); h.AddPlayer("C", "C"); h.AddPlayer("D", "D");
@@ -730,9 +732,11 @@ internal static class TestRunner
             Check(lost > 0 && a.Applied == 1000, "Loss/duplicate test did not exercise conditions");
         });
     }
-    public static int Main()
+    public static int Main(string[] args)
     {
-        try { ProtocolTests(); AuthorityTests(); OptimizationTests(); PersistenceTests(); TransportTests(); SessionTests.Run(Test); Console.WriteLine("ALL " + passed + " TESTS PASSED"); return 0; }
+        if (args.Length > 1 || (args.Length == 1 && args[0] != "--no-sockets")) { Console.Error.WriteLine("Usage: SummerCoop.Tests.exe [--no-sockets]"); return 2; }
+        bool sockets = args.Length == 0;
+        try { ProtocolTests(); AuthorityTests(); OptimizationTests(); PersistenceTests(); TransportTests(sockets); SessionTests.Run(Test); Console.WriteLine((sockets ? "ALL " : "PARTIAL (1 socket test skipped): ") + passed + " TESTS PASSED"); return 0; }
         catch (Exception e) { Console.Error.WriteLine("FAIL after " + passed + " tests: " + e); return 1; }
     }
 }

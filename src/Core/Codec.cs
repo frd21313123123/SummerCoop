@@ -19,6 +19,26 @@ namespace SummerCoop.Core
     public sealed class Packet { public MessageKind Kind; public byte[] Payload; }
     public struct PacketView { public MessageKind Kind; public byte[] Bytes; public int Offset, Length; }
 
+    // The container is borrowed; Entity/Atom snapshots remain independently owned.
+    internal sealed class DeltaReadBuffer
+    {
+        public readonly World World = new World();
+        public int EntityCapacity;
+        public void Clear()
+        {
+            if (World.Entities.Count != 0) World.Entities.Clear();
+            if (World.Players.Count != 0) World.Players.Clear();
+            World.Changes = null; World.ChangeSequence = 0;
+        }
+        public void EnsureCapacity(int count)
+        {
+            if (count <= EntityCapacity) return;
+            int capacity = 16; while (capacity < count) capacity *= 2;
+            EntityCapacity = Math.Min(capacity, Protocol.MaxEntities);
+            World.Entities = new Dictionary<string, Entity>(EntityCapacity, StringComparer.Ordinal);
+        }
+    }
+
     public static class Codec
     {
         private const uint Magic = 0x504F4353;
@@ -350,6 +370,11 @@ namespace SummerCoop.Core
             if (baseline == null) throw new ArgumentNullException("baseline");
             return ReadWorld(r, baseline);
         }
+        internal static World ReadDelta(BinaryReader r, World baseline, DeltaReadBuffer buffer)
+        {
+            if (baseline == null) throw new ArgumentNullException("baseline");
+            return ReadWorld(r, baseline, false, true, buffer);
+        }
         private static World ReadWorld(BinaryReader r, World baseline)
         {
             return ReadWorld(r, baseline, false, baseline != null);
@@ -360,8 +385,14 @@ namespace SummerCoop.Core
         }
         private static World ReadWorld(BinaryReader r, World baseline, bool skipCheckpointed, bool immutable)
         {
+            return ReadWorld(r, baseline, skipCheckpointed, immutable, null);
+        }
+        private static World ReadWorld(BinaryReader r, World baseline, bool skipCheckpointed, bool immutable, DeltaReadBuffer buffer)
+        {
                 if (r.ReadInt32() != Protocol.Version) throw new ProtocolException("Snapshot version mismatch");
-                World world = new World { Id = Text(r), GameHash = Text(r), SchemaHash = Text(r), Revision = r.ReadInt64(), Money = r.ReadDouble(), SleepEpoch = r.ReadInt64() };
+                World world = buffer == null ? new World() : buffer.World;
+                if (object.ReferenceEquals(world, baseline)) throw new ProtocolException("Delta container aliases its baseline");
+                world.Id = Text(r); world.GameHash = Text(r); world.SchemaHash = Text(r); world.Revision = r.ReadInt64(); world.Money = r.ReadDouble(); world.SleepEpoch = r.ReadInt64();
                 if (world.Id == "" || world.Revision < 0 || world.SleepEpoch < 0 || double.IsNaN(world.Money) || double.IsInfinity(world.Money)) throw new ProtocolException("Invalid world");
                 if (baseline != null && (world.Id != baseline.Id || world.GameHash != baseline.GameHash || world.SchemaHash != baseline.SchemaHash || (!skipCheckpointed && world.Revision < baseline.Revision)))
                 {
@@ -372,6 +403,10 @@ namespace SummerCoop.Core
                 // checkpoint; their property references need not exist in the current world.
                 if (skipCheckpointed && world.Revision <= baseline.Revision) { r.BaseStream.Position = r.BaseStream.Length; return world; }
                 int n = Count(r, Protocol.MaxEntities);
+                // The validated count is already in the frame. Avoid allocating
+                // successively larger bucket/entry arrays for every world delta.
+                if (buffer != null) { buffer.Clear(); buffer.EnsureCapacity(n); }
+                else if (n > 0) world.Entities = new Dictionary<string, Entity>(n, StringComparer.Ordinal);
                 for (int i = 0; i < n; i++) { Entity e = ReadEntity(r, baseline, immutable); world.Entities.Add(e.Id, e); }
                 n = Count(r, Protocol.MaxPlayers);
                 for (int i = 0; i < n; i++) { Player p = Player(r); world.Players.Add(p.Id, p); }

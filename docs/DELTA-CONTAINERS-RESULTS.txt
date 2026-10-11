@@ -1,0 +1,25 @@
+Offline CLR replay; not Unity/Mono FPS proof
+Runtime=10.0.11, revision=908->969, records=61, entities=50301, peakDelta=2382
+Expected final SHA256=322c34a173f9eddd86dab9ce081a0879a077cdca1f71f48797c8cf45653a35d1
+round=0 mode=0 allocated=12792208 elapsedMs=29.39 GC=1/0/0 state=PASS
+round=0 mode=1 allocated=10500760 elapsedMs=32.42 GC=1/0/0 state=PASS
+round=0 mode=2 allocated=8924112 elapsedMs=23.94 GC=0/0/0 state=PASS
+round=1 mode=1 allocated=10500760 elapsedMs=29.61 GC=1/0/0 state=PASS
+round=1 mode=2 allocated=8924112 elapsedMs=22.56 GC=0/0/0 state=PASS
+round=1 mode=0 allocated=12792208 elapsedMs=30.31 GC=1/0/0 state=PASS
+round=2 mode=2 allocated=8924112 elapsedMs=27.39 GC=0/0/0 state=PASS
+round=2 mode=0 allocated=12792208 elapsedMs=32.65 GC=1/0/0 state=PASS
+round=2 mode=1 allocated=10500760 elapsedMs=32.20 GC=1/0/0 state=PASS
+round=3 mode=0 allocated=12792208 elapsedMs=33.75 GC=1/0/0 state=PASS
+round=3 mode=1 allocated=10500760 elapsedMs=32.99 GC=1/0/0 state=PASS
+round=3 mode=2 allocated=8924112 elapsedMs=24.57 GC=0/0/0 state=PASS
+round=4 mode=1 allocated=10500760 elapsedMs=33.46 GC=1/0/0 state=PASS
+round=4 mode=2 allocated=8924112 elapsedMs=27.87 GC=0/0/0 state=PASS
+round=4 mode=0 allocated=12792208 elapsedMs=31.74 GC=1/0/0 state=PASS
+round=5 mode=2 allocated=8924112 elapsedMs=25.63 GC=0/0/0 state=PASS
+round=5 mode=0 allocated=12792208 elapsedMs=35.54 GC=1/0/0 state=PASS
+round=5 mode=1 allocated=10500760 elapsedMs=33.80 GC=1/0/0 state=PASS
+MEAN mode=0 allocated=12792208 elapsedMs=32.23
+MEAN mode=1 allocated=10500760 elapsedMs=32.41
+MEAN mode=2 allocated=8924112 elapsedMs=25.33
+Modes: 0=growing dictionary (previous release), 1=pre-sized dictionary, 2=reused delta container

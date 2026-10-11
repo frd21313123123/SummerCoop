@@ -147,6 +147,9 @@ namespace SummerCoop.Game
         }
         private void ConfigureSession()
         {
+            // Apply consumes the delta synchronously and retains immutable property
+            // maps, never the temporary world dictionary itself.
+            Session.ReuseDeltaContainers = true;
             Session.Status = SetStatus; Session.Ended = OnEnded;
             Session.JoinBarrier = delegate(bool waiting)
             {
