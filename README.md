@@ -270,4 +270,3 @@ cd SummerCoop
 - docs — [архитектура](docs/ARCHITECTURE.md), [игровые проверки](docs/QA.md), [CI](docs/CI.md).
 
 Код SummerCoop распространяется по [MIT](LICENSE). My Summer Car, MSCLoader, PlayMaker, Unity и Steamworks принадлежат своим правообладателям и не распространяются вместе с модом.
-

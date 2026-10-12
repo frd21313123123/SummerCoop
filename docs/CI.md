@@ -28,4 +28,3 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\package.ps1
 Действие `checkout` закреплено на SHA официального выпуска. Разрешения workflow ограничены `contents: read`.
 
 Локальная команда `tools/test-native-bindings.ps1 -GamePath PATH` запускает 17 проверок анализа действий против настоящих управляемых классов PlayMaker и игры. Она не вызывает Unity-физику. Эти DLL нужны только локально, остаются в игнорируемом build и не передаются на GitHub. Подробности: [JOIN-INTERACTIONS.md](JOIN-INTERACTIONS.md).
-
