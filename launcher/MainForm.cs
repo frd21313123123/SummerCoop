@@ -499,46 +499,16 @@ namespace SummerCoop.Launcher
             }
             if (!SaveUIToSettings(true)) return;
             List<string> args = GameArgs.Build(settings);
-            string commandLine = GameArgs.ToCommandLine(args);
-            string exe = Path.Combine(settings.GamePath, "mysummercar.exe");
-            bool useSteam = settings.LaunchMethod == LaunchMethod.Steam ||
-                (settings.LaunchMethod == LaunchMethod.Auto && (settings.Mode == ConnectionMode.HostSteam || settings.Mode == ConnectionMode.JoinSteam));
             try
             {
-                if (useSteam) LaunchViaSteam(exe, commandLine);
-                else LaunchDirect(exe, commandLine);
+                InstallerServices services = new InstallerServices();
+                if (services.IsGameRunning(settings.GamePath)) throw new IOException("Закройте My Summer Car перед запуском.");
+                Process.Start(GameArgs.Launch(settings, FindSteamExe()));
                 activity.AppendLine("Запуск: " + GameArgs.ToDisplayCommandLine(args));
                 AppendHome("Игра запущена. Меню SummerCoop в игре — F6.");
                 if (settings.CloseOnLaunch) Close();
             }
             catch (Exception e) { AppendHome(e.Message); }
-        }
-
-        private void LaunchDirect(string exe, string commandLine)
-        {
-            InstallerServices services = new InstallerServices();
-            if (services.IsGameRunning(settings.GamePath)) throw new IOException("Закройте My Summer Car перед запуском.");
-            ProcessStartInfo info = new ProcessStartInfo(exe, commandLine);
-            info.WorkingDirectory = settings.GamePath;
-            info.UseShellExecute = false;
-            Process.Start(info);
-        }
-
-        private void LaunchViaSteam(string exe, string commandLine)
-        {
-            InstallerServices services = new InstallerServices();
-            if (services.IsGameRunning(settings.GamePath)) throw new IOException("Закройте My Summer Car перед запуском.");
-            string steam = FindSteamExe();
-            if (steam == null)
-            {
-                AppendLaunch("steam.exe не найден — запускаю напрямую через EXE.");
-                LaunchDirect(exe, commandLine);
-                return;
-            }
-            ProcessStartInfo info = new ProcessStartInfo(steam, "-applaunch 516750 " + commandLine);
-            info.UseShellExecute = false;
-            info.WorkingDirectory = settings.GamePath;
-            Process.Start(info);
         }
 
         private static string FindSteamExe()

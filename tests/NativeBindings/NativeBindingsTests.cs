@@ -20,6 +20,11 @@ internal static class NativeBindingsTests
     {
         try
         {
+            var steamManager = typeof(CarController).Assembly.GetType("SteamManager", true);
+            var initialized = steamManager.GetProperty("Initialized", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
+            Check(initialized != null && initialized.PropertyType == typeof(bool) && initialized.GetGetMethod(true).GetMethodBody() != null
+                && typeof(Steamworks.SteamUser).GetMethod("BLoggedOn") != null,
+                "actual game Steam readiness property and backend connection method are available without invoking Unity or Steam");
             SetBoolValue stop = new SetBoolValue { boolVariable = new FsmBool { Name = "PlayerStop" }, boolValue = true };
             NativeActionInfo info = NativeActionReader.Describe(stop, Personal);
             Check(info.WritesPersonal && !NativeActionPolicy.Allowed(info, NativeActionScope.SharedActor), "real SetBoolValue cannot stop host for a guest");

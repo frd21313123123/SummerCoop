@@ -59,6 +59,50 @@ internal static class LauncherTests
                 List<string> args = GameArgs.Build(s);
                 Check(!args.Contains("--summercoop-host-lan") && !args.Contains("--summercoop-join-lan") && !args.Contains("--summercoop-host-steam") && !args.Contains("--summercoop-join-steam"), "solo has network flags");
             });
+            Test("Steam hosting and joining always route through the installed Steam client", delegate
+            {
+                string fixture = System.IO.Path.GetTempFileName();
+                try
+                {
+                    foreach (ConnectionMode mode in new[] { ConnectionMode.HostSteam, ConnectionMode.JoinSteam })
+                    foreach (LaunchMethod method in new[] { LaunchMethod.Auto, LaunchMethod.Steam })
+                    {
+                        LauncherSettings s = Base(); s.Mode = mode; s.LaunchMethod = method;
+                        var launch = GameArgs.Launch(s, fixture);
+                        Check(launch.FileName == fixture && launch.Arguments.StartsWith("-applaunch 516750 "), "Steam mode launched the game EXE directly");
+                        Check(launch.Arguments.EndsWith(GameArgs.ToCommandLine(GameArgs.Build(s))), "Steam lost game connection arguments");
+                        Check(launch.WorkingDirectory == s.GamePath && !launch.UseShellExecute, "launch context changed");
+                    }
+                }
+                finally { System.IO.File.Delete(fixture); }
+            });
+            Test("a missing Steam client cannot silently fall back to direct EXE", delegate
+            {
+                foreach (ConnectionMode mode in new[] { ConnectionMode.HostSteam, ConnectionMode.JoinSteam })
+                foreach (string missing in new[] { null, "", System.IO.Path.Combine(System.IO.Path.GetTempPath(), Guid.NewGuid().ToString("N")) })
+                {
+                    LauncherSettings s = Base(); s.Mode = mode;
+                    bool refused = false;
+                    try { GameArgs.Launch(s, missing); } catch (System.IO.FileNotFoundException) { refused = true; }
+                    Check(refused, "Steam launch fell back to direct EXE");
+                }
+            });
+            Test("direct EXE is refused for Steam multiplayer and retained for offline LAN", delegate
+            {
+                LauncherSettings s = Base(); s.LaunchMethod = LaunchMethod.DirectExe;
+                foreach (ConnectionMode mode in new[] { ConnectionMode.HostSteam, ConnectionMode.JoinSteam })
+                {
+                    s.Mode = mode; bool refused = false;
+                    try { GameArgs.Launch(s, null); } catch (ArgumentException) { refused = true; }
+                    Check(refused, "Steam multiplayer accepted direct EXE");
+                }
+                foreach (ConnectionMode mode in new[] { ConnectionMode.HostLan, ConnectionMode.JoinLan, ConnectionMode.Solo })
+                {
+                    s.Mode = mode;
+                    var launch = GameArgs.Launch(s, null);
+                    Check(launch.FileName == System.IO.Path.Combine(s.GamePath, "mysummercar.exe") && !launch.Arguments.StartsWith("-applaunch"), "offline launch requires Steam");
+                }
+            });
             Test("invalid connection settings are refused", delegate
             {
                 LauncherSettings bad = Base(); bad.Mode = ConnectionMode.JoinLan; bad.Address = "";

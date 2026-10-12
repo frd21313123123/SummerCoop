@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Text;
 
@@ -121,13 +122,30 @@ namespace SummerCoop.Launcher
 
     public static class LauncherInfo
     {
-        public const string ModVersion = "0.1.10-alpha";
+        public const string ModVersion = "0.1.11-alpha";
         public const int ProtocolVersion = 2;
         public const int DefaultPort = 27842;
     }
 
     public static class GameArgs
     {
+        // Build the launch request without starting a process, so routing can be tested locally.
+        public static ProcessStartInfo Launch(LauncherSettings s, string steamExe)
+        {
+            string commandLine = ToCommandLine(Build(s));
+            bool steamMode = s.Mode == ConnectionMode.HostSteam || s.Mode == ConnectionMode.JoinSteam;
+            if (steamMode && s.LaunchMethod == LaunchMethod.DirectExe)
+                throw new ArgumentException("Для игры через Steam выберите способ запуска «Автоматически» или «Steam» в настройках.");
+            bool useSteam = s.LaunchMethod == LaunchMethod.Steam || (s.LaunchMethod == LaunchMethod.Auto && steamMode);
+            if (useSteam && (string.IsNullOrEmpty(steamExe) || !File.Exists(steamExe)))
+                throw new FileNotFoundException("steam.exe не найден. Запустите Steam, затем повторите запуск, или откройте My Summer Car из библиотеки Steam. Для LAN / VPN можно выбрать прямой запуск EXE.");
+            ProcessStartInfo info = useSteam
+                ? new ProcessStartInfo(steamExe, "-applaunch 516750 " + commandLine)
+                : new ProcessStartInfo(Path.Combine(s.GamePath, "mysummercar.exe"), commandLine);
+            info.WorkingDirectory = s.GamePath;
+            info.UseShellExecute = false;
+            return info;
+        }
         public static string PortText(int port)
         {
             if (port < 1024 || port > 65535) throw new ArgumentException("Порт должен быть от 1024 до 65535");

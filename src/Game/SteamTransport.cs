@@ -57,8 +57,14 @@ namespace SummerCoop.Game
         }
         public static void RequireConnection()
         {
-            if (!Available()) throw new InvalidOperationException("Steam API игры недоступен. Запустите My Summer Car из библиотеки Steam или выберите LAN / VPN.");
-            if (!Connected()) throw new InvalidOperationException("Steam API игры не подключён к серверам Valve. Магазин и друзья могут работать отдельно. Переподключите Steam и заново запустите игру из его библиотеки, либо выберите LAN / VPN.");
+            string error = ConnectionError();
+            if (error != null) throw new InvalidOperationException(error);
+        }
+        public static string ConnectionError()
+        {
+            if (!Available()) return "API игры недоступен. Перезапустите Steam и игру из библиотеки с одинаковыми правами Windows. Пока можно использовать LAN / VPN.";
+            if (!Connected()) return "API игры не подключён к серверам Valve. Переподключите Steam. Магазин и друзья могут работать отдельно; LAN / VPN доступен.";
+            return null;
         }
         public void RetryLobby()
         {

@@ -1,0 +1,29 @@
+SummerCoop 0.1.11-alpha / local checks / 2026-10-13
+
+Game was not launched. No Steam or game process was started or stopped.
+Core: ALL 106 TESTS PASSED, including loopback TCP/UDP.
+Native bindings: ALL 21 NATIVE BINDING CHECKS PASSED.
+Installer: ALL 12 INSTALLER TESTS PASSED.
+Launcher: ALL 14 LAUNCHER TESTS PASSED; hidden WinForms UI checks passed.
+The Steam launch tests build ProcessStartInfo without calling Process.Start.
+
+Fixture update from 0.1.10 and repeated installation: PASS.
+Real installation: PASS.
+World revision=13282; money=3000; retained shared entities=38342.
+REMOVED=0 OMITTED_PERSONAL_REFERENCES=0 DETACHED_HELD=0
+EXACT_UNCHANGED_ENTITIES=38342 EXACT_EXPECTED_REPAIR=True
+Original native save bytes, single-player files and personal keys: unchanged.
+Repeat fixture installation: every profile file and backup byte-identical.
+Installed DLL hashes equal the tested build.
+
+SHA256 SummerCoop.dll
+16BE180B433A1BA52D2C7037367E3A3ACE0BE308DB06A9B289E67535C0B066CD
+SHA256 SummerCoop.Core.dll
+F8AE6830EFDA94809F71C16FC90832B4955EE913E6408F7AFDE359D001AB0B5B
+SHA256 SummerCoop-Setup.exe
+2C43E5E8BC5464AC08F88462CEDFB0071F7BA4C1AD647FC34E2DE7B6998CAAD5
+SHA256 SummerCoop-Launcher.exe
+BEA1E9B772AD779C448E565592255B2454D6593C7644BAE8267C66D6A4751EA7
+
+Limits: no Unity menu rendering, Steam API initialization or external Valve server
+connection was executed. No two-account Steam P2P session was tested.

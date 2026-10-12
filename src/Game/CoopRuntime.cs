@@ -35,6 +35,8 @@ namespace SummerCoop.Game
         private int hostPortPending;
         private WorldRegistry pendingRegistry;
         private Callback<GameLobbyJoinRequested_t> invitation;
+        private float nextSteamCheck;
+        private string steamError = "Проверка подключения…";
         private AvatarView avatars;
         private GameObject localPlayer;
         private Camera localCamera;
@@ -95,12 +97,21 @@ namespace SummerCoop.Game
                 saves = new SaveIsolation(root); gameHash = SaveIsolation.GameHash();
                 NativeHooks.Install();
                 if (Argument("--summercoop-test-report") != "" && Argument("--summercoop-test-import-save") == "yes") importSave = true;
-                if (SteamTransport.Available()) { username = SteamFriends.GetPersonaName(); if (username.Length > 48) username = username.Substring(0, 48); invitation = Callback<GameLobbyJoinRequested_t>.Create(OnInvite); }
                 string cliName = Argument("--summercoop-name");
                 if (cliName != "") { username = cliName.Length > 48 ? cliName.Substring(0, 48) : cliName; }
                 string cliPassword = Argument("--summercoop-password");
                 if (cliPassword != "") password = cliPassword;
                 if (Argument("--summercoop-import-save") == "yes") importSave = true;
+            }
+            catch (Exception e) { Fail(e); }
+        }
+        private void Start()
+        {
+            if (saves == null || fatal) return;
+            try
+            {
+                // Let the game's initial Awake callbacks finish before querying its SteamManager.
+                RefreshSteam();
                 if (cliHandled) return; cliHandled = true;
                 string port = Argument("--summercoop-host-lan");
                 if (Argument("--summercoop-port") != "" && port == "") portText = Argument("--summercoop-port");
@@ -113,6 +124,28 @@ namespace SummerCoop.Game
                 else { string lobby = Argument("+connect_lobby"); ulong id; if (ulong.TryParse(lobby, out id)) { lobbyText = lobby; StartClient(true, id); } }
             }
             catch (Exception e) { Fail(e); }
+        }
+        private void RefreshSteam()
+        {
+            if (Time.realtimeSinceStartup < nextSteamCheck) return;
+            nextSteamCheck = Time.realtimeSinceStartup + 1;
+            string error = SteamTransport.ConnectionError();
+            if (steamError != error)
+            {
+                steamError = error;
+                Debug.Log("SummerCoop Steam: " + (error ?? "подключён"));
+            }
+            if (invitation != null || !SteamTransport.Available()) return;
+            try
+            {
+                invitation = Callback<GameLobbyJoinRequested_t>.Create(OnInvite);
+                if (username == "Player" && Argument("--summercoop-name") == "")
+                {
+                    string name = SteamFriends.GetPersonaName();
+                    if (!string.IsNullOrEmpty(name)) username = name.Length > 48 ? name.Substring(0, 48) : name;
+                }
+            }
+            catch (Exception e) { Debug.LogWarning("SummerCoop Steam invitations: " + e.Message); }
         }
         public static string Argument(string key)
         {
@@ -260,6 +293,7 @@ namespace SummerCoop.Game
             try
             {
                 if (Input.GetKeyDown(KeyCode.F6)) visible = !visible;
+                RefreshSteam();
                 if (Active && personalKeys != null && Time.realtimeSinceStartup >= keyCaptureTime)
                 { keyCaptureTime = Time.realtimeSinceStartup + 1; personalKeys.Capture(); }
                 if (awaitingScene && sceneReadiness.Observe(Time.frameCount, nativeLoaded && Application.loadedLevelName == "GAME", GameObject.Find("PLAYER") != null, Camera.main != null)) FinishLoad();
@@ -621,14 +655,17 @@ namespace SummerCoop.Game
                 {
                     GUILayout.BeginHorizontal(); GUILayout.Label("Имя", GUILayout.Width(90)); username = GUILayout.TextField(username, 48); GUILayout.EndHorizontal();
                     importSave = GUILayout.Toggle(importSave, "Создать мир из копии одиночного сохранения");
-                    GUILayout.BeginHorizontal(); GUI.enabled = SteamTransport.Available(); if (GUILayout.Button("Хост через Steam")) { fatal = false; StartHost(true); } GUI.enabled = true;
+                    if (steamError != null) GUILayout.Label("Steam: " + steamError);
+                    GUILayout.BeginHorizontal(); GUI.enabled = steamError == null; if (GUILayout.Button("Хост через Steam")) { fatal = false; StartHost(true); } GUI.enabled = true;
                     if (GUILayout.Button("Хост LAN / VPN")) { fatal = false; StartHost(false); } GUILayout.EndHorizontal();
                     GUILayout.BeginHorizontal(); GUILayout.Label("IP хоста", GUILayout.Width(90)); address = GUILayout.TextField(address, 255); GUILayout.EndHorizontal();
                     GUILayout.BeginHorizontal(); GUILayout.Label("Порт", GUILayout.Width(90)); portText = GUILayout.TextField(portText, 5); GUILayout.EndHorizontal();
                     GUILayout.BeginHorizontal(); GUILayout.Label("Пароль LAN", GUILayout.Width(90)); password = GUILayout.PasswordField(password, '*', 64); GUILayout.EndHorizontal();
                     if (GUILayout.Button("Подключиться LAN / VPN")) { fatal = false; StartClient(false, 0); }
                     GUILayout.BeginHorizontal(); GUILayout.Label("Steam lobby", GUILayout.Width(90)); lobbyText = GUILayout.TextField(lobbyText, 20); GUILayout.EndHorizontal();
+                    GUI.enabled = steamError == null;
                     if (GUILayout.Button("Подключиться к Steam lobby")) { ulong lobby; if (!ulong.TryParse(lobbyText, out lobby)) throw new ArgumentException("Нужен номер лобби Steam"); fatal = false; StartClient(true, lobby); }
+                    GUI.enabled = true;
                 }
                 else
                 {
@@ -655,6 +692,7 @@ namespace SummerCoop.Game
                 if (GUILayout.Button("Скрыть (F6)")) visible = false;
             }
             catch (Exception e) { SetStatus(e.Message); }
+            finally { GUI.enabled = true; }
             GUI.DragWindow(new Rect(0, 0, panel.width, 40));
         }
         private ITransport SessionTransport() { return Session == null ? null : Session.Transport; }
