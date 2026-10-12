@@ -109,6 +109,21 @@ internal static class SessionTests
     }
     public static void Run(Action<string, Action> test)
     {
+        test("Steam lobby status preserves a playing host and connected guest interactions", delegate
+        {
+            using (Pair pair = new Pair(false))
+            {
+                bool ended = false; string status = "";
+                pair.Host.Ended = delegate { ended = true; };
+                pair.Host.Status = delegate(string message) { status = message; };
+                pair.Hub.Host.Events.Enqueue(new TransportEvent { Kind = TransportEventKind.Status, Error = "NoConnection: retry lobby" });
+                Tick(pair.Hub, pair.Host, new[] { pair.Client }, 2);
+                Assert(!ended && pair.Host.Phase == SessionPhase.Playing && status == "NoConnection: retry lobby", "Lobby status closed the host");
+                pair.Client.Submit(new Command { Kind = CommandKind.Take, Target = "part" });
+                Tick(pair.Hub, pair.Host, new[] { pair.Client }, 30);
+                Assert(!ended && pair.Host.World.Players[pair.Client.LocalId].Held == "part" && pair.Client.World.Players[pair.Client.LocalId].Held == "part", "Status blocked authoritative guest actions");
+            }
+        });
         test("precompressed scene seed owns its bytes and joining avoids preparation on the host frame", delegate
         {
             Hub hub = new Hub(); hub.Host = new Node { Hub = hub, Id = "host", IsHost = true };

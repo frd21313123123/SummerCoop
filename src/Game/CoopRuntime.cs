@@ -121,6 +121,7 @@ namespace SummerCoop.Game
         public void StartHost(bool steam)
         {
             if (Session != null || awaitingScene || Application.loadedLevelName == "GAME") throw new InvalidOperationException("Создайте сессию из главного меню");
+            if (steam) SteamTransport.RequireConnection();
             VerifyVanilla(); saves.Activate("world", importSave); ConfigureLoad();
             nativeBaseline = TransferEncoding.Encode(TransferKind.NativeSave, SaveIsolation.Pack(saves.CurrentDirectory));
             sceneReadiness = new SceneReadiness();
@@ -130,6 +131,7 @@ namespace SummerCoop.Game
         public void StartClient(bool steam, ulong lobbyId)
         {
             if (Session != null || awaitingScene || Application.loadedLevelName == "GAME") throw new InvalidOperationException("Подключайтесь из главного меню");
+            if (steam) SteamTransport.RequireConnection();
             VerifyVanilla(); saves.Activate("client", false);
             ITransport transport = steam ? (ITransport)new SteamTransport(false, lobbyId, gameHash) : LanTransport.Join(address, Port());
             Session = new Session(transport, null, gameHash, username, password, Time.realtimeSinceStartup); ConfigureSession();
@@ -566,6 +568,11 @@ namespace SummerCoop.Game
                     {
                         if (Session.World != null) GUILayout.Label("Игроков: " + Session.World.Players.Count + "/4. Общие деньги: " + Session.World.Money.ToString("0.00", CultureInfo.InvariantCulture) + " mk");
                         SteamTransport steam = SessionTransport() as SteamTransport;
+                        if (steam != null && steam.IsHost && !steam.LobbyReady)
+                        {
+                            GUILayout.Label(steam.LobbyStatus);
+                            if (steam.CanRetryLobby && GUILayout.Button("Повторить создание лобби Steam")) steam.RetryLobby();
+                        }
                         if (steam != null && steam.IsHost && steam.LobbyReady) { GUILayout.Label("Лобби: " + steam.Lobby.m_SteamID); if (GUILayout.Button("Пригласить друзей через Steam")) steam.Invite(); }
                         if (Active)
                         {

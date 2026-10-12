@@ -7,7 +7,7 @@ using System.Threading;
 
 namespace SummerCoop.Core
 {
-    public enum TransportEventKind { Connected, Data, Disconnected, Error }
+    public enum TransportEventKind { Connected, Data, Disconnected, Error, Status }
     public sealed class TransportEvent
     {
         public TransportEventKind Kind;

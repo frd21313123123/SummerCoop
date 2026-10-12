@@ -16,6 +16,9 @@ namespace SummerCoop.Game
         private readonly Callback<P2PSessionConnectFail_t> sessionFailed;
         private readonly CallResult<LobbyCreated_t> created;
         private readonly CallResult<LobbyEnter_t> entered;
+        private readonly LobbyCreation creation = new LobbyCreation();
+        private string lobbyStatus = "";
+        private double nextLobbyPoll;
         private CSteamID lobby, owner;
         private bool closed;
         private readonly string gameHash;
@@ -23,6 +26,8 @@ namespace SummerCoop.Game
         public bool IsHost { get; private set; }
         public bool LobbyReady { get; private set; }
         public CSteamID Lobby { get { return lobby; } }
+        public string LobbyStatus { get { return lobbyStatus; } }
+        public bool CanRetryLobby { get { return !closed && IsHost && creation.CanRetry; } }
         public IList<string> Peers { get { return new List<string>(peers); } }
         public SteamTransport(bool host, ulong lobbyId, string gameHash)
         {
@@ -32,7 +37,7 @@ namespace SummerCoop.Game
             sessionFailed = Callback<P2PSessionConnectFail_t>.Create(OnFailure);
             created = CallResult<LobbyCreated_t>.Create(OnCreated);
             entered = CallResult<LobbyEnter_t>.Create(OnEntered);
-            if (host) created.Set(SteamMatchmaking.CreateLobby(ELobbyType.k_ELobbyTypeFriendsOnly, Protocol.MaxPlayers));
+            if (host) creation.Start(UnityEngine.Time.realtimeSinceStartup);
             else { lobby = new CSteamID(lobbyId); entered.Set(SteamMatchmaking.JoinLobby(lobby)); }
         }
         public static bool Available()
@@ -45,15 +50,62 @@ namespace SummerCoop.Game
             }
             catch (Exception) { return false; }
         }
+        public static bool Connected()
+        {
+            try { return Available() && SteamUser.BLoggedOn(); }
+            catch (Exception) { return false; }
+        }
+        public static void RequireConnection()
+        {
+            if (!Available()) throw new InvalidOperationException("Steam API игры недоступен. Запустите My Summer Car из библиотеки Steam или выберите LAN / VPN.");
+            if (!Connected()) throw new InvalidOperationException("Steam API игры не подключён к серверам Valve. Магазин и друзья могут работать отдельно. Переподключите Steam и заново запустите игру из его библиотеки, либо выберите LAN / VPN.");
+        }
+        public void RetryLobby()
+        {
+            if (CanRetryLobby) creation.Start(UnityEngine.Time.realtimeSinceStartup);
+        }
+        private void LobbyProgress(string text)
+        {
+            if (lobbyStatus == text) return;
+            lobbyStatus = text;
+            events.Add(new TransportEvent { Kind = TransportEventKind.Status, Error = text });
+        }
+        private void CreateLobby()
+        {
+            double now = UnityEngine.Time.realtimeSinceStartup;
+            bool connected = Connected();
+            if (creation.Request(now, connected))
+            {
+                try
+                {
+                    SteamAPICall_t call = SteamMatchmaking.CreateLobby(ELobbyType.k_ELobbyTypeFriendsOnly, Protocol.MaxPlayers);
+                    if (call.m_SteamAPICall == 0) creation.Complete(now, false, true, "Steam не принял запрос создания лобби");
+                    else created.Set(call);
+                }
+                catch (Exception e) { creation.Complete(now, false, true, "Запрос Steam API: " + e.Message); }
+            }
+            if (!creation.Running)
+                LobbyProgress("Лобби Steam не создано: " + creation.Error + ". Мир хоста открыт. " + (creation.Pending ? "Ожидание завершения запроса Steam." : "После восстановления Steam нажмите «Повторить создание лобби»."));
+            else if (!connected) LobbyProgress("Мир хоста открыт. Ожидание подключения Steam API к серверам Valve…");
+            else LobbyProgress("Мир хоста открыт. Создание лобби Steam: попытка " + creation.Attempts + "/" + LobbyCreation.MaxAttempts + (creation.Pending ? "…" : ". Повтор после временного отказа: " + creation.Error));
+        }
         private void OnCreated(LobbyCreated_t data, bool failure)
         {
-            if (closed) return;
-            if (failure || data.m_eResult != EResult.k_EResultOK) { Error("Steam lobby creation failed: " + data.m_eResult); return; }
+            bool success = !failure && data.m_eResult == EResult.k_EResultOK;
+            if (closed) { if (success) SteamMatchmaking.LeaveLobby(new CSteamID(data.m_ulSteamIDLobby)); return; }
+            bool retryable = failure || data.m_eResult == EResult.k_EResultNoConnection || data.m_eResult == EResult.k_EResultTimeout || data.m_eResult == EResult.k_EResultServiceUnavailable || data.m_eResult == EResult.k_EResultFail;
+            string reason = data.m_eResult == EResult.k_EResultNoConnection ? "нет соединения Steam API с серверами Valve (NoConnection)" : "Steam: " + data.m_eResult + (failure ? " (ошибка ответа API)" : "");
+            if (!creation.Complete(UnityEngine.Time.realtimeSinceStartup, success, retryable, reason))
+            {
+                if (success) SteamMatchmaking.LeaveLobby(new CSteamID(data.m_ulSteamIDLobby));
+                return;
+            }
             lobby = new CSteamID(data.m_ulSteamIDLobby); owner = SteamUser.GetSteamID();
             SteamMatchmaking.SetLobbyData(lobby, "summercoop.version", Protocol.Version.ToString(CultureInfo.InvariantCulture));
             SteamMatchmaking.SetLobbyData(lobby, "summercoop.game", gameHash);
             SteamMatchmaking.SetLobbyData(lobby, "summercoop.mod", Protocol.ModVersion);
             SteamMatchmaking.SetLobbyJoinable(lobby, true); LobbyReady = true;
+            LobbyProgress("Лобби Steam готово. Можно приглашать друзей.");
         }
         private void OnEntered(LobbyEnter_t data, bool failure)
         {
@@ -92,7 +144,16 @@ namespace SummerCoop.Game
         private void Error(string text) { events.Add(new TransportEvent { Kind = TransportEventKind.Error, Error = text }); }
         public void Update()
         {
-            if (closed || !LobbyReady) return;
+            if (closed) return;
+            if (!LobbyReady)
+            {
+                if (IsHost && UnityEngine.Time.realtimeSinceStartup >= nextLobbyPoll)
+                {
+                    nextLobbyPoll = UnityEngine.Time.realtimeSinceStartup + .25;
+                    CreateLobby();
+                }
+                return;
+            }
             if (SteamMatchmaking.GetLobbyOwner(lobby) != owner) { Error("Host left. Session ended."); return; }
             HashSet<string> members = new HashSet<string>();
             for (int i = 0; i < SteamMatchmaking.GetNumLobbyMembers(lobby); i++)

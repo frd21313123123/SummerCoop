@@ -127,6 +127,7 @@ namespace SummerCoop.Core
         }
         private void Handle(TransportEvent item)
         {
+            if (item.Kind == TransportEventKind.Status) { if (Status != null) Status(item.Error); return; }
             if (item.Kind == TransportEventKind.Error) { Close(item.Error); return; }
             if (item.Kind == TransportEventKind.Connected)
             {

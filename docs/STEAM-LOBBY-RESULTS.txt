@@ -1,0 +1,38 @@
+SummerCoop 0.1.7-alpha, 2026-10-12
+
+Core tests: ALL 90 TESTS PASSED, including actual TCP/UDP localhost.
+Native binding checks: ALL 12 PASSED against the actual game assemblies and candidate DLL.
+Installer transaction tests: ALL 12 PASSED.
+
+New core scenarios:
+- Backend disconnected: no request sent; first request sent after recovery.
+- One outstanding request; no overlapping retry or duplicate callback publication.
+- Transient refusal: 2 / 4 second backoff, maximum 3 attempts.
+- Permanent refusal: no automatic retry; manual restart resets the attempt budget.
+- Offline wait: 18 second window, manual recovery without world restart.
+- Late callback: success declined for lobby cleanup, retry only after completion.
+- Deadline checked inside callback even before the next update.
+- Status event: host stays Playing, connected guest can take an object with authoritative convergence.
+
+Exact Setup EXE smoke:
+- Updated isolated copy of the current 0.1.6 profile to 0.1.7.
+- Same world ID, revision 8143, money 3000, all 38367 shared entities.
+- Canonical expected world matched; only build compatibility hashes updated.
+- Every native save file retained its exact bytes.
+- Installed both DLLs matched tested candidate hashes.
+- Repeated installation left every profile file and backup byte-identical.
+
+Real installation:
+- Game confirmed closed; running user game was not stopped automatically.
+- Backup created by installer.
+- Exact world, native save files, original single-player save and both DLL hashes verified.
+- Only SummerCoop.dll active in Mods.
+
+SHA-256:
+SummerCoop.dll 76ED75A0D6118F15DCFD64A55EF1E2F63E1309A37E6BAC525D7738610EF69F5A
+SummerCoop.Core.dll FA20120D912F22629DA0202D8C05ACFAD2C3A352A67D98C11FC7A4E771CD27CA
+SummerCoop-Setup.exe A606813324446C60175BC9281D44256C7CE771CD20F7F7EFC434F3A158F84DBD
+
+Limits: these scenarios execute production policy and Session code, not Valve servers.
+No two-account Steam P2P connection was claimed or verified in this release.
+The actual Unity movement run described in HOST-MOVEMENT.md belongs to 0.1.6.
