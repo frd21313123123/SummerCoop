@@ -22,6 +22,24 @@ internal static class SessionTests
         }
         public void Rollback(World world) { }
     }
+    private sealed class HandAdapter : ICommandAdapter
+    {
+        public int Attached;
+        public string Validate(string player, Command command, World world)
+        {
+            if (command.Kind != CommandKind.Attach) return null;
+            Player actor = world.Players[player];
+            return actor.Held == command.Target && actor.HasHeldPose && actor.HeldPosition.Distance(new V3(.5f,1.2f,.5f)) < .01f ? null : "Actual hand pose required";
+        }
+        public void Apply(string player, Command command, World world)
+        {
+            if (command.Kind != CommandKind.Attach) return;
+            Player actor = world.Players[player]; Entity part = world.Entities[command.Target].Clone();
+            part.Parent = "mount"; part.Position = actor.HeldPosition; part.Rotation = actor.HeldRotation;
+            world.Entities[part.Id] = part; world.EntityChanged(part.Id); actor.Held = ""; Attached++;
+        }
+        public void Rollback(World world) { }
+    }
     private sealed class Hub
     {
         public double Time;
@@ -109,6 +127,26 @@ internal static class SessionTests
     }
     public static void Run(Action<string, Action> test)
     {
+        test("actual hand rotation and reliable pose reach attachment before the command despite UDP loss", delegate
+        {
+            Hub hub = new Hub { Impaired = true }; hub.Host = new Node { Hub = hub, Id = "host", IsHost = true };
+            World world = new World { GameHash = "game", SchemaHash = "schema" }; world.Entities["part"] = new Entity { Id = "part", Kind = EntityKind.Rigidbody };
+            HandAdapter adapter = new HandAdapter(); Session host = new Session(hub.Host, new Authority(world, adapter, null), "game", "Host", "", 0);
+            host.PrepareNativeSave = delegate { return new byte[] { 1 }; }; host.SceneLoaded("schema");
+            Node node = ClientNode(hub, "guest"); Session guest = new Session(node, null, "game", "Guest", "", 0);
+            try
+            {
+                guest.NativeSaveReceived = delegate { guest.SceneLoaded("schema"); }; Tick(hub, host, new[] { guest }, 50);
+                guest.Submit(new Command { Kind = CommandKind.Take, Target = "part" }); Tick(hub, host, new[] { guest }, 25);
+                Q4 rotation = new Q4(0,.70710677f,0,.70710677f);
+                guest.SendPose(new Pose { Held = "part", HeldPosition = new V3(.5f,1.2f,.5f), HeldRotation = rotation }, true);
+                Command attach = new Command { Kind = CommandKind.Attach, Target = "part" }; guest.Submit(attach);
+                node.Send("host", Codec.Packet(MessageKind.Command, Codec.Command(attach)), true); Tick(hub, host, new[] { guest }, 35);
+                Assert(adapter.Attached == 1 && host.World.Entities["part"].Parent == "mount" && guest.World.Entities["part"].Parent == "mount", "Attachment lost, duplicated, or was local only");
+                Assert(host.World.Entities["part"].Rotation.Y == rotation.Y && guest.World.Entities["part"].Rotation.Y == rotation.Y && guest.World.Players[guest.LocalId].Held == "", "Rotation diverged or hand stayed occupied");
+            }
+            finally { host.Dispose(); guest.Dispose(); }
+        });
         test("Steam lobby status preserves a playing host and connected guest interactions", delegate
         {
             using (Pair pair = new Pair(false))

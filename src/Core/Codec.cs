@@ -462,7 +462,12 @@ namespace SummerCoop.Core
         }
         public static CommandResult Result(PacketView packet) { CommandResult a = null; Read(packet, delegate(BinaryReader r) { a = ReadResult(r); }); return a; }
         private static CommandResult ReadResult(BinaryReader r) { return new CommandResult { Sequence = r.ReadInt64(), Revision = r.ReadInt64(), Accepted = r.ReadBoolean(), Reason = Text(r) }; }
-        private static void WritePose(BinaryWriter w, Pose p) { Text(w, p.Id); w.Write(p.Sequence); Vector(w, p.Position); Rotation(w, p.Rotation); w.Write(p.Pitch); }
+        private static void WritePose(BinaryWriter w, Pose p)
+        {
+            Text(w, p.Id); w.Write(p.Sequence); Vector(w, p.Position); Rotation(w, p.Rotation); w.Write(p.Pitch);
+            Text(w, p.Held);
+            if (p.Held != "") { Vector(w, p.HeldPosition); Rotation(w, p.HeldRotation); }
+        }
         public static byte[] Pose(Pose p) { return Make(delegate(BinaryWriter w) { WritePose(w, p); }); }
         public static byte[] PoseFrame(Pose p) { return MakeFrame(MessageKind.Pose, delegate(BinaryWriter w) { WritePose(w, p); }); }
         public static Pose Pose(byte[] data)
@@ -472,7 +477,9 @@ namespace SummerCoop.Core
         public static Pose Pose(PacketView packet) { Pose p = null; Read(packet, delegate(BinaryReader r) { p = ReadPose(r); }); return p; }
         private static Pose ReadPose(BinaryReader r)
         {
-            Pose p = new Pose { Id = Text(r), Sequence = r.ReadInt64(), Position = Vector(r), Rotation = Rotation(r), Pitch = r.ReadSingle() }; if (!V3.Finite(p.Pitch)) throw new ProtocolException("Invalid pitch"); return p;
+            Pose p = new Pose { Id = Text(r), Sequence = r.ReadInt64(), Position = Vector(r), Rotation = Rotation(r), Pitch = r.ReadSingle(), Held = Text(r) };
+            if (p.Held != "") { p.HeldPosition = Vector(r); p.HeldRotation = Rotation(r); }
+            if (!V3.Finite(p.Pitch)) throw new ProtocolException("Invalid pitch"); return p;
         }
         public static byte[] Motion(MotionFrame frame)
         {

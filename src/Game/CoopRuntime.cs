@@ -25,6 +25,10 @@ namespace SummerCoop.Game
         private static bool NativeBaseline { get { return Argument("--summercoop-test-native-only") == "yes" && Argument("--summercoop-test-report") != ""; } }
         private SaveIsolation saves;
         private CheckpointStore store;
+        private NativeKeys personalKeys;
+        private World preparedWorld;
+        private string preparedWorldId;
+        private float keyCaptureTime;
         private Authority authority;
         private ITransport pendingTransport;
         private bool hostSteamPending;
@@ -91,12 +95,21 @@ namespace SummerCoop.Game
                 NativeHooks.Install();
                 if (Argument("--summercoop-test-report") != "" && Argument("--summercoop-test-import-save") == "yes") importSave = true;
                 if (SteamTransport.Available()) { username = SteamFriends.GetPersonaName(); if (username.Length > 48) username = username.Substring(0, 48); invitation = Callback<GameLobbyJoinRequested_t>.Create(OnInvite); }
+                string cliName = Argument("--summercoop-name");
+                if (cliName != "") { username = cliName.Length > 48 ? cliName.Substring(0, 48) : cliName; }
+                string cliPassword = Argument("--summercoop-password");
+                if (cliPassword != "") password = cliPassword;
+                if (Argument("--summercoop-import-save") == "yes") importSave = true;
                 if (cliHandled) return; cliHandled = true;
                 string port = Argument("--summercoop-host-lan");
+                if (Argument("--summercoop-port") != "" && port == "") portText = Argument("--summercoop-port");
+                string joinSteam = Argument("--summercoop-join-steam");
                 if (Argument("--summercoop-test-report") != "" && Argument("--summercoop-test-steam-host") == "yes") StartHost(true);
+                else if (Argument("--summercoop-host-steam") == "yes") StartHost(true);
                 else if (port != "") { portText = port; StartHost(false); }
                 else if (Argument("--summercoop-join-lan") != "") { address = Argument("--summercoop-join-lan"); if (Argument("--summercoop-port") != "") portText = Argument("--summercoop-port"); StartClient(false, 0); }
-                else { string lobby = Argument("+connect_lobby"); ulong id; if (ulong.TryParse(lobby, out id)) StartClient(true, id); }
+                else if (joinSteam != "") { ulong sid; if (!ulong.TryParse(joinSteam, out sid)) throw new ArgumentException("Нужен номер лобби Steam"); lobbyText = joinSteam; StartClient(true, sid); }
+                else { string lobby = Argument("+connect_lobby"); ulong id; if (ulong.TryParse(lobby, out id)) { lobbyText = lobby; StartClient(true, id); } }
             }
             catch (Exception e) { Fail(e); }
         }
@@ -122,7 +135,12 @@ namespace SummerCoop.Game
         {
             if (Session != null || awaitingScene || Application.loadedLevelName == "GAME") throw new InvalidOperationException("Создайте сессию из главного меню");
             if (steam) SteamTransport.RequireConnection();
-            VerifyVanilla(); saves.Activate("world", importSave); ConfigureLoad();
+            VerifyVanilla(); saves.Activate("world", importSave);
+            using (CheckpointStore source = new CheckpointStore(saves.CurrentDirectory)) preparedWorld = source.Recover();
+            if (preparedWorld == null && File.Exists(Path.Combine(saves.CurrentDirectory, "world.scw"))) throw new InvalidOperationException("Повреждённая контрольная точка мира");
+            if (preparedWorld != null && (preparedWorld.GameHash != gameHash || preparedWorld.SchemaHash != Codec.Hash(System.Text.Encoding.UTF8.GetBytes(gameHash + "/native-schema-2")))) throw new InvalidOperationException("Сохранение SummerCoop сделано другой версией игры или мода");
+            preparedWorldId = preparedWorld == null ? Guid.NewGuid().ToString("N") : preparedWorld.Id;
+            PrepareKeys(preparedWorldId); ConfigureLoad();
             nativeBaseline = TransferEncoding.Encode(TransferKind.NativeSave, SaveIsolation.Pack(saves.CurrentDirectory));
             sceneReadiness = new SceneReadiness();
             hostSteamPending = steam; hostPortPending = steam ? 0 : Port();
@@ -170,7 +188,7 @@ namespace SummerCoop.Game
             if (Session.IsHost) Session.SetNativeSaveSeed(nativeBaseline);
             Session.NativeSaveReceived = delegate(byte[] bytes)
             {
-                SaveIsolation.Unpack(saves.CurrentDirectory, bytes); ConfigureLoad();
+                SaveIsolation.Unpack(saves.CurrentDirectory, bytes); PrepareKeys(Session.World.Id); ConfigureLoad();
                 sceneReadiness = new SceneReadiness();
                 awaitingScene = true; nativeLoaded = false; hostPending = false; sceneBegan = Time.realtimeSinceStartup; SetStatus("Загрузка общего мира…"); Application.LoadLevel("GAME");
             };
@@ -192,14 +210,15 @@ namespace SummerCoop.Game
                 NativeHooks.Uninstall(); awaitingScene = false; visible = false; NativeBaselineReady = true;
                 SetStatus("Диагностика нативной игры без синхронизации"); gameObject.AddComponent<IntegrationProbe>(); return;
             }
+            if (personalKeys != null) personalKeys.RestoreGlobals();
             Registry = pendingRegistry ?? new WorldRegistry(hostPending, gameHash); pendingRegistry = null; Registry.Discover(true);
             avatars = new AvatarView();
             localPlayer = GameObject.Find("PLAYER"); localCamera = Camera.main;
             if (hostPending)
             {
-                World world = new World { GameHash = gameHash, SchemaHash = Registry.SchemaHash };
+                World world = new World { Id = preparedWorldId, GameHash = gameHash, SchemaHash = Registry.SchemaHash };
                 store = new CheckpointStore(Path.Combine(root, "world")) { ImmutableEntities = true };
-                World recovered = store.Recover();
+                World recovered = preparedWorld; preparedWorld = null;
                 if (recovered == null && File.Exists(Path.Combine(Path.Combine(root, "world"), "world.scw"))) throw new InvalidOperationException("Контрольная точка и её резервная копия несовместимы или повреждены. Сохраните этот профиль и выберите отдельный новый профиль.");
                 if (recovered != null)
                 {
@@ -240,6 +259,8 @@ namespace SummerCoop.Game
             try
             {
                 if (Input.GetKeyDown(KeyCode.F6)) visible = !visible;
+                if (Active && personalKeys != null && Time.realtimeSinceStartup >= keyCaptureTime)
+                { keyCaptureTime = Time.realtimeSinceStartup + 1; personalKeys.Capture(); }
                 if (awaitingScene && sceneReadiness.Observe(Time.frameCount, nativeLoaded && Application.loadedLevelName == "GAME", GameObject.Find("PLAYER") != null, Camera.main != null)) FinishLoad();
                 long stage = System.Diagnostics.Stopwatch.GetTimestamp();
                 HeapStamp heapStage = HeapBegin();
@@ -295,7 +316,7 @@ namespace SummerCoop.Game
                     LastMotionBodies = 0;
                     if (localPlayer == null) localPlayer = GameObject.Find("PLAYER");
                     if (localCamera == null || !localCamera.isActiveAndEnabled) localCamera = Camera.main;
-                    if (localPlayer != null) { Session.SendPose(new Pose { Position = WorldRegistry.From(localPlayer.transform.position), Rotation = WorldRegistry.From(localPlayer.transform.rotation), Pitch = localCamera == null ? 0 : localCamera.transform.eulerAngles.x }); }
+                    if (localPlayer != null) Session.SendPose(LocalPose());
                     if (Session.IsHost && Session.World.Players.Count > 1)
                     {
                         long motionBegan = System.Diagnostics.Stopwatch.GetTimestamp(); List<MotionFrame> frames = Registry.CaptureMotion(); LastStages[8] = Elapsed(motionBegan);
@@ -306,6 +327,7 @@ namespace SummerCoop.Game
                     LastStages[6] = Elapsed(stage);
                 }
                 if (Application.loadedLevelName != "GAME") Leave("Мир закрыт");
+                else if (!Session.IsHost && Input.GetButtonDown("Use")) NativeUseInput.FromView(Registry, localCamera);
             }
             catch (Exception e) { Fail(e); }
             finally { LastUpdateMilliseconds = (System.Diagnostics.Stopwatch.GetTimestamp() - updateBegan) * 1000.0 / System.Diagnostics.Stopwatch.Frequency; if (TraceAllocations) { previousUpdateEnd = HeapBegin(); measuredUpdateEnd = true; } }
@@ -324,18 +346,17 @@ namespace SummerCoop.Game
             VehicleInput.Invoke(car, controls);
             Session.Submit(new Command { Kind = CommandKind.Drive, Target = player.Seat, Vector = new V3((float)controls[2], (float)controls[0], (float)controls[1]), Number = (float)controls[3], Argument = ((float)controls[4]).ToString("R", CultureInfo.InvariantCulture) + "|" + controls[6] + "|" + ((bool)controls[5] ? "1" : "0") });
         }
-        public void RequestState(FsmBinding b, string state)
+        public bool RequestState(FsmBinding b, string state)
         {
-            if (!Session.World.Entities.ContainsKey(b.Id)) return;
-            if (!Active || Joining || b.Component == null) return;
-            if (sharedRequests.ContainsTarget(b.Id)) return;
+            if (!Active || Joining || b.Component == null || !Session.World.Entities.ContainsKey(b.Id)) return false;
+            if (sharedRequests.ContainsTarget(b.Id)) return true;
             Player actor = Session.World.Players[Session.LocalId];
             Vector3 position = localPlayer == null ? WorldRegistry.To(actor.Position) : localPlayer.transform.position;
-            if (Vector3.Distance(position, b.Component.transform.position) > 5) return;
+            if (Vector3.Distance(position, b.Component.transform.position) > 5) return false;
             bool input = Input.anyKey || Input.GetMouseButton(0) || Input.GetMouseButton(1) || Input.GetMouseButtonUp(0) || Input.GetMouseButtonUp(1) || Math.Abs(Input.GetAxis("Mouse ScrollWheel")) > 0.001f
                 || NativeInputProbe.InputActive && Argument("--summercoop-test-native-input") == "yes" && Argument("--summercoop-test-report") != "";
-            if (!input && !(b.Component.FsmName == "Assembly" && actor.Held != "")) return;
-            float last; if (requests.TryGetValue(b.Id, out last) && Time.realtimeSinceStartup - last < 0.08f) return; requests[b.Id] = Time.realtimeSinceStartup;
+            if (!input && !(b.Component.FsmName == "Assembly" && actor.Held != "")) return false;
+            float last; if (requests.TryGetValue(b.Id, out last) && Time.realtimeSinceStartup - last < 0.08f) return false; requests[b.Id] = Time.realtimeSinceStartup;
             CommandKind kind = CommandKind.Interact;
             if (b.Component.FsmName == "Assembly") kind = CommandKind.Attach;
             else if (b.Component.FsmName == "Removal") kind = CommandKind.Detach;
@@ -347,11 +368,23 @@ namespace SummerCoop.Game
             Command command = new Command { Kind = kind, Target = b.Id, Argument = state, Number = kind == CommandKind.Bolt && wrench != null ? wrench.Value : 0 };
             CommandResult result = Session.Submit(command);
             if (result == null) sharedRequests.Add(command);
+            return true;
         }
         private void SendActionPose()
         {
             if (Session == null || !Active || localPlayer == null) return;
-            Session.SendPose(new Pose { Position = WorldRegistry.From(localPlayer.transform.position), Rotation = WorldRegistry.From(localPlayer.transform.rotation), Pitch = localCamera == null ? 0 : localCamera.transform.eulerAngles.x }, true);
+            Session.SendPose(LocalPose(), true);
+        }
+        private Pose LocalPose()
+        {
+            Pose pose = new Pose { Position = WorldRegistry.From(localPlayer.transform.position), Rotation = WorldRegistry.From(localPlayer.transform.rotation), Pitch = localCamera == null ? 0 : localCamera.transform.eulerAngles.x };
+            Player actor;
+            if (Registry != null && Session.World.Players.TryGetValue(Session.LocalId, out actor) && actor.Held != "")
+            {
+                GameObject held = Registry.ObjectOf(actor.Held);
+                if (held != null) { pose.Held = actor.Held; pose.HeldPosition = WorldRegistry.From(held.transform.position); pose.HeldRotation = WorldRegistry.From(held.transform.rotation); }
+            }
+            return pose;
         }
         private void ReplaySharedActions()
         {
@@ -396,6 +429,7 @@ namespace SummerCoop.Game
                 }
                 if (state.Name.StartsWith("Drop ", StringComparison.Ordinal))
                 {
+                    SendActionPose();
                     Player p = Session.World.Players[Session.LocalId]; if (p.Held != "") Session.Submit(new Command { Kind = CommandKind.Drop, Target = p.Held });
                     return true;
                 }
@@ -478,6 +512,7 @@ namespace SummerCoop.Game
         public void Leave(string reason)
         {
             if (Session == null && pendingTransport == null && !awaitingScene) return;
+            if (personalKeys != null && Application.loadedLevelName == "GAME" && nativeLoaded) personalKeys.Capture();
             try { if (Session != null && Session.IsHost && Registry != null) { Registry.Capture(Session.World, true); NativeSave.Capture(Registry, saves.CurrentDirectory); store.Checkpoint(Session.World); } }
             finally
             {
@@ -495,6 +530,7 @@ namespace SummerCoop.Game
         }
         private void OnEnded(string reason)
         {
+            if (personalKeys != null && Application.loadedLevelName == "GAME" && nativeLoaded) personalKeys.Capture();
             NativeHooks.UpdateMode = 0;
             Session = null; Joining = false; Time.timeScale = previousScale;
             ClearNativeRequests();
@@ -512,10 +548,16 @@ namespace SummerCoop.Game
             visible = true;
         }
         private void SetStatus(string value) { if (status == value) return; status = value; ModConsole.Print("SummerCoop: " + value); }
+        private void PrepareKeys(string world)
+        {
+            string identity = SteamTransport.Available() ? "steam/" + SteamUser.GetSteamID().m_SteamID.ToString(CultureInfo.InvariantCulture) : "lan/" + username;
+            personalKeys = new NativeKeys(root, saves.CurrentDirectory, world, identity);
+        }
+        public void SaveKeysNow() { if (personalKeys != null && nativeLoaded) personalKeys.Capture(); }
         private void DisposeStore() { CheckpointStore current = store; store = null; if (current != null) { try { current.Dispose(); } catch (IOException e) { Debug.LogException(e); } } }
         private void OnApplicationQuit()
         {
-            try { if (Session != null && Session.IsHost && Registry != null) { Registry.Capture(Session.World, true); NativeSave.Capture(Registry, saves.CurrentDirectory); store.Checkpoint(Session.World); } }
+            try { if (personalKeys != null && nativeLoaded && Application.loadedLevelName == "GAME") personalKeys.Capture(); if (Session != null && Session.IsHost && Registry != null) { Registry.Capture(Session.World, true); NativeSave.Capture(Registry, saves.CurrentDirectory); store.Checkpoint(Session.World); } }
             catch (Exception e) { Debug.LogException(e); }
             if (Session != null) Session.Dispose();
             if (pendingTransport != null) pendingTransport.Dispose();

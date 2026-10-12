@@ -18,6 +18,9 @@ namespace SummerCoop.Game
         private string partId, assemblyId, boltId, doorId;
         private int boltBefore;
         private Quaternion doorBefore;
+        private string beerId;
+        private int beerBefore;
+        private bool doorReversed;
         private readonly List<string> lines = new List<string>();
         private bool done;
         private bool rejectionChecked;
@@ -119,6 +122,11 @@ namespace SummerCoop.Game
                 {
                     Position(r, r.Registry.FsmOf(assemblyId).Component.transform.position - Vector3.up * 1.35f - Vector3.forward * 1.2f);
                     if (Time.realtimeSinceStartup - sent < 1) return;
+                    // Align the actual native hand, rather than the former synthetic host offset.
+                    GameObject player = GameObject.Find("PLAYER");
+                    Vector3 snap = r.Registry.FsmOf(assemblyId).Component.transform.position;
+                    player.transform.position += snap - r.Registry.ObjectOf(partId).transform.position;
+                    lines.Add("ACTUAL_HAND_SNAP_DISTANCE=" + Vector3.Distance(snap, r.Registry.ObjectOf(partId).transform.position));
                     result = null; Boundary(r.Registry.FsmOf(assemblyId), "Wait"); sent = Time.realtimeSinceStartup; step = 8; return;
                 }
                 if (step == 8)
@@ -173,7 +181,10 @@ namespace SummerCoop.Game
                 if (step == 12)
                 {
                     FsmBinding door = r.Registry.FsmOf(doorId); GameObject actual = door.Component.FsmVariables.FindFsmGameObject("Door").Value;
+                    Position(r, door.Component.transform.position);
                     float angle = Quaternion.Angle(doorBefore, actual.transform.rotation);
+                    if (angle < .1f && !doorReversed && Time.realtimeSinceStartup - sent > 3 && door.Requests.Contains("Close"))
+                    { doorReversed = true; result = null; Boundary(door, "Close"); sent = Time.realtimeSinceStartup; return; }
                     if (angle < 0.1f) { Timeout(r, "native door boundary/convergence"); return; }
                     lines.Add("DOOR=PASS: replicated rotation changed " + angle);
                     foreach (FsmBinding binding in r.Registry.Fsms.Values)
@@ -183,7 +194,37 @@ namespace SummerCoop.Game
                             if (!NativeHooks.CanRunLocally(input) || !NativeHooks.UpdatePrefix(binding.Component.Fsm, input)) throw new Exception("Mixed native input state is still blocked");
                             lines.Add("MIXED_INPUT=PASS: local polling permitted, shared setup effects filtered"); break;
                         }
-                    Finish(r, "PASS: native hand take/drop, rejected take recovery/retake, assembly hook, hand release, bolt tighten/unscrew, door hook and mixed input state");
+                    foreach (FsmBinding beer in r.Registry.Fsms.Values)
+                    {
+                        FsmInt consumed = beer.Component.FsmVariables.FindFsmInt("DestroyedBottles");
+                        if (beer.Component.FsmName != "Use" || consumed == null || consumed.Value >= 23 || !beer.Component.gameObject.activeInHierarchy || beer.Component.transform.root.GetComponent<Rigidbody>() == null) continue;
+                        beerId = beer.Id; beerBefore = consumed.Value; break;
+                    }
+                    if (beerId == null) throw new Exception("No active beer case available for native Use proof");
+                    Position(r, r.Registry.FsmOf(beerId).Component.transform.position + Vector3.up * .2f);
+                    result = null; sent = Time.realtimeSinceStartup; step = 13; return;
+                }
+                if (step == 13)
+                {
+                    if (Time.realtimeSinceStartup - sent < 1) return;
+                    InputActive = true;
+                    try { if (!NativeUseInput.Activate(r.Registry.FsmOf(beerId))) throw new Exception("Native configured Use button is not routable"); }
+                    finally { InputActive = false; }
+                    sent = Time.realtimeSinceStartup; step = 14; return;
+                }
+                if (step == 14)
+                {
+                    int count = r.Registry.FsmOf(beerId).Component.FsmVariables.FindFsmInt("DestroyedBottles").Value;
+                    if (count != beerBefore + 1) { Timeout(r, "native beer Use/count convergence"); return; }
+                    if (Time.realtimeSinceStartup - sent < 9) return;
+                    lines.Add("BEER_USE=PASS: configured Use -> native checks -> host consumes exactly one bottle");
+                    GameObject keys = GameObject.Find("GifuKeys");
+                    if (keys != null)
+                    {
+                        PlayMakerFSM pickup = PlayMakerFSM.FindFsmOnGameObject(keys, "Use");
+                        if (pickup != null) { NativeAdapter.ExecuteState(new FsmBinding { Component = pickup }, "State 1"); r.SaveKeysNow(); lines.Add("PERSONAL_KEY_PICKUP=" + FsmVariables.GlobalVariables.FindFsmInt("PlayerKeyGifu").Value); }
+                    }
+                    Finish(r, "PASS: native hand take/drop, rejected take recovery/retake, assembly hook, hand release, bolt tighten/unscrew, door hook, mixed input and configured beer Use");
                 }
             }
             catch (Exception e) { Finish(r, "FAIL: " + e); }

@@ -129,20 +129,23 @@ namespace SummerCoop.Core
             Player p = World.Players[id];
             switch (c.Kind)
             {
-                case CommandKind.Take: p.Held = c.Target; break;
+                case CommandKind.Take: p.Held = c.Target; p.HasHeldPose = false; break;
                 case CommandKind.Drop: p.Held = ""; break;
                 case CommandKind.EnterSeat: p.Seat = c.Target; break;
                 case CommandKind.LeaveSeat: p.Seat = ""; break;
                 case CommandKind.Sleep: p.SleepReady = c.Number != 0; break;
             }
             if (adapter != null) adapter.Apply(id, c, World);
+            if (p.Held == "") p.HasHeldPose = false;
         }
         public bool SetPose(string id, Pose pose)
         {
             Player p;
             if (!World.Players.TryGetValue(id, out p) || pose.Sequence <= p.LastPose || !pose.Position.IsFinite || !pose.Rotation.IsFinite || !V3.Finite(pose.Pitch)) return false;
+            if (pose.Held != "" && (pose.Held != p.Held || !pose.HeldPosition.IsFinite || !pose.HeldRotation.IsFinite || pose.Position.Distance(pose.HeldPosition) > 4)) return false;
             if (Math.Abs(pose.Position.X) > 100000 || Math.Abs(pose.Position.Y) > 100000 || Math.Abs(pose.Position.Z) > 100000) return false;
             p.Position = pose.Position; p.Rotation = pose.Rotation; p.Pitch = pose.Pitch; p.LastPose = pose.Sequence;
+            p.HasHeldPose = pose.Held != ""; p.HeldPosition = pose.HeldPosition; p.HeldRotation = pose.HeldRotation;
             return true;
         }
     }

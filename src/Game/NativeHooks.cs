@@ -32,6 +32,7 @@ namespace SummerCoop.Game
             public ClientProjection Snapshot() { return new ClientProjection { Permitted = Permitted, Effects = Effects, Enabled = new bool[Effects.Length], Previous = Previous == null ? null : Previous.Snapshot() }; }
             public void Suspend() { if (Previous != null) Previous.Suspend(); for (int i = 0; i < Effects.Length; i++) { Enabled[i] = Effects[i].Enabled; Effects[i].Enabled = false; } }
             public void Restore() { for (int i = 0; i < Effects.Length; i++) Effects[i].Enabled = Enabled[i]; if (Previous != null) Previous.Restore(); }
+            public void FinishSuppressed() { for (int i = 0; i < Effects.Length; i++) if (Enabled[i]) Effects[i].Finished = true; }
         }
         public static void Install()
         {
@@ -65,6 +66,7 @@ namespace SummerCoop.Game
             if (!runtime.Session.IsHost && (localReplay || PersonalReplays.Contains(__instance)))
             {
                 if (b == null || b.Personal) return true;
+                if (!localReplay && b.Requests.Contains(state.Name) && !CanRunLocally(state) && runtime.RequestState(b, state.Name)) { Pending.SetValue(__instance, null); return false; }
                 PersonalReplays.Transition(__instance, state.Name, b.WaitingState);
                 __state = MaskSwitch(__instance.ActiveState, state, NativeActionScope.PersonalReplay); __state.Suspend(); return true;
             }
@@ -88,7 +90,12 @@ namespace SummerCoop.Game
             if (CanRunLocally(state)) { __state = MaskSwitch(__instance.ActiveState, state, NativeActionScope.InputPolling); __state.Suspend(); return true; }
             Pending.SetValue(__instance, null); return false;
         }
-        public static void SwitchPostfix(ClientProjection __state) { if (__state != null) __state.Restore(); }
+        public static void SwitchPostfix(Fsm __instance, ClientProjection __state)
+        {
+            if (__state != null) { __state.FinishSuppressed(); __state.Restore(); }
+            CoopRuntime runtime = CoopRuntime.Instance;
+            if (runtime != null && runtime.Active && __instance.Owner != null && PersonalKeys.IsPickup(__instance.Owner.gameObject.name)) runtime.SaveKeysNow();
+        }
         public static bool UpdatePrefix(Fsm __instance, FsmState state)
         {
             if (RemoteActors.Contains(__instance)) { RemoveEffects(state, NativeActionScope.SharedActor); return true; }

@@ -103,8 +103,20 @@ namespace SummerCoop.Game
             if (go == null) return true;
             if (LocalHierarchy.IsRootName(go.transform.root.name)) return true;
             for (Transform cursor = go.transform; cursor != null; cursor = cursor.parent)
-                if (LocalHierarchy.IsNestedName(cursor.name) || cursor.parent != null && LocalHierarchy.IsPersonalSystemName(cursor.parent.name, cursor.name)) return true;
+            {
+                string name = cursor.name;
+                if (LocalHierarchy.IsNestedName(name) || PersonalDeathBody(cursor, name)
+                    || cursor.parent != null && LocalHierarchy.IsPersonalSystemName(cursor.parent.name, name)) return true;
+            }
             return false;
+        }
+        private static bool PersonalDeathBody(Transform transform, string name)
+        {
+            if (!LocalHierarchy.IsDeathBodyName(name) || transform.GetComponent<Rigidbody>() == null) return false;
+            bool owner = false;
+            foreach (PlayMakerFSM fsm in transform.GetComponents<PlayMakerFSM>())
+                if (fsm.FsmName == "Owner" && fsm.FsmVariables.FindFsmGameObject("Owner") != null) { owner = true; break; }
+            return LocalHierarchy.IsPersonalDeathBody(name, owner, transform.FindChild("CameraPivot") != null);
         }
         public static bool PersonalVariable(string name)
         {
@@ -332,7 +344,7 @@ namespace SummerCoop.Game
             ObjectBinding objectBinding;
             if (Objects.TryGetValue(binding.ObjectId, out objectBinding))
             {
-                if (binding.Component.FsmName == "PlayerTrigger") objectBinding.LocalControls = true;
+                if (binding.Component.FsmName == "PlayerTrigger" || binding.Component.FsmName == "Screw") objectBinding.LocalControls = true;
                 if (binding.Component.FsmName == "Use" && binding.Component.FsmVariables.FindFsmInt("DestroyedBottles") != null) objectBinding.StockFsm = binding.Component;
             }
             FsmBinding existing; if (Fsms.TryGetValue(binding.Id, out existing) && existing.Component != null && existing.Component != binding.Component) throw new InvalidOperationException("Ambiguous native FSM identity: " + binding.Key);
@@ -343,7 +355,7 @@ namespace SummerCoop.Game
         private static bool IsPersonalFsm(PlayMakerFSM f)
         {
             string path = GameProbe.PathOf(f.transform);
-            return NativeActionPolicy.PersonalFsm(f.FsmName) || path.IndexOf("SleepTrigger", StringComparison.Ordinal) >= 0 || path.IndexOf("PlayerDatabase", StringComparison.Ordinal) >= 0;
+            return f.FsmName == "PlayerKeys" || NativeActionPolicy.PersonalFsm(f.FsmName) || path.IndexOf("SleepTrigger", StringComparison.Ordinal) >= 0 || path.IndexOf("PlayerDatabase", StringComparison.Ordinal) >= 0;
         }
         private void RegisterAsset(UnityEngine.Object asset)
         {
@@ -951,6 +963,12 @@ namespace SummerCoop.Game
             string name = b.Component.FsmName;
             if (name == "Screw") { if (b.Component.Fsm.GetState("Screw 2") != null) b.Requests.Add("Screw 2"); if (b.Component.Fsm.GetState("Unscrew 2") != null) b.Requests.Add("Unscrew 2"); }
             if (name == "Assembly" && b.Component.Fsm.GetState("Assemble") != null) b.Requests.Add("Assemble");
+            if (name == "Use") foreach (string direction in new[] { "Open", "Close" })
+            {
+                FsmState state = b.Component.Fsm.GetState(direction);
+                if (state == null) continue;
+                foreach (FsmStateAction action in state.Actions) if (action.GetType().Name == "AddTorque") { b.Requests.Add(direction); break; }
+            }
             if (name == "Assemble" && b.Component.transform.root.name.StartsWith("SATSUMA", StringComparison.Ordinal)) b.Requests.Add("Sound");
         }
         public static V3 From(Vector3 v) { return new V3(v.x, v.y, v.z); }

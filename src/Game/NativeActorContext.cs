@@ -71,9 +71,9 @@ namespace SummerCoop.Game
             if (target == null || depth > 3) return false;
             GameObject go = target as GameObject; Component component = target as Component;
             if (component != null) go = component.gameObject;
-            if (go != null) return WorldRegistry.PersonalObject(go);
+            if (go != null) return !Shared(go) && WorldRegistry.PersonalObject(go);
             FsmGameObject gameObject = target as FsmGameObject;
-            if (gameObject != null) return inferred.Contains(gameObject.Name) || NativeActionPolicy.PersonalVariable(gameObject.Name) || gameObject.Value != null && WorldRegistry.PersonalObject(gameObject.Value);
+            if (gameObject != null) return gameObject.Value != null && Shared(gameObject.Value) ? false : inferred.Contains(gameObject.Name) || NativeActionPolicy.PersonalVariable(gameObject.Name) || gameObject.Value != null && WorldRegistry.PersonalObject(gameObject.Value);
             FsmObject obj = target as FsmObject;
             if (obj != null) return inferred.Contains(obj.Name) || NativeActionPolicy.PersonalVariable(obj.Name) || Direct(obj.Value, fsm, inferred, depth + 1);
             FsmOwnerDefault owner = target as FsmOwnerDefault;
@@ -82,6 +82,17 @@ namespace SummerCoop.Game
             if (property != null) return Direct(property.TargetObject, fsm, inferred, depth + 1);
             object recipient = NativeActionReader.Field(target, "gameObject");
             return recipient != null && Direct(recipient, fsm, inferred, depth + 1);
+        }
+        private static bool Shared(GameObject go)
+        {
+            CoopRuntime runtime = CoopRuntime.Instance;
+            if (runtime == null || runtime.Registry == null) return false;
+            for (Transform cursor = go.transform; cursor != null; cursor = cursor.parent)
+            {
+                if (SummerCoop.Core.LocalHierarchy.IsNestedName(cursor.name)) return false;
+                if (runtime.Registry.IdOf(cursor.gameObject) != "") return true;
+            }
+            return false;
         }
     }
 }

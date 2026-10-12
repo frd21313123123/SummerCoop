@@ -10,19 +10,29 @@ namespace SummerCoop.Core
         {
             if (name == null) return false;
             if (name.EndsWith("(Clone)", StringComparison.Ordinal)) name = name.Substring(0, name.Length - 7);
-            return name == "PLAYER" || name == "GUI" || name == "HUD" || name == "Steam"
-                || name == "FPSCamera"
+            return PersonalKeys.IsPickup(name) || name == "PLAYER" || name == "GUI" || name == "HUD" || name == "Steam"
+                || name == "FPSCamera" || name == "PlayerElecShock"
                 || name.StartsWith("MSCLoader", StringComparison.Ordinal) || name.StartsWith("SummerCoop", StringComparison.Ordinal);
         }
         public static bool IsNestedName(string name)
         {
-            return name != null && (name == "PLAYER" || name == "PLAYER(Clone)"
-                || name == "FPSCamera" || name == "FPSCamera(Clone)"
+            return name != null && (PersonalKeys.IsPickup(name) || name == "PLAYER" || name == "PLAYER(Clone)"
+                || name == "FPSCamera" || name == "FPSCamera(Clone)" || name == "PlayerElecShock" || name == "PlayerElecShock(Clone)"
                 || name.StartsWith("MSCLoader", StringComparison.Ordinal) || name.StartsWith("SummerCoop", StringComparison.Ordinal));
         }
         public static bool IsPersonalSystemName(string parent, string name)
         {
             return parent == "Systems" && (name == "Options" || name == "OptionsMenu" || name == "InitializeControls" || name == "Death");
+        }
+        public static bool IsDeathBodyName(string name)
+        {
+            return name == "DeadBody" || name == "DeadBody(Clone)";
+        }
+        public static bool IsPersonalDeathBody(string name, bool hasOwner, bool hasCameraPivot)
+        {
+            // Vehicle crash bodies share this name and camera pivot. Only the
+            // detached FPSCamera body has the native Owner FSM.
+            return IsDeathBodyName(name) && hasOwner && hasCameraPivot;
         }
         private static bool IsPersonalSystemKey(string key)
         {
@@ -57,9 +67,38 @@ namespace SummerCoop.Core
 
         public static int RemoveFromCheckpoint(World world)
         {
+            var keyUpdates = new List<Entity>();
+            foreach (Entity entity in world.Entities.Values)
+            {
+                Entity next = null;
+                foreach (string property in entity.Properties.Keys) if (property.StartsWith("v/PlayerKey", StringComparison.Ordinal))
+                { if (next == null) next = entity.Clone(); next.Properties.Remove(property); }
+                if (next != null) keyUpdates.Add(next);
+            }
+            foreach (Entity entity in keyUpdates) { world.Entities[entity.Id] = entity; world.EntityChanged(entity.Id); }
+            var bodyOwners = new HashSet<string>(StringComparer.Ordinal);
+            var bodyPivots = new HashSet<string>(StringComparer.Ordinal);
+            foreach (Entity entity in world.Entities.Values)
+            {
+                Entity parent;
+                if (!world.Entities.TryGetValue(entity.Parent, out parent) || parent.Kind != EntityKind.Rigidbody
+                    || SharedObject(parent)) continue;
+                Atom name, owner;
+                if (!parent.Properties.TryGetValue("@name", out name) || name.Kind != AtomKind.Text || !IsDeathBodyName(name.Text)) continue;
+                if (entity.Kind == EntityKind.Fsm && entity.Key.StartsWith(parent.Key + "|fsm/Owner/", StringComparison.Ordinal)
+                    && entity.Properties.TryGetValue("v/Owner", out owner) && owner.Kind == AtomKind.Reference && owner.Text == parent.Id)
+                    bodyOwners.Add(parent.Id);
+                if (entity.Kind == EntityKind.Object && entity.Properties.TryGetValue("@name", out name)
+                    && name.Kind == AtomKind.Text && name.Text == "CameraPivot") bodyPivots.Add(parent.Id);
+            }
             var roots = new List<string>();
             foreach (Entity entity in world.Entities.Values)
-                if (PersonalRoot(entity) || IsPersonalSystemKey(entity.Key) && entity.Kind != EntityKind.Fsm) roots.Add(entity.Key);
+            {
+                Atom name;
+                bool deathBody = bodyOwners.Contains(entity.Id) && bodyPivots.Contains(entity.Id)
+                    && entity.Properties.TryGetValue("@name", out name) && IsPersonalDeathBody(name.Text, true, true);
+                if (PersonalRoot(entity) || deathBody || IsPersonalSystemKey(entity.Key) && entity.Kind != EntityKind.Fsm) roots.Add(entity.Key);
+            }
             if (roots.Count == 0) return 0;
             // Held parts retain their own identity, even if an old build registered
             // one beneath a personal key. Preserve their complete subtrees.

@@ -22,6 +22,7 @@ $zip = Join-Path $root ('dist\SummerCoop-' + $version + '.zip')
 Compress-Archive -LiteralPath (Join-Path $release 'Mods'),(Join-Path $release 'README.md'),(Join-Path $release 'LICENSE'),(Join-Path $release 'docs'),(Join-Path $release 'install.ps1'),(Join-Path $release 'SHA256.txt') -DestinationPath $zip -Force
 Write-Output $zip
 & (Join-Path $PSScriptRoot 'build-installer.ps1') -PackagePath $release
+& (Join-Path $PSScriptRoot 'build-launcher.ps1') -PackagePath $release
 $sourceZip = Join-Path $root ('dist\SummerCoop-' + $version + '-source.zip')
-Compress-Archive -LiteralPath (Join-Path $root 'src'),(Join-Path $root 'tests'),(Join-Path $root 'tools'),(Join-Path $root 'docs'),(Join-Path $root '.github'),(Join-Path $root 'README.md'),(Join-Path $root 'LICENSE'),(Join-Path $root '.gitignore'),(Join-Path $root '.gitattributes') -DestinationPath $sourceZip -Force
+Compress-Archive -LiteralPath (Join-Path $root 'src'),(Join-Path $root 'tests'),(Join-Path $root 'tools'),(Join-Path $root 'launcher'),(Join-Path $root 'docs'),(Join-Path $root '.github'),(Join-Path $root 'README.md'),(Join-Path $root 'LICENSE'),(Join-Path $root '.gitignore'),(Join-Path $root '.gitattributes') -DestinationPath $sourceZip -Force
 Write-Output $sourceZip

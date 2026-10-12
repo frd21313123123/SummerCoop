@@ -26,7 +26,8 @@ namespace SummerCoop.Game
                 if (field.Name.Equals("gameObject", StringComparison.OrdinalIgnoreCase) || field.Name == "eventTarget" || field.Name == "targetProperty")
                     if (personal(value)) info.PersonalTarget = true;
                 NamedVariable variable = value as NamedVariable;
-                if (!NativeActionPolicy.ReadOnly(info.Name) && variable != null && NativeActionPolicy.PersonalVariable(variable.Name)) info.WritesPersonal = true;
+                bool destinationField = field.Name == "variable" || field.Name.EndsWith("Variable", StringComparison.Ordinal);
+                if (!NativeActionPolicy.ReadOnly(info.Name) && destinationField && variable != null && NativeActionPolicy.PersonalVariable(variable.Name)) info.WritesPersonal = true;
                 // Read actions can still write player velocity or other output
                 // globals every frame after the synchronous actor context ends.
                 bool output = field.Name.StartsWith("store", StringComparison.Ordinal)
@@ -48,7 +49,7 @@ namespace SummerCoop.Game
             foreach (FsmStateAction action in actions)
             {
                 string type = action.GetType().Name;
-                if (type != "MousePick" && type != "Raycast" && type != "TriggerEvent" && type != "GetDistance" && type != "GetAxis" && !type.StartsWith("GetButton", StringComparison.Ordinal) && !type.StartsWith("GetMouseButton", StringComparison.Ordinal) && !type.StartsWith("GetKey", StringComparison.Ordinal)) continue;
+                if (type != "MousePick" && type != "Raycast" && type != "TriggerEvent" && !(NativeActionPolicy.ReadOnly(type) && type.StartsWith("Get", StringComparison.Ordinal))) continue;
                 foreach (FieldInfo field in action.GetType().GetFields(BindingFlags.Public | BindingFlags.Instance))
                 {
                     if (!field.Name.StartsWith("store", StringComparison.Ordinal) && field.Name != "storeResult") continue;

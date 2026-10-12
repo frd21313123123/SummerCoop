@@ -1,0 +1,15 @@
+HAND_BEFORE=Look for object
+HAND_REQUEST=Look for object
+HAND_ACCEPTED=Part picked parent=ItemPivot
+HAND_SETTLED=Part picked parent=ItemPivot
+DROP=PASS
+REJECT_RECOVERY=PASS: Target too far away
+RETAKE=PASS
+ACTUAL_HAND_SNAP_DISTANCE=5.960464E-08
+ASSEMBLY=PASS: pivot_starter; hand=Look for object
+BOLT=PASS: 0 -> 1
+UNSCREW=PASS: 1 -> 0
+DOOR=PASS: replicated rotation changed 0.2769528
+MIXED_INPUT=PASS: local polling permitted, shared setup effects filtered
+BEER_USE=PASS: configured Use -> native checks -> host consumes exactly one bottle
+NATIVE_INPUT=PASS: native hand take/drop, rejected take recovery/retake, assembly hook, hand release, bolt tighten/unscrew, door hook, mixed input and configured beer Use

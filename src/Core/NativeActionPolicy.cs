@@ -50,7 +50,7 @@ namespace SummerCoop.Core
         public static bool PersonalVariable(string name)
         {
             if (string.IsNullOrEmpty(name)) return false;
-            if (name.StartsWith("Player", StringComparison.Ordinal)) return name != "PlayerMoney" && name != "PlayerNetIncome" && name != "PlayerFines" && name != "PlayerFinesDay" && !name.StartsWith("PlayerKey", StringComparison.Ordinal);
+            if (name.StartsWith("Player", StringComparison.Ordinal)) return name != "PlayerMoney" && name != "PlayerNetIncome" && name != "PlayerFines" && name != "PlayerFinesDay";
             return name.StartsWith("GUI", StringComparison.Ordinal) || name.StartsWith("Options", StringComparison.Ordinal) || name.StartsWith("Settings", StringComparison.Ordinal) || name.StartsWith("WWW", StringComparison.Ordinal)
                 || name == "POV" || name == "SavePlayer" || name == "SavePlayerCam" || name == "ItemInHand" || name == "ItemPivot" || name == "PickedPart" || name == "LookAtTarget" || name.StartsWith("Tool", StringComparison.Ordinal)
                 || name == "SaveSlot" || name == "SaveCarparts" || name == "GameVolume" || name == "InterfaceMute" || name.StartsWith("SoundAmbience", StringComparison.Ordinal);

@@ -7,7 +7,7 @@ namespace SummerCoop.Core
     public static class Protocol
     {
         public const int Version = 2;
-        public const string ModVersion = "0.1.7-alpha";
+        public const string ModVersion = "0.1.9-alpha";
         public const int MaxPlayers = 4;
         public const int MaxFrame = 262144;
         public const int MaxSnapshot = 67108864;
@@ -97,6 +97,10 @@ namespace SummerCoop.Core
         public float Pitch;
         public bool SleepReady;
         public long LastPose;
+        // Live hand pose is connection state; it is not part of the durable checkpoint.
+        public bool HasHeldPose;
+        public V3 HeldPosition;
+        public Q4 HeldRotation = Q4.Identity;
         public Player Clone() { return (Player)MemberwiseClone(); }
     }
 
@@ -162,6 +166,9 @@ namespace SummerCoop.Core
         public V3 Position;
         public Q4 Rotation = Q4.Identity;
         public float Pitch;
+        public string Held = "";
+        public V3 HeldPosition;
+        public Q4 HeldRotation = Q4.Identity;
     }
     public sealed class BodyPose
     {

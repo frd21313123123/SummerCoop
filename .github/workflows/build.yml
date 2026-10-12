@@ -30,6 +30,8 @@ jobs:
         run: ./tools/build.ps1 -TestsOnly
       - name: Test installation transactions and compile the Windows installer
         run: ./tools/test-installer.ps1
+      - name: Test launcher arguments, settings and Windows interface
+        run: ./tools/test-launcher.ps1
       - name: Add test report to the workflow summary
         if: always()
         run: |
@@ -40,5 +42,9 @@ jobs:
           }
           if (Test-Path -LiteralPath build/installer-tests/test-results.txt) {
             @('', 'Installer test report', '', ($fence + 'text')) + @(Get-Content -LiteralPath build/installer-tests/test-results.txt) + @($fence) |
+              Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding UTF8
+          }
+          if (Test-Path -LiteralPath build/launcher-tests/test-results.txt) {
+            @('', 'Launcher test report', '', ($fence + 'text')) + @(Get-Content -LiteralPath build/launcher-tests/test-results.txt) + @($fence) |
               Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding UTF8
           }

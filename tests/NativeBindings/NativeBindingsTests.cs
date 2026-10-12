@@ -44,6 +44,21 @@ internal static class NativeBindingsTests
             GetButtonDown driving = new GetButtonDown { buttonName = "DrivingMode", storeResult = new FsmBool { Name = "Pressed" } };
             outputs = NativeActionReader.InputOutputs(new FsmStateAction[] { driving });
             Check(outputs.Contains("Pressed") && NativeActionPolicy.Pollable(new[] { NativeActionReader.Describe(driving, Personal) }), "real DrivingMode action remains client polling");
+            GetName partName = new GetName { storeName = new FsmString { Name = "HandChild" } };
+            GetChild heldPart = new GetChild { storeResult = new FsmGameObject { Name = "Part" } };
+            outputs = NativeActionReader.InputOutputs(new FsmStateAction[] { partName, heldPart });
+            Check(outputs.Contains("HandChild") && outputs.Contains("Part"), "actual attachment hand references and derived names remain client-local");
+            SetIntValue key = new SetIntValue { intVariable = new FsmInt { Name = "PlayerKeyGifu" }, intValue = 2 };
+            info = NativeActionReader.Describe(key, Personal);
+            Check(info.WritesPersonal && !NativeActionPolicy.Allowed(info, NativeActionScope.SharedActor), "actual truck key pickup cannot overwrite another player's key inventory");
+            AddTorque torque = new AddTorque { vector = new FsmVector3 { Name = "PlayerDir" } };
+            info = NativeActionReader.Describe(torque, Personal);
+            Check(!info.WritesPersonal && NativeActionPolicy.Allowed(info, NativeActionScope.SharedActor), "personal direction used as a force input is not mistaken for a player write");
+            FsmEvent useEvent = (FsmEvent)System.Runtime.Serialization.FormatterServices.GetUninitializedObject(typeof(FsmEvent));
+            typeof(FsmEvent).GetField("name", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).SetValue(useEvent, "USE");
+            FsmTransition useTransition = new FsmTransition { ToState = "Check drink" };
+            typeof(FsmTransition).GetField("fsmEvent", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).SetValue(useTransition, useEvent);
+            Check(NativeUseInput.Destination(new FsmStateAction[] { new GetButtonDown { buttonName = "Use", sendEvent = useEvent } }, new[] { useTransition }) == "Check drink", "actual configured Use button routes through native drinking checks");
             Check(typeof(Fsm).GetMethod("SwitchState", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance) != null, "actual PlayMaker transition hook signature available");
             var controls = typeof(CarController).GetMethod("GetInput", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
             Check(controls != null && controls.IsVirtual && controls.GetParameters().Length == 7 && typeof(CarController).IsAssignableFrom(typeof(AxisCarController)), "actual vehicle input accepts base and axis controllers with virtual dispatch");
@@ -63,6 +78,8 @@ internal static class NativeBindingsTests
             if (active.Enabled) throw new Exception("Nested action mask escaped its outer scope");
             outer.Restore();
             Check(active.Enabled && !disabled.Enabled && !object.ReferenceEquals(inner.Enabled, outer.Enabled), "actual compiled nested action masks restore controls and preserve disabled actions");
+            var completedMask = cached.Snapshot(); completedMask.Suspend(); completedMask.FinishSuppressed(); completedMask.Restore();
+            Check(active.Finished && active.Enabled && !disabled.Enabled, "suppressed shared action finishes so native personal replay can leave the state");
             Console.WriteLine("ALL " + passed + " NATIVE BINDING CHECKS PASSED (managed action definitions; no Unity physics)"); return 0;
         }
         catch (Exception e) { Console.Error.WriteLine(e); return 1; }

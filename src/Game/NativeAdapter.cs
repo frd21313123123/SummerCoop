@@ -41,7 +41,9 @@ namespace SummerCoop.Game
             }
             string path = fsm.Key;
             if (path.IndexOf("SAVEGAME", StringComparison.OrdinalIgnoreCase) >= 0 || path.IndexOf("SleepTrigger", StringComparison.OrdinalIgnoreCase) >= 0 || path.IndexOf("Computer", StringComparison.OrdinalIgnoreCase) >= 0) return "Use the multiplayer session controls";
-            if (!fsm.Component.gameObject.activeInHierarchy) return "Object is inactive";
+            // Bolt symbols are hidden by the host's personal tool mode. Their
+            // native state still belongs to the mounted part and can be operated remotely.
+            if (!fsm.Component.gameObject.activeInHierarchy && !(c.Kind == CommandKind.Bolt && MountedBolt(fsm))) return "Object is inactive";
             if (Vector3.Distance(WorldRegistry.To(world.Players[player].Position), fsm.Component.transform.position) > 5) return "Object is too far away";
             if (c.Kind == CommandKind.Attach)
             {
@@ -74,6 +76,22 @@ namespace SummerCoop.Game
             }
             return null;
         }
+        private static bool MountedBolt(FsmBinding binding)
+        {
+            if (binding.Component.FsmName != "Screw") return false;
+            for (Transform cursor = binding.Component.transform.parent; cursor != null; cursor = cursor.parent)
+            {
+                foreach (PlayMakerFSM fsm in cursor.GetComponents<PlayMakerFSM>())
+                {
+                    FsmGameObject database = fsm.FsmVariables.FindFsmGameObject("db_ThisPart");
+                    if (database == null || database.Value == null) continue;
+                    PlayMakerFSM data = PlayMakerFSM.FindFsmOnGameObject(database.Value, "Data");
+                    FsmBool installed = data == null ? null : data.FsmVariables.FindFsmBool("Installed");
+                    if (installed != null) return installed.Value && cursor.gameObject.activeInHierarchy;
+                }
+            }
+            return false;
+        }
         public void Apply(string player, Command c, World world)
         {
             Executing = true;
@@ -90,6 +108,7 @@ namespace SummerCoop.Game
                 {
                     if (target != null && player != "host")
                     {
+                        if (actor.HasHeldPose) { target.transform.position = WorldRegistry.To(actor.HeldPosition); target.transform.rotation = WorldRegistry.To(actor.HeldRotation); }
                         target.transform.parent = null; Rigidbody body = target.GetComponent<Rigidbody>();
                         if (body != null) { body.isKinematic = false; body.velocity = WorldRegistry.To(c.Vector); body.WakeUp(); }
                     }
@@ -121,7 +140,7 @@ namespace SummerCoop.Game
                 else if (c.Kind != CommandKind.EnterSeat)
                 {
                     // Commands are handled before the frame tick. Use the latest accepted pose now.
-                    if ((c.Kind == CommandKind.Attach || c.Kind == CommandKind.Wire) && player != "host") MoveHeld(actor);
+                    if (actor.Held != "" && player != "host") MoveHeld(actor);
                     FsmBinding b = registry.FsmOf(c.Target);
                     if (c.Kind == CommandKind.Attach)
                     {
@@ -178,8 +197,8 @@ namespace SummerCoop.Game
             foreach (string id in driverScan) if (Time.realtimeSinceStartup - Drivers[id].Updated > 0.35f) Drivers.Remove(id);
             leaseScan.Clear(); driverScan.Clear();
         }
-        private static Vector3 HeldPosition(Player player) { return WorldRegistry.To(player.Position) + Vector3.up * 1.35f + WorldRegistry.To(player.Rotation) * Quaternion.Euler(player.Pitch, 0, 0) * Vector3.forward * 1.2f; }
-        private void MoveHeld(Player player) { GameObject go = registry.ObjectOf(player.Held); if (go != null) { go.transform.position = HeldPosition(player); go.transform.rotation = WorldRegistry.To(player.Rotation); } }
+        private static Vector3 HeldPosition(Player player) { return player.HasHeldPose ? WorldRegistry.To(player.HeldPosition) : WorldRegistry.To(player.Position) + Vector3.up * 1.35f + WorldRegistry.To(player.Rotation) * Quaternion.Euler(player.Pitch, 0, 0) * Vector3.forward * 1.2f; }
+        private void MoveHeld(Player player) { GameObject go = registry.ObjectOf(player.Held); if (go != null) { go.transform.position = HeldPosition(player); go.transform.rotation = WorldRegistry.To(player.HasHeldPose ? player.HeldRotation : player.Rotation); } }
         private static void AdvanceSleep(World world)
         {
             FsmVariables globals = FsmVariables.GlobalVariables;

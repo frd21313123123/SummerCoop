@@ -52,7 +52,7 @@ internal static class NativeActionPolicyTests
                 NativeActionInfo action = Action("SetBoolValue", false, NativeActionPolicy.PersonalVariable(variable));
                 Check(!NativeActionPolicy.Allowed(action, NativeActionScope.SharedActor) && NativeActionPolicy.Allowed(action, NativeActionScope.PersonalReplay), "Personal global leaked: " + variable);
             }
-            Check(!NativeActionPolicy.PersonalVariable("PlayerMoney") && !NativeActionPolicy.PersonalVariable("PlayerKeyGarage"), "Shared wallet or keys became personal");
+            Check(!NativeActionPolicy.PersonalVariable("PlayerMoney") && NativeActionPolicy.PersonalVariable("PlayerKeyGarage"), "Wallet must be shared and keys must be personal");
         });
         test("native bolt actions remain host effects while input and actor feedback remain local", delegate
         {
