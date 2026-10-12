@@ -34,6 +34,11 @@ namespace SummerCoop.Game
             if (c.Kind == CommandKind.EnterSeat || c.Kind == CommandKind.LeaveSeat)
                 return fsm != null && fsm.Component.FsmName == "PlayerTrigger" ? null : "Not a seat";
             if (fsm == null || !fsm.Requests.Contains(c.Argument) || fsm.Component.Fsm.GetState(c.Argument) == null) return "Unsupported native interaction";
+            if (c.Kind == CommandKind.Interact && c.Argument == "Remove bottle")
+            {
+                FsmInt consumed = fsm.Component.FsmVariables.FindFsmInt("DestroyedBottles");
+                if (consumed != null && ConsumableStock.Remaining(24, consumed.Value) == 0) return "This beer case is empty";
+            }
             string path = fsm.Key;
             if (path.IndexOf("SAVEGAME", StringComparison.OrdinalIgnoreCase) >= 0 || path.IndexOf("SleepTrigger", StringComparison.OrdinalIgnoreCase) >= 0 || path.IndexOf("Computer", StringComparison.OrdinalIgnoreCase) >= 0) return "Use the multiplayer session controls";
             if (!fsm.Component.gameObject.activeInHierarchy) return "Object is inactive";
@@ -72,6 +77,7 @@ namespace SummerCoop.Game
         public void Apply(string player, Command c, World world)
         {
             Executing = true;
+            NativeActorContext context = new NativeActorContext(player);
             try
             {
                 GameObject target = registry.ObjectOf(c.Target); Player actor = world.Players[player]; string heldBefore = actor.Held;
@@ -132,7 +138,7 @@ namespace SummerCoop.Game
                 registry.CaptureRelated(world, c.Target, heldBefore);
             }
             catch (Exception e) { Debug.LogError("SummerCoop native command " + c.Kind + " " + c.Target + " " + c.Argument); Debug.LogException(e); throw; }
-            finally { Executing = false; }
+            finally { context.Dispose(); Executing = false; }
         }
         public bool TryGetPosition(string target, out V3 position)
         {

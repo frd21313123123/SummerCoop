@@ -5,7 +5,7 @@ using System.IO;
 namespace SummerCoop.Core
 {
     public enum SessionPhase { Connecting, ReceivingSave, Loading, ReceivingWorld, Playing, Closed }
-    public enum TransferKind : byte { NativeSave, World, Delta }
+    public enum TransferKind : byte { NativeSave, World, Delta, CompressedSave, CompressedWorld, CompressedDelta }
 
     // All methods run on the Unity main thread. Transports only enqueue immutable frames.
     public sealed class Session : IDisposable
@@ -18,6 +18,7 @@ namespace SummerCoop.Core
             public int Commands;
             public long SentRevision = -1;
             public World Baseline;
+            public WorldTransferJob WorldJob;
             public Queue<Transfer> Transfers = new Queue<Transfer>();
         }
         private sealed class Transfer
@@ -26,6 +27,7 @@ namespace SummerCoop.Core
             public byte[] Bytes;
             public int Offset;
             public bool Started;
+            public string Hash;
         }
         private readonly ITransport transport;
         private readonly Authority authority;
@@ -38,6 +40,10 @@ namespace SummerCoop.Core
         private long commandSequence, poseSequence;
         private DeltaReadBuffer deltaReadBuffer;
         private bool deltaBufferInUse;
+        private EncodedTransfer nativeBaseline;
+        public bool BackgroundSnapshots;
+        public int TransferChunksPerUpdate = 8;
+        public long TransferBytesSent { get; private set; }
         public bool IsHost { get { return transport.IsHost; } }
         public ITransport Transport { get { return transport; } }
         public string LocalId { get; private set; }
@@ -58,6 +64,15 @@ namespace SummerCoop.Core
         public Action<string> Ended;
         public Func<byte[]> PrepareNativeSave;
         public Action<bool> JoinBarrier;
+
+        public void SetNativeSaveSeed(EncodedTransfer seed)
+        {
+            if (!IsHost || Phase != SessionPhase.Connecting || seed == null || TransferEncoding.Plain(seed.Kind) != TransferKind.NativeSave
+                || seed.Bytes == null || seed.Bytes.Length == 0 || seed.Bytes.Length > Protocol.MaxSnapshot) throw new InvalidOperationException("Invalid scene seed");
+            byte[] owned = (byte[])seed.Bytes.Clone(); string hash = Codec.Hash(owned);
+            if (hash != seed.Hash) throw new ProtocolException("Scene seed checksum mismatch");
+            nativeBaseline = new EncodedTransfer { Kind = seed.Kind, Bytes = owned, Hash = hash, OriginalLength = seed.OriginalLength };
+        }
 
         public Session(ITransport transport, Authority authority, string gameHash, string name, string secret, double time)
         {
@@ -144,10 +159,15 @@ namespace SummerCoop.Core
                 if (playerName.Length == 0 || playerName.Length > 48 || World.Players.Count >= Protocol.MaxPlayers) { Reject(p.Id, "Invalid player or session full"); return; }
                 p.Admitted = true; p.Name = playerName; p.Loading = true;
                 authority.AddPlayer(p.Id, playerName); World = authority.World; World.Revision++;
-                if (JoinBarrier != null) JoinBarrier(true);
                 Send(p.Id, MessageKind.Welcome, Codec.Make(delegate(BinaryWriter w) { Codec.Text(w, p.Id); Codec.Text(w, World.Id); Codec.Text(w, World.SchemaHash); }), true);
-                if (PrepareNativeSave == null) throw new InvalidOperationException("Native save adapter missing");
-                Queue(p, TransferKind.NativeSave, PrepareNativeSave());
+                // Native files are the scene's loading seed. Live changes follow in
+                // the authoritative snapshot; joining never runs game save actions.
+                if (nativeBaseline == null)
+                {
+                    if (PrepareNativeSave == null) throw new InvalidOperationException("Native save adapter missing");
+                    nativeBaseline = TransferEncoding.Encode(TransferKind.NativeSave, PrepareNativeSave());
+                }
+                Queue(p, nativeBaseline);
                 return;
             }
             if (!p.Admitted) throw new ProtocolException("Handshake required");
@@ -184,7 +204,7 @@ namespace SummerCoop.Core
                     if (authority.SetPose(p.Id, pose)) { if (PoseReceived != null) PoseReceived(pose); BroadcastFrame(Codec.PoseFrame(pose), p.Id); }
                     break;
                 case MessageKind.Resync:
-                    if (packet.Length != 0 || p.Transfers.Count != 0) break;
+                    if (packet.Length != 0 || p.Transfers.Count != 0 || p.WorldJob != null) break;
                     QueueWorld(p); break;
                 default: throw new ProtocolException("Unexpected client message");
             }
@@ -206,8 +226,8 @@ namespace SummerCoop.Core
             {
                 if (transferActive) throw new ProtocolException("Overlapping transfers");
                 Codec.Read(packet, delegate(BinaryReader r) { receiving = (TransferKind)r.ReadByte(); if (!Enum.IsDefined(typeof(TransferKind), receiving)) throw new ProtocolException("Unknown transfer"); receiver.Begin(r.ReadInt32(), Codec.Text(r)); });
-                if (receiving == TransferKind.NativeSave && Phase != SessionPhase.ReceivingSave) throw new ProtocolException("Unexpected native save");
-                if (receiving != TransferKind.NativeSave && !sceneReady) throw new ProtocolException("Scene not ready");
+                if (TransferEncoding.Plain(receiving) == TransferKind.NativeSave && Phase != SessionPhase.ReceivingSave) throw new ProtocolException("Unexpected native save");
+                if (TransferEncoding.Plain(receiving) != TransferKind.NativeSave && !sceneReady) throw new ProtocolException("Scene not ready");
                 transferActive = true; return;
             }
             if (packet.Kind == MessageKind.SnapshotChunk)
@@ -223,12 +243,13 @@ namespace SummerCoop.Core
             if (packet.Kind == MessageKind.SnapshotEnd)
             {
                 if (!transferActive || packet.Length != 0) throw new ProtocolException("Unexpected transfer end");
-                byte[] bytes = receiver.End(); transferActive = false;
-                if (receiving == TransferKind.NativeSave)
+                byte[] bytes = TransferEncoding.Decode(receiving, receiver.End()); transferActive = false;
+                TransferKind kind = TransferEncoding.Plain(receiving);
+                if (kind == TransferKind.NativeSave)
                 {
                     Phase = SessionPhase.Loading; if (NativeSaveReceived == null) throw new InvalidOperationException("Native load adapter missing"); NativeSaveReceived(bytes);
                 }
-                else if (receiving == TransferKind.World) { LastSnapshotBytes = bytes.Length; AcceptWorld(Codec.ImmutableWorld(bytes)); }
+                else if (kind == TransferKind.World) { LastSnapshotBytes = bytes.Length; AcceptWorld(Codec.ImmutableWorld(bytes)); }
                 else AcceptDelta(bytes);
                 return;
             }
@@ -274,7 +295,7 @@ namespace SummerCoop.Core
             if (!IsHost || disposed) return; World = authority.World;
             foreach (Peer p in peers.Values)
             {
-                if (!p.Playing || p.Transfers.Count != 0 || p.Baseline == null || p.SentRevision == World.Revision) continue;
+                if (!p.Playing || p.Transfers.Count != 0 || p.WorldJob != null || p.Baseline == null || p.SentRevision == World.Revision) continue;
                 World delta = CheckpointStore.Difference(p.Baseline, World, authority.ImmutableEntities);
                 byte[] payload = Codec.Make(delegate(BinaryWriter w)
                 {
@@ -290,27 +311,41 @@ namespace SummerCoop.Core
         }
         private void QueueWorld(Peer p)
         {
-            World = authority.World; byte[] bytes = Codec.World(World); LastSnapshotBytes = bytes.Length; Queue(p, TransferKind.World, bytes);
-            p.SentRevision = World.Revision; p.Baseline = authority.ImmutableEntities ? World.ReferenceSnapshot() : World.Clone();
+            World = authority.World;
+            World snapshot = authority.ImmutableEntities ? World.ReferenceSnapshot() : World.Clone();
+            p.SentRevision = snapshot.Revision; p.Baseline = snapshot;
+            if (BackgroundSnapshots) p.WorldJob = new WorldTransferJob(snapshot);
+            else { byte[] bytes = Codec.World(snapshot); LastSnapshotBytes = bytes.Length; Queue(p, TransferKind.World, bytes); }
         }
         private void Queue(Peer p, TransferKind kind, byte[] bytes)
         {
-            if (bytes.Length == 0 || bytes.Length > Protocol.MaxSnapshot || p.Transfers.Count >= 2) throw new ProtocolException("Transfer budget exceeded");
-            p.Transfers.Enqueue(new Transfer { Kind = kind, Bytes = bytes });
+            Queue(p, TransferEncoding.Encode(kind, bytes));
+        }
+        private void Queue(Peer p, EncodedTransfer encoded)
+        {
+            if (encoded.Bytes.Length == 0 || encoded.Bytes.Length > Protocol.MaxSnapshot || p.Transfers.Count >= 2) throw new ProtocolException("Transfer budget exceeded");
+            p.Transfers.Enqueue(new Transfer { Kind = encoded.Kind, Bytes = encoded.Bytes, Hash = encoded.Hash });
         }
         private void Pump(Peer p)
         {
+            if (p.WorldJob != null && p.WorldJob.Completed)
+            {
+                WorldTransferJob job = p.WorldJob; p.WorldJob = null;
+                if (job.Error != null) { Reject(p.Id, "Snapshot creation failed"); return; }
+                LastSnapshotBytes = job.Result.OriginalLength;
+                Queue(p, job.Result);
+            }
             if (p.Transfers.Count == 0) return;
             Transfer t = p.Transfers.Peek();
             if (!t.Started)
             {
-                Send(p.Id, MessageKind.SnapshotBegin, Codec.Make(delegate(BinaryWriter w) { w.Write((byte)t.Kind); w.Write(t.Bytes.Length); Codec.Text(w, Codec.Hash(t.Bytes)); }), true); t.Started = true;
+                Send(p.Id, MessageKind.SnapshotBegin, Codec.Make(delegate(BinaryWriter w) { w.Write((byte)t.Kind); w.Write(t.Bytes.Length); Codec.Text(w, t.Hash); }), true); t.Started = true;
             }
             // Limit main-thread work and transport queue occupancy, even for a large native save.
-            for (int i = 0; i < 2 && t.Offset < t.Bytes.Length; i++)
+            for (int i = 0; i < Math.Max(1, Math.Min(16, TransferChunksPerUpdate)) && t.Offset < t.Bytes.Length; i++)
             {
                 int count = Math.Min(Protocol.SnapshotChunk, t.Bytes.Length - t.Offset);
-                Send(p.Id, MessageKind.SnapshotChunk, Codec.Make(delegate(BinaryWriter w) { w.Write(t.Offset); w.Write(count); w.Write(t.Bytes, t.Offset, count); }), true); t.Offset += count;
+                Send(p.Id, MessageKind.SnapshotChunk, Codec.Make(delegate(BinaryWriter w) { w.Write(t.Offset); w.Write(count); w.Write(t.Bytes, t.Offset, count); }), true); t.Offset += count; TransferBytesSent += count;
             }
             if (t.Offset == t.Bytes.Length) { Send(p.Id, MessageKind.SnapshotEnd, new byte[0], true); p.Transfers.Dequeue(); }
         }
@@ -324,12 +359,13 @@ namespace SummerCoop.Core
             }
             Send(transport.HostPeer, MessageKind.Command, Codec.Command(command), true); return null;
         }
-        public void SendPose(Pose pose)
+        public void SendPose(Pose pose) { SendPose(pose, false); }
+        public void SendPose(Pose pose, bool reliable)
         {
             if (disposed || Phase != SessionPhase.Playing) return;
             pose.Id = LocalId; pose.Sequence = ++poseSequence;
             if (IsHost) { authority.SetPose(LocalId, pose); BroadcastFrame(Codec.PoseFrame(pose), null); }
-            else transport.Send(transport.HostPeer, Codec.PoseFrame(pose), false);
+            else transport.Send(transport.HostPeer, Codec.PoseFrame(pose), reliable);
         }
         public void SendMotion(MotionFrame frame)
         {
@@ -360,8 +396,8 @@ namespace SummerCoop.Core
         }
         private void UpdateBarrier()
         {
-            bool pending = false; foreach (Peer p in peers.Values) if (p.Admitted && p.Loading) pending = true;
-            if (JoinBarrier != null) JoinBarrier(pending);
+            // Keep the legacy release notification, but never pause existing players.
+            if (JoinBarrier != null) JoinBarrier(false);
         }
         public void Close(string reason)
         {

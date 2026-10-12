@@ -11,6 +11,17 @@ internal static class SessionTests
         public void Apply(string player, Command c, World world) { if (c.Kind == CommandKind.Purchase) world.Money -= 25; }
         public void Rollback(World world) { }
     }
+    private sealed class StockAdapter : ICommandAdapter
+    {
+        public string Validate(string player, Command command, World world) { return world.Entities[command.Target].Properties["remaining"].Number > 0 ? null : "Empty"; }
+        public void Apply(string player, Command command, World world)
+        {
+            Entity next = world.Entities[command.Target].Clone();
+            next.Properties["remaining"] = Atom.N(next.Properties["remaining"].Number - 1);
+            world.Entities[next.Id] = next; world.EntityChanged(next.Id);
+        }
+        public void Rollback(World world) { }
+    }
     private sealed class Hub
     {
         public double Time;
@@ -98,6 +109,102 @@ internal static class SessionTests
     }
     public static void Run(Action<string, Action> test)
     {
+        test("precompressed scene seed owns its bytes and joining avoids preparation on the host frame", delegate
+        {
+            Hub hub = new Hub(); hub.Host = new Node { Hub = hub, Id = "host", IsHost = true };
+            Session host = new Session(hub.Host, new Authority(new World { GameHash = "game", SchemaHash = "schema" }, null, null), "game", "Host", "", 0);
+            EncodedTransfer seed = TransferEncoding.Encode(TransferKind.NativeSave, new byte[100000]); host.SetNativeSaveSeed(seed); seed.Bytes[seed.Bytes.Length - 1] ^= 255;
+            host.PrepareNativeSave = delegate { throw new Exception("Join recompressed or saved the host scene"); }; host.SceneLoaded("schema");
+            Session guest = new Session(ClientNode(hub, "guest"), null, "game", "Guest", "", 0);
+            try
+            {
+                guest.NativeSaveReceived = delegate(byte[] received) { Assert(received.Length == 100000 && received[0] == 0 && received[99999] == 0, "Caller changed owned scene seed"); guest.SceneLoaded("schema"); };
+                Tick(hub, host, new[] { guest }, 30);
+                Assert(guest.Phase == SessionPhase.Playing, "Precompressed seed failed admission");
+            }
+            finally { host.Dispose(); guest.Dispose(); }
+        });
+        test("beer count converges for concurrent drinks, duplicate commands and a late native-seed guest", delegate
+        {
+            Hub hub = new Hub { Impaired = true }; hub.Host = new Node { Hub = hub, Id = "host", IsHost = true };
+            World world = new World { Id = "beer-stock", GameHash = "game", SchemaHash = "schema" };
+            Entity beer = new Entity { Id = "beer", Key = "beer case", Kind = EntityKind.Object }; beer.Properties.Add("remaining", Atom.N(11)); world.Entities.Add(beer.Id, beer); world.EnableChangeTracking();
+            Session host = new Session(hub.Host, new Authority(world, new StockAdapter(), null), "game", "Host", "", 0);
+            host.PrepareNativeSave = delegate { return new byte[] { 11 }; }; host.SceneLoaded("schema");
+            Node firstNode = ClientNode(hub, "first"); Session first = new Session(firstNode, null, "game", "First", "", 0);
+            Session later = null;
+            try
+            {
+                first.NativeSaveReceived = delegate { first.SceneLoaded("schema"); }; Tick(hub, host, new[] { first }, 45);
+                Command drink = new Command { Kind = CommandKind.Interact, Target = "beer", Argument = "Remove bottle" }; first.Submit(drink);
+                firstNode.Send("host", Codec.Packet(MessageKind.Command, Codec.Command(drink)), true); Tick(hub, host, new[] { first }, 30);
+                Assert(first.World.Entities["beer"].Properties["remaining"].Number == 10, "Retried drink changed beer stock twice");
+                later = new Session(ClientNode(hub, "later"), null, "game", "Later", "", hub.Time);
+                later.NativeSaveReceived = delegate(byte[] seed) { Assert(seed[0] == 11, "Test did not use the older native load count"); later.SceneLoaded("schema"); };
+                Tick(hub, host, new[] { first, later }, 50);
+                Assert(later.World.Entities["beer"].Properties["remaining"].Number == 10, "Late native seed overwrote authoritative beer stock");
+                first.Submit(new Command { Kind = CommandKind.Interact, Target = "beer", Argument = "Remove bottle" }); later.Submit(new Command { Kind = CommandKind.Interact, Target = "beer", Argument = "Remove bottle" });
+                Tick(hub, host, new[] { first, later }, 35);
+                Assert(host.World.Entities["beer"].Properties["remaining"].Number == 8 && first.World.Entities["beer"].Properties["remaining"].Number == 8 && later.World.Entities["beer"].Properties["remaining"].Number == 8, "Concurrent drinks diverged between players");
+            }
+            finally { host.Dispose(); first.Dispose(); if (later != null) later.Dispose(); }
+        });
+        test("joining never pauses the host and uses one scene seed for all guests", delegate
+        {
+            Hub hub = new Hub(); hub.Host = new Node { Hub = hub, Id = "host", IsHost = true };
+            World world = new World { Id = "moving-host", GameHash = "game", SchemaHash = "schema" };
+            world.Entities.Add("part", new Entity { Id = "part", Key = "part", Kind = EntityKind.Rigidbody });
+            int prepared = 0; bool paused = false; Session host = new Session(hub.Host, new Authority(world, new Adapter(), null), "game", "Host", "", 0);
+            host.PrepareNativeSave = delegate { prepared++; return new byte[200000]; }; host.JoinBarrier = delegate(bool wait) { if (wait) paused = true; }; host.SceneLoaded("schema");
+            Session guest = new Session(ClientNode(hub, "guest"), null, "game", "Guest", "", 0);
+            Session later = null;
+            try
+            {
+                guest.NativeSaveReceived = delegate { }; Tick(hub, host, new[] { guest }, 8);
+                Assert(guest.Phase == SessionPhase.Loading && !paused && prepared == 1, "Host paused or scene seed was rebuilt");
+                CommandResult take = host.Submit(new Command { Kind = CommandKind.Take, Target = "part" });
+                Assert(take.Accepted && host.World.Players["host"].Held == "part", "Host interaction blocked while guest loaded");
+                guest.SceneLoaded("schema"); Tick(hub, host, new[] { guest }, 20);
+                Assert(guest.World.Players["host"].Held == "part" && guest.Phase == SessionPhase.Playing, "Loading guest lost live host progress");
+                later = new Session(ClientNode(hub, "later"), null, "game", "Later", "", hub.Time);
+                later.NativeSaveReceived = delegate { later.SceneLoaded("schema"); }; Tick(hub, host, new[] { guest, later }, 25);
+                Assert(prepared == 1 && !paused && later.Phase == SessionPhase.Playing, "Second join interrupted players or reran game save");
+                Assert(Codec.Hash(Codec.World(later.World)) == Codec.Hash(Codec.World(host.World)), "Later guest did not catch up from cached scene seed");
+            }
+            finally { host.Dispose(); guest.Dispose(); if (later != null) later.Dispose(); }
+        });
+        test("background snapshot catches up host changes during transfer without a loading barrier", delegate
+        {
+            Hub hub = new Hub(); hub.Host = new Node { Hub = hub, Id = "host", IsHost = true };
+            World world = new World { Id = "async", GameHash = "game", SchemaHash = "schema" };
+            for (int i = 0; i < 6000; i++) { Entity e = new Entity { Id = "e" + i, Key = "scene/part" + i, Kind = EntityKind.Object }; e.Properties.Add("data", Atom.S(new string('a', 100))); world.Entities.Add(e.Id, e); }
+            Session host = new Session(hub.Host, new Authority(world, new Adapter(), null), "game", "Host", "", 0) { BackgroundSnapshots = true };
+            host.PrepareNativeSave = delegate { return new byte[] { 1 }; }; host.SceneLoaded("schema");
+            Session guest = new Session(ClientNode(hub, "guest"), null, "game", "Guest", "", 0);
+            try
+            {
+                guest.NativeSaveReceived = delegate { guest.SceneLoaded("schema"); };
+                for (int i = 0; i < 15; i++) { Tick(hub, host, new[] { guest }, 1); host.World.Money = i + 20; host.World.Revision++; host.Publish(); System.Threading.Thread.Sleep(1); }
+                for (int i = 0; i < 1000 && guest.Phase != SessionPhase.Playing; i++) { Tick(hub, host, new[] { guest }, 1); System.Threading.Thread.Sleep(1); }
+                Tick(hub, host, new[] { guest }, 15); host.Publish(); Tick(hub, host, new[] { guest }, 15);
+                Assert(guest.Phase == SessionPhase.Playing && Codec.Hash(Codec.World(guest.World)) == Codec.Hash(Codec.World(host.World)), "Asynchronous snapshot lost catch-up changes");
+                Assert(host.TransferBytesSent < Codec.World(host.World).Length / 3, "Large world was not compressed on the transport");
+            }
+            finally { host.Dispose(); guest.Dispose(); }
+        });
+        test("reliable action pose reaches the host before a moped seat command when UDP is lost", delegate
+        {
+            using (Pair pair = new Pair(false))
+            {
+                Entity seat = new Entity { Id = "seat", Key = "vehicle/JONNEZ/DriveTrigger", Kind = EntityKind.Fsm, Position = new V3(35, 0, 0) };
+                pair.Host.World.Entities.Add(seat.Id, seat); pair.Host.World.Revision++; pair.Host.Publish(); Tick(pair.Hub, pair.Host, new[] { pair.Client }, 10);
+                pair.Client.SendPose(new Pose { Position = new V3(35, 0, 0) }, true);
+                pair.Client.Submit(new Command { Kind = CommandKind.EnterSeat, Target = "seat" }); Tick(pair.Hub, pair.Host, new[] { pair.Client }, 12);
+                Assert(pair.Client.World.Players[pair.Client.LocalId].Seat == "seat", "Seat command used stale datagram position");
+                pair.Client.Submit(new Command { Kind = CommandKind.LeaveSeat, Target = "seat" }); Tick(pair.Hub, pair.Host, new[] { pair.Client }, 12);
+                Assert(pair.Host.World.Players[pair.Client.LocalId].Seat == "", "Guest could not leave its seat");
+            }
+        });
         test("session handshake / 1.5 MB save / four players / 150 ms latency / 5% UDP loss", delegate
         {
             Hub hub = new Hub { Impaired = true }; hub.Host = new Node { Hub = hub, Id = "host", IsHost = true };

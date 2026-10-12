@@ -34,6 +34,9 @@ namespace SummerCoop.Game
         private AvatarView avatars;
         private GameObject localPlayer;
         private Camera localCamera;
+        private EncodedTransfer nativeBaseline;
+        private static readonly MethodInfo VehicleInput = typeof(CarController).GetMethod("GetInput", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        private SceneReadiness sceneReadiness = new SceneReadiness();
         private string gameHash, username = "Player", address = "127.0.0.1", password = "", portText = "27842", lobbyText = "";
         private string status = "F6 — SummerCoop", root, requestedSeat = "", requestedState = "";
         private bool visible, importSave, awaitingScene, nativeLoaded, hostPending, leaving, fatal;
@@ -53,6 +56,7 @@ namespace SummerCoop.Game
         private Rect panel = new Rect(20, 20, 500, 0);
         private CoopMenuSkin menuSkin;
         private readonly Dictionary<string, float> requests = new Dictionary<string, float>();
+        private readonly PendingNativeActions sharedRequests = new PendingNativeActions();
         public string SaveRoot { get { return root; } }
         public string StatusText { get { return status; } }
         public double LastUpdateMilliseconds { get; private set; }
@@ -118,6 +122,8 @@ namespace SummerCoop.Game
         {
             if (Session != null || awaitingScene || Application.loadedLevelName == "GAME") throw new InvalidOperationException("Создайте сессию из главного меню");
             VerifyVanilla(); saves.Activate("world", importSave); ConfigureLoad();
+            nativeBaseline = TransferEncoding.Encode(TransferKind.NativeSave, SaveIsolation.Pack(saves.CurrentDirectory));
+            sceneReadiness = new SceneReadiness();
             hostSteamPending = steam; hostPortPending = steam ? 0 : Port();
             awaitingScene = true; nativeLoaded = false; hostPending = true; sceneBegan = Time.realtimeSinceStartup; SetStatus("Загрузка мира хоста…"); Application.LoadLevel("GAME");
         }
@@ -157,26 +163,18 @@ namespace SummerCoop.Game
             // Apply consumes the delta synchronously and retains immutable property
             // maps, never the temporary world dictionary itself.
             Session.ReuseDeltaContainers = true;
+            Session.BackgroundSnapshots = true;
             Session.Status = SetStatus; Session.Ended = OnEnded;
-            Session.JoinBarrier = delegate(bool waiting)
-            {
-                if (Joining == waiting) return;
-                InteractionProbe.Sample(this, "BARRIER_BEFORE=" + waiting);
-                Joining = waiting;
-                RefreshHooks();
-                if (waiting) { previousScale = Time.timeScale; Time.timeScale = 0; SetStatus("Синхронизация нового игрока…"); }
-                else { Time.timeScale = previousScale; }
-                InteractionProbe.Sample(this, "BARRIER_AFTER=" + waiting);
-            };
-            Session.PrepareNativeSave = delegate { SetStatus("Подготовка сохранения…"); InteractionProbe.Sample(this, "SAVE_BEFORE"); NativeSave.Capture(Registry, saves.CurrentDirectory); InteractionProbe.Sample(this, "SAVE_AFTER"); byte[] bytes = SaveIsolation.Pack(saves.CurrentDirectory); SetStatus("Передача сохранения: " + bytes.Length + " байт"); return bytes; };
+            if (Session.IsHost) Session.SetNativeSaveSeed(nativeBaseline);
             Session.NativeSaveReceived = delegate(byte[] bytes)
             {
                 SaveIsolation.Unpack(saves.CurrentDirectory, bytes); ConfigureLoad();
+                sceneReadiness = new SceneReadiness();
                 awaitingScene = true; nativeLoaded = false; hostPending = false; sceneBegan = Time.realtimeSinceStartup; SetStatus("Загрузка общего мира…"); Application.LoadLevel("GAME");
             };
             Session.WorldReceived = delegate(World world, bool full)
             {
-                Registry.Apply(world, full); if (avatars != null) avatars.Reconcile(Session.World, Session.LocalId); ResumeHand(); ReconcileHand();
+                Registry.Apply(world, full); if (avatars != null) avatars.Reconcile(Session.World, Session.LocalId); ResumeHand(); ReconcileHand(); ReplaySharedActions();
                 if (!full && Session.World.SleepEpoch > sleepEpoch) { FsmFloat fatigue = FsmVariables.GlobalVariables.FindFsmFloat("PlayerFatigue"); if (fatigue != null) fatigue.Value = 0; }
                 sleepEpoch = Session.World.SleepEpoch;
                 if (full) SetStatus("Подключено. F6 — меню сессии");
@@ -240,7 +238,7 @@ namespace SummerCoop.Game
             try
             {
                 if (Input.GetKeyDown(KeyCode.F6)) visible = !visible;
-                if (awaitingScene && nativeLoaded && Application.loadedLevelName == "GAME" && Time.realtimeSinceStartup - sceneBegan > 10) FinishLoad();
+                if (awaitingScene && sceneReadiness.Observe(Time.frameCount, nativeLoaded && Application.loadedLevelName == "GAME", GameObject.Find("PLAYER") != null, Camera.main != null)) FinishLoad();
                 long stage = System.Diagnostics.Stopwatch.GetTimestamp();
                 HeapStamp heapStage = HeapBegin();
                 if (Session != null) Session.Update(Time.realtimeSinceStartup);
@@ -318,16 +316,17 @@ namespace SummerCoop.Game
             {
                 Session.Submit(new Command { Kind = CommandKind.Drive, Target = player.Seat, Vector = new V3(Input.GetAxisRaw("Horizontal"), Mathf.Clamp01(Input.GetAxisRaw("Vertical")), 0), Argument = "0|1|0" }); return;
             }
-            AxisCarController car = seat.Component.transform.root.GetComponent<AxisCarController>(); if (car == null) return;
+            CarController car = seat.Component.transform.root.GetComponent<CarController>() ?? seat.Component.transform.root.GetComponentInChildren<CarController>(); if (car == null) return;
             Drivetrain drive = car.GetComponent<Drivetrain>();
             object[] controls = { 0f, 0f, 0f, 0f, 0f, false, drive == null ? 1 : drive.gear };
-            typeof(AxisCarController).GetMethod("GetInput", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic).Invoke(car, controls);
+            VehicleInput.Invoke(car, controls);
             Session.Submit(new Command { Kind = CommandKind.Drive, Target = player.Seat, Vector = new V3((float)controls[2], (float)controls[0], (float)controls[1]), Number = (float)controls[3], Argument = ((float)controls[4]).ToString("R", CultureInfo.InvariantCulture) + "|" + controls[6] + "|" + ((bool)controls[5] ? "1" : "0") });
         }
         public void RequestState(FsmBinding b, string state)
         {
             if (!Session.World.Entities.ContainsKey(b.Id)) return;
             if (!Active || Joining || b.Component == null) return;
+            if (sharedRequests.ContainsTarget(b.Id)) return;
             Player actor = Session.World.Players[Session.LocalId];
             Vector3 position = localPlayer == null ? WorldRegistry.To(actor.Position) : localPlayer.transform.position;
             if (Vector3.Distance(position, b.Component.transform.position) > 5) return;
@@ -342,7 +341,21 @@ namespace SummerCoop.Game
             else if (b.Component.FsmName == "Screw" && b.Component.FsmVariables.FindFsmInt("Stage") != null) kind = CommandKind.Bolt;
             else if (b.Component.FsmName == "Buy" || b.Key.IndexOf("CashRegister", StringComparison.OrdinalIgnoreCase) >= 0) kind = CommandKind.Purchase;
             FsmFloat wrench = FsmVariables.GlobalVariables.FindFsmFloat("ToolWrenchSize");
-            Session.Submit(new Command { Kind = kind, Target = b.Id, Argument = state, Number = kind == CommandKind.Bolt && wrench != null ? wrench.Value : 0 });
+            SendActionPose();
+            Command command = new Command { Kind = kind, Target = b.Id, Argument = state, Number = kind == CommandKind.Bolt && wrench != null ? wrench.Value : 0 };
+            CommandResult result = Session.Submit(command);
+            if (result == null) sharedRequests.Add(command);
+        }
+        private void SendActionPose()
+        {
+            if (Session == null || !Active || localPlayer == null) return;
+            Session.SendPose(new Pose { Position = WorldRegistry.From(localPlayer.transform.position), Rotation = WorldRegistry.From(localPlayer.transform.rotation), Pitch = localCamera == null ? 0 : localCamera.transform.eulerAngles.x }, true);
+        }
+        private void ReplaySharedActions()
+        {
+            if (Session == null || Session.IsHost || Registry == null) return;
+            foreach (PendingNativeAction action in sharedRequests.Ready(Session.World.Revision))
+                NativeHooks.ReplayPersonal(Registry.FsmOf(action.Target), action.State);
         }
         public bool PersonalState(Fsm fsm, FsmState state)
         {
@@ -390,6 +403,7 @@ namespace SummerCoop.Game
         private bool RequestPersonal(CommandKind kind, string target, Fsm fsm, string state)
         {
             if (requestedSeat != "") return false;
+            SendActionPose();
             Command command = new Command { Kind = kind, Target = target };
             CommandResult result = Session.Submit(command); if (result != null) { if (!result.Accepted) RecoverInput(fsm); return result.Accepted; }
             requestedSeat = target; requestedState = state; requestedSequence = command.Sequence; requestedKind = kind; requestedFsm = fsm; requestAccepted = false;
@@ -397,6 +411,7 @@ namespace SummerCoop.Game
         }
         private void OnCommand(CommandResult result)
         {
+            sharedRequests.Complete(result); ReplaySharedActions();
             if (!result.Accepted) SetStatus(result.Reason);
             if (requestedSeat == "" || Session == null || Session.IsHost || result.Sequence != requestedSequence) return;
             requestAccepted = result.Accepted;
@@ -415,6 +430,7 @@ namespace SummerCoop.Game
         {
             requestedSeat = requestedState = nativeHeld = ""; requestedSequence = 0; requestedFsm = null; requestAccepted = false;
             nativeHand = recoverInput = null; requests.Clear();
+            sharedRequests.Clear();
         }
         private void ResumeHand()
         {

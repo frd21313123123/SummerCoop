@@ -29,6 +29,9 @@ namespace SummerCoop.Game
         public Mesh CapturedMesh;
         public Vector3[] CapturedVertices;
         public Dictionary<string, Atom> AppliedProperties;
+        public bool LocalControls;
+        public PlayMakerFSM StockFsm;
+        public ConsumableVisuals StockVisuals;
     }
     public sealed class FsmBinding
     {
@@ -38,6 +41,7 @@ namespace SummerCoop.Game
         public HashSet<string> Requests = new HashSet<string>(StringComparer.Ordinal);
         public string WaitingState = "";
         public bool Personal;
+        public HashSet<string> LocalVariables = new HashSet<string>(StringComparer.Ordinal);
         public Dictionary<string, Atom> AppliedProperties;
     }
     public sealed class WorldRegistry
@@ -104,11 +108,7 @@ namespace SummerCoop.Game
         }
         public static bool PersonalVariable(string name)
         {
-            if (name.StartsWith("Player", StringComparison.Ordinal))
-                return name != "PlayerMoney" && name != "PlayerNetIncome" && name != "PlayerFines" && name != "PlayerFinesDay" && !name.StartsWith("PlayerKey", StringComparison.Ordinal);
-            return name.StartsWith("GUI", StringComparison.Ordinal) || name.StartsWith("Options", StringComparison.Ordinal) || name.StartsWith("Settings", StringComparison.Ordinal) || name.StartsWith("WWW", StringComparison.Ordinal)
-                || name == "POV" || name == "SavePlayer" || name == "SavePlayerCam" || name == "ItemInHand" || name == "ItemPivot" || name == "PickedPart" || name == "LookAtTarget" || name.StartsWith("Tool", StringComparison.Ordinal)
-                || name == "SaveSlot" || name == "SaveCarparts" || name == "GameVolume" || name == "InterfaceMute" || name.StartsWith("SoundAmbience", StringComparison.Ordinal);
+            return NativeActionPolicy.PersonalVariable(name);
         }
         public void IndexScene()
         {
@@ -329,6 +329,12 @@ namespace SummerCoop.Game
         public FsmBinding FsmOf(string id) { FsmBinding b; return Fsms.TryGetValue(id, out b) ? b : null; }
         private void RegisterFsm(FsmBinding binding)
         {
+            ObjectBinding objectBinding;
+            if (Objects.TryGetValue(binding.ObjectId, out objectBinding))
+            {
+                if (binding.Component.FsmName == "PlayerTrigger") objectBinding.LocalControls = true;
+                if (binding.Component.FsmName == "Use" && binding.Component.FsmVariables.FindFsmInt("DestroyedBottles") != null) objectBinding.StockFsm = binding.Component;
+            }
             FsmBinding existing; if (Fsms.TryGetValue(binding.Id, out existing) && existing.Component != null && existing.Component != binding.Component) throw new InvalidOperationException("Ambiguous native FSM identity: " + binding.Key);
             Fsms[binding.Id] = binding; fsmIds[binding.Component.Fsm] = binding; captureFsms.Add(binding);
             List<FsmBinding> owned; if (!fsmsByObject.TryGetValue(binding.ObjectId, out owned)) { owned = new List<FsmBinding>(); fsmsByObject.Add(binding.ObjectId, owned); }
@@ -337,7 +343,7 @@ namespace SummerCoop.Game
         private static bool IsPersonalFsm(PlayMakerFSM f)
         {
             string path = GameProbe.PathOf(f.transform);
-            return f.FsmName == "PlayerTrigger" || f.FsmName == "Death" || f.FsmName == "BeeDeath" || f.FsmName == "HeadForce" || path.IndexOf("SleepTrigger", StringComparison.Ordinal) >= 0 || path.IndexOf("PlayerDatabase", StringComparison.Ordinal) >= 0;
+            return NativeActionPolicy.PersonalFsm(f.FsmName) || path.IndexOf("SleepTrigger", StringComparison.Ordinal) >= 0 || path.IndexOf("PlayerDatabase", StringComparison.Ordinal) >= 0;
         }
         private void RegisterAsset(UnityEngine.Object asset)
         {
@@ -492,6 +498,11 @@ namespace SummerCoop.Game
                 e.Properties["@empty"] = builder.B(b.Empty);
                 Atom oldTag; string tag = previous != null && previous.Properties.TryGetValue("@tag", out oldTag) && b.Object.CompareTag(oldTag.Text) ? oldTag.Text : b.Object.tag;
                 e.Properties["@tag"] = builder.S(tag);
+                if (b.StockFsm != null)
+                {
+                    FsmInt consumed = b.StockFsm.FsmVariables.FindFsmInt("DestroyedBottles");
+                    if (consumed != null) { e.Properties["@stock/capacity"] = builder.N(24); e.Properties["@stock/remaining"] = builder.N(ConsumableStock.Remaining(24, consumed.Value)); }
+                }
                 e.Properties["@loose"] = builder.B(b.Body != null && (tag == "PART" || tag == "ITEM" || tag == "TOOLS"));
                 for (int i = 0; i < b.Renderers.Length; i++) if (b.Renderers[i] != null)
                 {
@@ -654,7 +665,7 @@ namespace SummerCoop.Game
                         if (b.Transform.parent != parent) { b.Transform.parent = parent; motionOrderDirty = true; }
                         if (full || !motionTargets.ContainsKey(e.Id)) { b.Transform.position = To(e.Position); b.Transform.rotation = To(e.Rotation); }
                     }
-                    bool activationChanged = b.Object.activeSelf != e.Active;
+                    bool activationChanged = !b.LocalControls && b.Object.activeSelf != e.Active;
                     if (activationChanged) b.Object.SetActive(e.Active);
                     if (!host && !full && !activationChanged && object.ReferenceEquals(b.AppliedProperties, e.Properties))
                     {
@@ -664,7 +675,7 @@ namespace SummerCoop.Game
                     }
                     Atom a; if (e.Properties.TryGetValue("@scale", out a)) b.Transform.localScale = To(a.Vector);
                     if (e.Properties.TryGetValue("@name", out a) && b.Object.name != a.Text) b.Object.name = a.Text;
-                    if (e.Properties.TryGetValue("@tag", out a)) b.Object.tag = a.Text;
+                    if (!b.LocalControls && e.Properties.TryGetValue("@tag", out a)) b.Object.tag = a.Text;
                     for (int i = 0; i < b.Renderers.Length; i++) if (b.Renderers[i] != null)
                     {
                         if (e.Properties.TryGetValue(Property("@render/", i, ""), out a)) b.Renderers[i].enabled = a.Number != 0;
@@ -680,7 +691,7 @@ namespace SummerCoop.Game
                             if (materials[k].color != color) b.Renderers[i].materials[k].color = color;
                         }
                     }
-                    for (int i = 0; i < b.Colliders.Length; i++) if (b.Colliders[i] != null && e.Properties.TryGetValue(Property("@collider/", i, ""), out a)) b.Colliders[i].enabled = a.Number != 0;
+                    if (!b.LocalControls) for (int i = 0; i < b.Colliders.Length; i++) if (b.Colliders[i] != null && e.Properties.TryGetValue(Property("@collider/", i, ""), out a)) b.Colliders[i].enabled = a.Number != 0;
                     for (int i = 0; i < b.Arrays.Length; i++)
                     {
                         if (b.Arrays[i] == null || b.Arrays[i].arrayList == null) continue;
@@ -738,12 +749,21 @@ namespace SummerCoop.Game
                     if (enabledChanged) b.Component.enabled = e.Active;
                     if (!host && !full && !enabledChanged && object.ReferenceEquals(b.AppliedProperties, e.Properties)) continue;
                     b.Variables.Refresh(b.Component.FsmVariables);
-                    foreach (NamedVariable v in b.Variables) { Atom a; if (!PersonalVariable(v.Name) && e.Properties.TryGetValue(VariableKey(v.Name), out a)) WriteVariable(v, a); }
+                    foreach (NamedVariable v in b.Variables) { Atom a; if (!PersonalVariable(v.Name) && (host || !b.LocalVariables.Contains(v.Name)) && e.Properties.TryGetValue(VariableKey(v.Name), out a)) WriteVariable(v, a); }
                     // State assignment does not execute purchases, spawning, or save actions on a client.
                     Atom state; if (!host && b.Requests.Count == 0 && e.Properties.TryGetValue("@state", out state)) { FsmState s = b.Component.Fsm.GetState(state.Text); if (s != null) AssignState(b.Component.Fsm, s); }
                     b.AppliedProperties = e.Properties;
                 }
                 FsmFloat money = FsmVariables.GlobalVariables.FindFsmFloat("PlayerMoney"); if (money != null) money.Value = (float)world.Money;
+                if (!host) foreach (Entity entity in world.Entities.Values)
+                {
+                    Atom stock; ObjectBinding binding;
+                    if (!entity.Properties.TryGetValue("@stock/remaining", out stock) || !Objects.TryGetValue(entity.Id, out binding) || binding.Object == null) continue;
+                    if (binding.StockVisuals == null) binding.StockVisuals = new ConsumableVisuals();
+                    GameObject prefab; prefabs.TryGetValue(binding.Prefab, out prefab);
+                    if (prefab == null) foreach (GameObject candidate in prefabs.Values) if (candidate != null && candidate.name.StartsWith("beer case", StringComparison.OrdinalIgnoreCase)) { prefab = candidate; break; }
+                    binding.StockVisuals.Reconcile(binding.Object, prefab, Math.Max(0, Math.Min(24, (int)stock.Number)));
+                }
                 if (!host && full) DisableClientPhysics();
             }
             finally { applyOrder.Clear(); applyDepths.Clear(); applyVisiting.Clear(); Applying = false; }
@@ -782,7 +802,7 @@ namespace SummerCoop.Game
                     Entity e;
                     if (b.Personal || b.Component == null || !world.Entities.TryGetValue(b.Id, out e)) continue;
                     b.Variables.Refresh(b.Component.FsmVariables);
-                    foreach (NamedVariable v in b.Variables) { Atom a; if (!PersonalVariable(v.Name) && e.Properties.TryGetValue(VariableKey(v.Name), out a)) WriteVariable(v, a); }
+                    foreach (NamedVariable v in b.Variables) { Atom a; if (!PersonalVariable(v.Name) && !b.LocalVariables.Contains(v.Name) && e.Properties.TryGetValue(VariableKey(v.Name), out a)) WriteVariable(v, a); }
                 }
             }
             finally { Applying = false; }
@@ -910,6 +930,7 @@ namespace SummerCoop.Game
             Queue<string> pending = new Queue<string>(); HashSet<string> visited = new HashSet<string>(StringComparer.Ordinal);
             foreach (FsmState s in b.Component.FsmStates)
             {
+                foreach (string output in NativeActionReader.InputOutputs(s.Actions)) b.LocalVariables.Add(output);
                 bool input = false;
                 foreach (FsmStateAction a in s.Actions)
                 {

@@ -1,0 +1,13 @@
+PASS real SetBoolValue cannot stop host for a guest
+PASS real velocity getter cannot overwrite host movement globals
+PASS real EnableFSM animates the acting player only
+PASS real FsmProperty camera target cannot alter the host view
+PASS real SendEvent targets the guest hand animation only
+PASS real IntAdd consumes beer on host once
+PASS real GetAxis output stays local while bolt Stage stays authoritative
+PASS real DrivingMode action remains client polling
+PASS actual PlayMaker transition hook signature available
+PASS actual vehicle input accepts base and axis controllers with virtual dispatch
+PASS production vehicle hook selector excludes abstract slots and selects concrete game overrides
+PASS actual compiled nested action masks restore controls and preserve disabled actions
+ALL 12 NATIVE BINDING CHECKS PASSED (managed action definitions; no Unity physics)

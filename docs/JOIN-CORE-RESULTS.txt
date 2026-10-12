@@ -1,0 +1,82 @@
+PASS direct motion and pose packets preserve wire bytes, ownership, nesting and failed writer recovery
+PASS colliding hot UTF8 strings retain independent exact values in the bounded cache
+PASS packet views decode bounded immutable slices and snapshot chunks without copying
+PASS canonical snapshot / all value types / Cyrillic
+PASS compact movement deltas retain every property and exact transform without copying the property map
+PASS sparse properties retain signed zero, removed keys and unchanged deformation without mutating the baseline
+PASS compact deltas reproduce seeded replacement, removal, deletion and recreation sequences
+PASS sleep completion survives snapshots and incremental updates
+PASS packet checksum, magic, version, truncation, trailing bytes
+PASS NaN, infinity, invalid enum, excessive strings are rejected
+PASS snapshot chunk ordering, hash, incomplete transfer and restart
+PASS identity survives culture changes
+PASS simultaneous take has exactly one owner
+PASS seat claim, unowned driving and disconnect cleanup
+PASS purchase retry charges once / stale retries after eviction
+PASS distance and unknown targets / unknown players
+PASS failed adapter and failed durable commit roll back
+PASS sleep requires all connected players
+PASS four-player limit and invalid/out-of-order poses
+PASS immutable decoding shares bounded constants, preserves IEEE bits and isolates mutable callers
+PASS streamed journal records preserve canonical bytes, headers and append boundaries
+PASS moving captures share immutable properties without changing old snapshots
+PASS large text streams retain exact values through bounded cache replacement
+PASS allocation-free floating point writes retain all IEEE bits and the original wire format
+PASS pooled encoding preserves nested output, error recovery and cross-thread ownership
+PASS copy-on-write native transaction rolls back entity replacements
+PASS driving input is ownership-checked without checkpoint writes
+PASS immutable checkpoint baseline survives replacements and deletions
+PASS buffered UTF8 decoding remains exact through hash collisions and malformed input
+PASS background and main thread UTF8 buffers do not share mutable storage
+PASS tracked deltas equal full comparison through coalescing, deletions and history eviction
+PASS one changed entity in a 40000-object world keeps unchanged snapshot references
+PASS reused capture probes preserve published values and removed properties
+PASS capture size buckets keep large arrays and small objects isolated
+PASS shared captured constants preserve exact wire values and deep clone isolation
+PASS background native journal drains before a durable command and clean checkpoint
+PASS slow native journal coalesces unwritten state without losing deletions or durable commands
+PASS compact journal restores exact movement and survives a checkpoint that supersedes removed baselines
+PASS background journal disk errors are surfaced before further durable commands
+PASS background checkpoint retains later durable commands and immutable snapshot
+PASS journal restores committed state after incomplete append
+PASS new commits after recovery replace an interrupted journal tail
+PASS corrupted checkpoint falls back to backup
+PASS delta removes destroyed objects and disconnected players
+PASS local hierarchy names survive seating and native clone names
+PASS checkpoint recovery removes personal trees and preserves exact shared state
+PASS held parts and purchased items survive personal hierarchy repair
+PASS ordinary objects named PLAYER and unrelated missing parents remain visible to validation
+PASS sauna steam and computer HUD survive alongside a contaminated player tree
+PASS native menu recovery preserves world progress and the original input snapshot
+PASS obsolete menu references are removed without mutating shared snapshots
+PASS similarly named gameplay objects outside the native settings roots survive
+PASS seated first-person camera is personal while carried parts remain shared
+PASS personal death lifecycle is removed while vehicle damage and NPC deaths survive
+PASS repaired checkpoint restarts with purchases, bolts and wiring intact
+PASS compressed scene seed and world preserve every byte and own their input
+PASS small and incompressible transfers remain bounded owned plain payloads
+PASS compressed transfers reject forged lengths, truncation and expansion overflow
+PASS scene readiness uses two actual ready frames without a ten-second timer
+PASS synchronous bolt replay and delayed beer replay release the next native action
+PASS moped seat, helmet and gear display stay local without making kickstart or vehicle physics personal
+PASS native beer effect boundary changes stock once and never disables the host actor
+PASS remote actor cannot write host stop, drink, menu or driving globals
+PASS native bolt actions remain host effects while input and actor feedback remain local
+PASS pending native action waits for its matching host revision and completes once
+PASS beer slots fill only missing positions without overlapping surviving bottles
+PASS actual loopback TCP/UDP with host plus three clients
+PASS seeded four-player replay / duplicates / UDP loss and reordering
+PASS precompressed scene seed owns its bytes and joining avoids preparation on the host frame
+PASS beer count converges for concurrent drinks, duplicate commands and a late native-seed guest
+PASS joining never pauses the host and uses one scene seed for all guests
+PASS background snapshot catches up host changes during transfer without a loading barrier
+PASS reliable action pose reaches the host before a moped seat command when UDP is lost
+PASS session handshake / 1.5 MB save / four players / 150 ms latency / 5% UDP loss
+PASS session default deltas retain independent callback containers
+PASS session borrowed deltas grow, shrink, delete and recreate without mutating retained snapshots
+PASS session reentrant borrowed callback keeps its outer delta intact
+PASS session malformed borrowed delta applies no partial state and releases its data
+PASS session borrowed callback failure clears scratch without losing applied entities
+PASS session borrowed chunked delta and baseline resync preserve full world ownership
+PASS session rejects mismatched builds and passwords before native loading
+ALL 81 TESTS PASSED
