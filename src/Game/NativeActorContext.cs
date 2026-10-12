@@ -61,7 +61,7 @@ namespace SummerCoop.Game
                     if (type != "GetChild" && type != "GetParent" && type != "GetComponent") continue;
                     if (!Direct(NativeActionReader.Field(action, "gameObject"), fsm, inferred, 0)) continue;
                     NamedVariable output = NativeActionReader.Field(action, "storeResult") as NamedVariable;
-                    if (output != null && output.Name != "") inferred.Add(output.Name);
+                    if (output != null && output.Name != "" && !NativeActionPolicy.SharedHandReference(output.Name)) inferred.Add(output.Name);
                 }
             }
             return Direct(target, fsm, inferred, 0);
@@ -77,7 +77,7 @@ namespace SummerCoop.Game
             FsmObject obj = target as FsmObject;
             if (obj != null) return inferred.Contains(obj.Name) || NativeActionPolicy.PersonalVariable(obj.Name) || Direct(obj.Value, fsm, inferred, depth + 1);
             FsmOwnerDefault owner = target as FsmOwnerDefault;
-            if (owner != null) return owner.OwnerOption.ToString() == "UseOwner" ? fsm.Owner != null && WorldRegistry.PersonalObject(fsm.Owner.gameObject) : Direct(owner.GameObject, fsm, inferred, depth + 1);
+            if (owner != null) return owner.OwnerOption.ToString() == "UseOwner" ? fsm.Owner != null && Direct(fsm.Owner.gameObject, fsm, inferred, depth + 1) : Direct(owner.GameObject, fsm, inferred, depth + 1);
             FsmProperty property = target as FsmProperty;
             if (property != null) return Direct(property.TargetObject, fsm, inferred, depth + 1);
             object recipient = NativeActionReader.Field(target, "gameObject");

@@ -15,6 +15,8 @@ namespace SummerCoop.Game
         private readonly List<string> leaseScan = new List<string>();
         private readonly List<string> driverScan = new List<string>();
         private readonly Dictionary<string, string> originals = new Dictionary<string, string>();
+        private readonly Dictionary<string, int> heldLayers = new Dictionary<string, int>();
+        private NativeHandLayers handLayers;
         public readonly Dictionary<string, DriveInput> Drivers = new Dictionary<string, DriveInput>();
         private readonly Dictionary<string, Dictionary<Behaviour, bool>> controllerStates = new Dictionary<string, Dictionary<Behaviour, bool>>();
         private readonly Dictionary<string, bool> boatControlStates = new Dictionary<string, bool>();
@@ -48,8 +50,7 @@ namespace SummerCoop.Game
             if (c.Kind == CommandKind.Attach)
             {
                 Player p = world.Players[player]; GameObject held = registry.ObjectOf(p.Held);
-                FsmString expected = fsm.Component.FsmVariables.FindFsmString("HandChild");
-                if (held == null || expected == null || held.name != expected.Value) return "Wrong part for this attachment point";
+                if (held == null || !NativeAssembly.Accepts(fsm.Component.FsmVariables.StringVariables, held.name)) return "Wrong part for this attachment point";
                 if (Vector3.Distance(player == "host" ? held.transform.position : HeldPosition(p), fsm.Component.transform.position) > 0.8f) return "Move the part to the attachment point";
                 FsmGameObject db = fsm.Component.FsmVariables.FindFsmGameObject("db_ThisPart");
                 if (db != null && db.Value != null) { PlayMakerFSM data = PlayMakerFSM.FindFsmOnGameObject(db.Value, "Data"); FsmBool installed = data == null ? null : data.FsmVariables.FindFsmBool("Installed"); if (installed != null && installed.Value) return "Part is already installed"; }
@@ -102,7 +103,15 @@ namespace SummerCoop.Game
                 if (c.Kind == CommandKind.Take)
                 {
                     originals[c.Target] = world.Entities[c.Target].Parent;
-                    if (player != "host") { target.GetComponent<Rigidbody>().isKinematic = true; target.transform.parent = null; }
+                    if (player != "host")
+                    {
+                        target.GetComponent<Rigidbody>().isKinematic = true; target.transform.parent = null;
+                        if (target.CompareTag("PART") || target.CompareTag("ITEM"))
+                        {
+                            if (handLayers == null) handLayers = NativeHandLayers.Discover();
+                            heldLayers[c.Target] = target.layer; target.layer = handLayers.Held;
+                        }
+                    }
                 }
                 else if (c.Kind == CommandKind.Drop)
                 {
@@ -110,9 +119,10 @@ namespace SummerCoop.Game
                     {
                         if (actor.HasHeldPose) { target.transform.position = WorldRegistry.To(actor.HeldPosition); target.transform.rotation = WorldRegistry.To(actor.HeldRotation); }
                         target.transform.parent = null; Rigidbody body = target.GetComponent<Rigidbody>();
+                        int layer; if (heldLayers.TryGetValue(c.Target, out layer)) target.layer = layer;
                         if (body != null) { body.isKinematic = false; body.velocity = WorldRegistry.To(c.Vector); body.WakeUp(); }
                     }
-                    originals.Remove(c.Target);
+                    originals.Remove(c.Target); heldLayers.Remove(c.Target);
                 }
                 else if (c.Kind == CommandKind.Drive) Drivers[c.Target] = DriveInput.Parse(c);
                 else if (c.Kind == CommandKind.LeaveSeat)
@@ -145,8 +155,13 @@ namespace SummerCoop.Game
                     if (c.Kind == CommandKind.Attach)
                     {
                         FsmGameObject part = b.Component.FsmVariables.FindFsmGameObject("Part"); if (part == null) throw new InvalidOperationException("Assembly Part variable missing");
-                        part.Value = registry.ObjectOf(actor.Held);
-                        ExecuteState(b, "Assemble"); actor.Held = "";
+                        GameObject carried = registry.ObjectOf(actor.Held); Transform previousParent = carried.transform.parent;
+                        part.Value = carried;
+                        ExecuteState(b, c.Argument);
+                        if (carried == null || carried.transform.parent == null || carried.transform.parent == previousParent
+                            || WorldRegistry.PersonalObject(carried.transform.parent.gameObject))
+                            throw new InvalidOperationException("Native assembly did not mount the held part; ownership retained");
+                        originals.Remove(actor.Held); heldLayers.Remove(actor.Held); actor.Held = "";
                     }
                     else
                     {

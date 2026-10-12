@@ -25,6 +25,10 @@ namespace SummerCoop.Core
         private static readonly HashSet<string> Setup = new HashSet<string>(StringComparer.Ordinal)
         { "ActivateGameObject", "EnableFSM", "SetProperty", "SetRotation", "SetMaterialColor" };
         public static bool ReadOnly(string name) { return Reads.Contains(name); }
+        public static bool SharedHandReference(string name)
+        {
+            return name == "Part" || name == "PickedObject" || name == "RaycastHitObject" || name == "Item";
+        }
         public static bool ReplayFinished(string state, string waiting) { return state == "Idle" || waiting != "" && state == waiting; }
         public static bool PersonalFsm(string name)
         {
@@ -32,7 +36,7 @@ namespace SummerCoop.Core
         }
         public static bool Allowed(NativeActionInfo action, NativeActionScope scope)
         {
-            if (scope == NativeActionScope.SharedActor) return !action.WritesPersonal && (action.ReadOnly || !action.PersonalTarget);
+            if (scope == NativeActionScope.SharedActor) return !action.WritesPersonal && !action.PersonalTarget;
             return action.ReadOnly || action.PersonalTarget || action.WritesPersonal;
         }
         public static bool Pollable(IEnumerable<NativeActionInfo> actions)
@@ -68,6 +72,7 @@ namespace SummerCoop.Core
             else active.Add(key);
         }
         public void Clear() { active.Clear(); }
+        public void Release(T key) { active.Remove(key); }
     }
     public sealed class PendingNativeAction
     {
@@ -80,6 +85,7 @@ namespace SummerCoop.Core
     {
         private readonly Dictionary<long, PendingNativeAction> actions = new Dictionary<long, PendingNativeAction>();
         public bool ContainsTarget(string target) { foreach (PendingNativeAction action in actions.Values) if (action.Target == target) return true; return false; }
+        public bool ContainsKind(CommandKind kind) { foreach (PendingNativeAction action in actions.Values) if (action.Kind == kind) return true; return false; }
         public void Add(Command command) { actions.Add(command.Sequence, new PendingNativeAction { Sequence = command.Sequence, Target = command.Target, State = command.Argument, Kind = command.Kind }); }
         public void Complete(CommandResult result)
         {

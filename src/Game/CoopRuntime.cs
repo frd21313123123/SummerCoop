@@ -61,6 +61,7 @@ namespace SummerCoop.Game
         private CoopMenuSkin menuSkin;
         private readonly Dictionary<string, float> requests = new Dictionary<string, float>();
         private readonly PendingNativeActions sharedRequests = new PendingNativeActions();
+        private readonly DeferredHandRelease<Fsm> deferredRelease = new DeferredHandRelease<Fsm>();
         public string SaveRoot { get { return root; } }
         public string StatusText { get { return status; } }
         public double LastUpdateMilliseconds { get; private set; }
@@ -327,7 +328,7 @@ namespace SummerCoop.Game
                     LastStages[6] = Elapsed(stage);
                 }
                 if (Application.loadedLevelName != "GAME") Leave("Мир закрыт");
-                else if (!Session.IsHost && Input.GetButtonDown("Use")) NativeUseInput.FromView(Registry, localCamera);
+                else if (Input.GetButtonDown("Use")) NativeUseInput.FromView(Registry, localCamera);
             }
             catch (Exception e) { Fail(e); }
             finally { LastUpdateMilliseconds = (System.Diagnostics.Stopwatch.GetTimestamp() - updateBegan) * 1000.0 / System.Diagnostics.Stopwatch.Frequency; if (TraceAllocations) { previousUpdateEnd = HeapBegin(); measuredUpdateEnd = true; } }
@@ -363,6 +364,7 @@ namespace SummerCoop.Game
             else if (b.Component.FsmName == "Assemble" && b.Key.IndexOf("Wiring", StringComparison.OrdinalIgnoreCase) >= 0) kind = CommandKind.Wire;
             else if (b.Component.FsmName == "Screw" && b.Component.FsmVariables.FindFsmInt("Stage") != null) kind = CommandKind.Bolt;
             else if (b.Component.FsmName == "Buy" || b.Key.IndexOf("CashRegister", StringComparison.OrdinalIgnoreCase) >= 0) kind = CommandKind.Purchase;
+            if (kind == CommandKind.Attach) deferredRelease.Cancel();
             FsmFloat wrench = FsmVariables.GlobalVariables.FindFsmFloat("ToolWrenchSize");
             SendActionPose();
             Command command = new Command { Kind = kind, Target = b.Id, Argument = state, Number = kind == CommandKind.Bolt && wrench != null ? wrench.Value : 0 };
@@ -429,8 +431,13 @@ namespace SummerCoop.Game
                 }
                 if (state.Name.StartsWith("Drop ", StringComparison.Ordinal))
                 {
-                    SendActionPose();
-                    Player p = Session.World.Players[Session.LocalId]; if (p.Held != "") Session.Submit(new Command { Kind = CommandKind.Drop, Target = p.Held });
+                    Player p = Session.World.Players[Session.LocalId];
+                    if (!Session.IsHost && p.Held != "")
+                    {
+                        if (!sharedRequests.ContainsKind(CommandKind.Attach)) deferredRelease.Queue(fsm, state.Name, p.Held, Time.frameCount);
+                        return false;
+                    }
+                    SendActionPose(); if (p.Held != "") Session.Submit(new Command { Kind = CommandKind.Drop, Target = p.Held });
                     return true;
                 }
             }
@@ -467,6 +474,26 @@ namespace SummerCoop.Game
             requestedSeat = requestedState = nativeHeld = ""; requestedSequence = 0; requestedFsm = null; requestAccepted = false;
             nativeHand = recoverInput = null; requests.Clear();
             sharedRequests.Clear();
+            deferredRelease.Cancel();
+        }
+        private void LateUpdate()
+        {
+            if (!Active || Session.IsHost || Joining) return;
+            try
+            {
+                Player actor; if (!Session.World.Players.TryGetValue(Session.LocalId, out actor)) return;
+                Fsm hand; string state, target;
+                if (!deferredRelease.Take(Time.frameCount, actor.Held, sharedRequests.ContainsKind(CommandKind.Attach), out hand, out state, out target)) return;
+                SendActionPose(); Session.Submit(new Command { Kind = CommandKind.Drop, Target = target });
+                bool replaying = NativeHooks.Replaying; NativeHooks.Replaying = true;
+                try
+                {
+                    PlayMakerFSM component = hand.Owner as PlayMakerFSM;
+                    if (component != null) NativeAdapter.ExecuteState(new FsmBinding { Component = component }, state);
+                }
+                finally { NativeHooks.Replaying = replaying; }
+            }
+            catch (Exception error) { Fail(error); }
         }
         private void ResumeHand()
         {

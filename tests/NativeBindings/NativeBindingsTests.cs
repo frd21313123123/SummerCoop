@@ -48,6 +48,13 @@ internal static class NativeBindingsTests
             GetChild heldPart = new GetChild { storeResult = new FsmGameObject { Name = "Part" } };
             outputs = NativeActionReader.InputOutputs(new FsmStateAction[] { partName, heldPart });
             Check(outputs.Contains("HandChild") && outputs.Contains("Part"), "actual attachment hand references and derived names remain client-local");
+            GetChild hostHand = new GetChild { gameObject = new FsmOwnerDefault { OwnerOption = OwnerDefaultOption.SpecifyGameObject, GameObject = new FsmGameObject { Name = "Hand" } }, storeResult = new FsmGameObject { Name = "Part" } };
+            info = NativeActionReader.Describe(hostHand, Personal);
+            Check(info.PersonalTarget && !NativeActionPolicy.Allowed(info, NativeActionScope.SharedActor), "actual GetChild cannot overwrite the guest Part from the host hand");
+            Check(NativeAssembly.Accepts(new[] { new FsmString { Name = "HandChild", Value = "wheel stock(Clone)" }, new FsmString { Name = "HandChild2", Value = "wheel rally(Clone)" } }, "wheel rally(Clone)")
+                && !NativeAssembly.Accepts(new[] { new FsmString { Name = "HandChild", Value = "starter(Clone)" } }, "alternator(Clone)"), "native alternate part slots accept their declared names and refuse unrelated parts");
+            NativeHandLayers layers = NativeHandLayers.Read(new FsmStateAction[] { new SetLayer { layer = 16 } }, new FsmStateAction[] { new SetLayer { layer = 19 } });
+            Check(layers.Held == 16 && layers.Dropped == 19, "real SetLayer actions define the same carry/drop collision layers used by the host");
             SetIntValue key = new SetIntValue { intVariable = new FsmInt { Name = "PlayerKeyGifu" }, intValue = 2 };
             info = NativeActionReader.Describe(key, Personal);
             Check(info.WritesPersonal && !NativeActionPolicy.Allowed(info, NativeActionScope.SharedActor), "actual truck key pickup cannot overwrite another player's key inventory");

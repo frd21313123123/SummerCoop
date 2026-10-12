@@ -56,6 +56,11 @@ namespace SummerCoop.Game
             if (runtime != null && runtime.Registry != null && runtime.Registry.Applying) { Pending.SetValue(__instance, null); return false; }
             if (runtime == null || !runtime.Active || runtime.Registry == null) return true;
             FsmBinding b = runtime.Registry.Binding(__instance);
+            // A new host drink is local input, even if this case still carries
+            // the guest's asynchronous Play anim marker from its previous use.
+            if (runtime.Session.IsHost && NativeActorContext.Current == null && b != null
+                && b.Component.FsmName == "Use" && state.Name == "Check drink"
+                && b.Component.FsmVariables.FindFsmInt("DestroyedBottles") != null) RemoteActors.Release(__instance);
             bool remote = NativeActorContext.Current != null && NativeActorContext.Current != "host" || RemoteActors.Contains(__instance);
             if (runtime.Session.IsHost && remote)
             {

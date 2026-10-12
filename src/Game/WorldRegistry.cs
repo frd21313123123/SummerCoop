@@ -507,6 +507,7 @@ namespace SummerCoop.Game
                 if (b.Body != null) { e.Velocity = transforms || previous == null ? From(b.Body.velocity) : previous.Velocity; e.AngularVelocity = transforms || previous == null ? From(b.Body.angularVelocity) : previous.AngularVelocity; e.Properties["@body"] = builder.B(true); e.Properties["@mass"] = builder.N(b.Body.mass); e.Properties["@kinematic"] = builder.B(b.Body.isKinematic); }
                 e.Properties["@scale"] = builder.V(From(b.Transform.localScale));
                 e.Properties["@name"] = builder.S(b.Object.name);
+                e.Properties["@layer"] = builder.N(b.Object.layer);
                 e.Properties["@empty"] = builder.B(b.Empty);
                 Atom oldTag; string tag = previous != null && previous.Properties.TryGetValue("@tag", out oldTag) && b.Object.CompareTag(oldTag.Text) ? oldTag.Text : b.Object.tag;
                 e.Properties["@tag"] = builder.S(tag);
@@ -687,6 +688,11 @@ namespace SummerCoop.Game
                     }
                     Atom a; if (e.Properties.TryGetValue("@scale", out a)) b.Transform.localScale = To(a.Vector);
                     if (e.Properties.TryGetValue("@name", out a) && b.Object.name != a.Text) b.Object.name = a.Text;
+                    if (!b.LocalControls && e.Properties.TryGetValue("@layer", out a))
+                    {
+                        int layer = checked((int)a.Number); if (layer < 0 || layer > 31) throw new ProtocolException("Invalid native collision layer");
+                        if (b.Object.layer != layer) b.Object.layer = layer;
+                    }
                     if (!b.LocalControls && e.Properties.TryGetValue("@tag", out a)) b.Object.tag = a.Text;
                     for (int i = 0; i < b.Renderers.Length; i++) if (b.Renderers[i] != null)
                     {
@@ -961,6 +967,11 @@ namespace SummerCoop.Game
                 if (NativeHooks.CanRunLocally(state)) foreach (FsmTransition transition in state.Transitions) pending.Enqueue(transition.ToState);
             }
             string name = b.Component.FsmName;
+            // A beer animation returns to Wait player before MousePick can enter
+            // Wait button. End actor ownership there, without requiring the host
+            // to look at a case that the guest has just used.
+            if (name == "Use" && b.Component.FsmVariables.FindFsmInt("DestroyedBottles") != null
+                && b.Component.Fsm.GetState("Wait player") != null) b.WaitingState = "Wait player";
             if (name == "Screw") { if (b.Component.Fsm.GetState("Screw 2") != null) b.Requests.Add("Screw 2"); if (b.Component.Fsm.GetState("Unscrew 2") != null) b.Requests.Add("Unscrew 2"); }
             if (name == "Assembly" && b.Component.Fsm.GetState("Assemble") != null) b.Requests.Add("Assemble");
             if (name == "Use") foreach (string direction in new[] { "Open", "Close" })

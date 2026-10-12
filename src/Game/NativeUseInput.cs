@@ -25,6 +25,12 @@ namespace SummerCoop.Game
         public static bool Activate(FsmBinding binding)
         {
             if (binding == null || binding.Personal || binding.Component == null || !binding.Component.enabled || !binding.Component.gameObject.activeInHierarchy) return false;
+            FsmInt bottles = binding.Component.FsmVariables.FindFsmInt("DestroyedBottles");
+            if (bottles != null)
+            {
+                FsmBool busy = FsmVariables.GlobalVariables.FindFsmBool("PlayerHandLeft"), helmet = FsmVariables.GlobalVariables.FindFsmBool("PlayerHelmet");
+                if (SummerCoop.Core.ConsumableStock.Remaining(24, bottles.Value) == 0 || busy != null && busy.Value || helmet != null && helmet.Value) return false;
+            }
             foreach (FsmState state in binding.Component.FsmStates)
             {
                 string destination = Destination(state);
