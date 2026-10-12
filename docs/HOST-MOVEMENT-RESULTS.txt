@@ -1,0 +1,45 @@
+Compatible profile updated; world ID, shared entities, money and native save files preserved.
+Backup: D:\programing 2\ml-sum\.local\host-walk-016-loader142-host\world\before-performance-update-20261012-101629-c869280d
+Native host movement before guest: PASS; starting actual game client
+41.070 PRODUCTION_DLL=6656833460f6e40c32a29d154a5ed3e96c44127331a69422dc6c3d45731207b2
+41.072 CONTROL scale=1 joining=False hookMode=0 saving=False input=True motor=True canControl=True
+41.073 PlayerStop=False
+41.073 PlayerInMenu=False
+41.073 PlayerSeated=False
+41.074 PlayerSleeps=False
+41.075 SERVER_BEFORE_GUEST_BEGIN position=(-1464.826, 3.733, 1140.774) clear=4.00
+42.583 CONTROL scale=1 joining=False hookMode=0 saving=False input=True motor=True canControl=True
+42.584 PlayerStop=False
+42.584 PlayerInMenu=False
+42.585 PlayerSeated=False
+42.585 PlayerSleeps=False
+42.586 SERVER_BEFORE_GUEST_RESULT metres=2.830 native_axis_reads=232 peers=1
+53.708 CONTROL scale=1 joining=False hookMode=0 saving=False input=True motor=True canControl=True
+53.709 PlayerStop=False
+53.709 PlayerInMenu=False
+53.710 PlayerSeated=False
+53.710 PlayerSleeps=False
+53.711 GUEST_LOADING_BEGIN position=(-1462.677, 3.813, 1142.924) clear=4.00
+55.214 CONTROL scale=1 joining=False hookMode=0 saving=False input=True motor=True canControl=True
+55.231 PlayerStop=False
+55.232 PlayerInMenu=False
+55.232 PlayerSeated=False
+55.233 PlayerSleeps=False
+55.233 GUEST_LOADING_RESULT metres=2.793 native_axis_reads=208 peers=2
+83.684 CONTROL scale=1 joining=False hookMode=0 saving=False input=True motor=True canControl=True
+83.685 PlayerStop=False
+83.685 PlayerInMenu=False
+83.686 PlayerSeated=False
+83.686 PlayerSleeps=False
+83.687 GUEST_FULLY_LOADED_BEGIN position=(-1462.677, 3.946, 1145.923) clear=4.00
+85.689 CONTROL scale=1 joining=False hookMode=0 saving=False input=True motor=True canControl=True
+85.690 PlayerStop=False
+85.690 PlayerInMenu=False
+85.690 PlayerSeated=False
+85.691 PlayerSleeps=False
+85.691 GUEST_FULLY_LOADED_RESULT metres=3.766 native_axis_reads=276 peers=2
+85.734 HOST_MOVEMENT=PASS: server before guest, guest loading, fully loaded guest, and client-observed host pose
+40.009 CLIENT_FULLY_LOADED=Playing; full snapshot applied
+42.036 CLIENT_OBSERVED_HOST_METRES=3.743
+HOST_MOVEMENT_WITH_LOADED_REAL_GAME_CLIENT=PASS
+ORIGINAL_SINGLEPLAYER_FILES=UNCHANGED; only own fixture processes closed

@@ -6,6 +6,41 @@ internal static class TransferEncodingTests
     private static void Check(bool value, string reason) { if (!value) throw new Exception(reason); }
     public static void Run(Action<string, Action> test)
     {
+        test("managed transfers preserve short runs, overlapping references, window boundaries and seeded input", delegate
+        {
+            Random random = new Random(19516);
+            foreach (int size in new[] { 4095, 4096, 4097, 65534, 65535, 65536, 65667, 131072, 1000000 })
+                foreach (int pattern in new[] { 0, 1, 2, 3 })
+                {
+                    byte[] bytes = new byte[size]; random.NextBytes(bytes);
+                    for (int i = 0; i < bytes.Length; i++)
+                    {
+                        if (pattern == 0) bytes[i] = 7;
+                        else if (pattern == 1) bytes[i] = (byte)(i % 133);
+                        else if (pattern == 2 && i >= 60000) bytes[i] = bytes[i - 60000];
+                    }
+                    EncodedTransfer encoded = TransferEncoding.Encode(TransferKind.World, bytes);
+                    Check(Codec.Hash(TransferEncoding.Decode(encoded.Kind, encoded.Bytes)) == Codec.Hash(bytes), "Managed transfer changed bytes at " + size + "/" + pattern);
+                    Check(encoded.Bytes.Length <= bytes.Length, "Managed transfer grew incompressible input");
+                }
+        });
+        test("managed transfers reject invalid references, unsupported formats, run overflow and trailing data", delegate
+        {
+            byte[][] malformed = {
+                new byte[] { 4, 0, 0, 0, 1, 128, 0, 0 },
+                new byte[] { 4, 0, 0, 0, 1, 128, 1, 0 },
+                new byte[] { 4, 0, 0, 0, 1, 3, 0 },
+                new byte[] { 4, 0, 0, 0, 2, 3, 0, 0, 0, 0 },
+                new byte[] { 4, 0, 0, 0, 1, 0, 9, 255, 1, 0, 255, 255 },
+                new byte[] { 4, 0, 0, 0, 1, 0, 9, 255, 1, 0 },
+                new byte[] { 4, 0, 0, 0, 1, 3, 0, 0, 0, 0, 0, 1 }
+            };
+            foreach (byte[] bytes in malformed)
+            {
+                bool rejected = false; try { TransferEncoding.Decode(TransferKind.CompressedWorld, bytes); } catch (ProtocolException) { rejected = true; }
+                Check(rejected, "Invalid managed transfer was accepted");
+            }
+        });
         test("compressed scene seed and world preserve every byte and own their input", delegate
         {
             foreach (TransferKind kind in new[] { TransferKind.NativeSave, TransferKind.World, TransferKind.Delta })

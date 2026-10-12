@@ -1,0 +1,9 @@
+REMOVED=0 OMITTED_PERSONAL_REFERENCES=0 DETACHED_HELD=0 EXACT_UNCHANGED_ENTITIES=38352
+WORLD=preserved-fixture-id REVISION=8009 MONEY=3000 RETAINED_ENTITIES=38352
+EXACT_EXPECTED_REPAIR=True
+update: exact repaired world, native file set/bytes and both tested DLL hashes PASS
+REMOVED=0 OMITTED_PERSONAL_REFERENCES=0 DETACHED_HELD=0 EXACT_UNCHANGED_ENTITIES=38352
+WORLD=preserved-fixture-id REVISION=8009 MONEY=3000 RETAINED_ENTITIES=38352
+EXACT_EXPECTED_REPAIR=True
+repeat: exact repaired world, native file set/bytes and both tested DLL hashes PASS
+Repeat installation left every profile file and backup byte-identical: PASS
