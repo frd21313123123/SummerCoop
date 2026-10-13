@@ -97,7 +97,8 @@ namespace SummerCoop.Core
                 Atom name;
                 bool deathBody = bodyOwners.Contains(entity.Id) && bodyPivots.Contains(entity.Id)
                     && entity.Properties.TryGetValue("@name", out name) && IsPersonalDeathBody(name.Text, true, true);
-                if (PersonalRoot(entity) || deathBody || IsPersonalSystemKey(entity.Key) && entity.Kind != EntityKind.Fsm) roots.Add(entity.Key);
+                if (PersonalRoot(entity) || deathBody || ToolInventory.IsRoot(entity, world)
+                    || IsPersonalSystemKey(entity.Key) && entity.Kind != EntityKind.Fsm) roots.Add(entity.Key);
             }
             if (roots.Count == 0) return 0;
             // Held parts retain their own identity, even if an old build registered

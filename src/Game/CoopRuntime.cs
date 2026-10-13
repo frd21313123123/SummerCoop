@@ -26,6 +26,7 @@ namespace SummerCoop.Game
         private SaveIsolation saves;
         private CheckpointStore store;
         private NativeKeys personalKeys;
+        private NativeToolRecovery toolRecovery;
         private World preparedWorld;
         private string preparedWorldId;
         private float keyCaptureTime;
@@ -246,6 +247,8 @@ namespace SummerCoop.Game
             }
             if (personalKeys != null) personalKeys.RestoreGlobals();
             Registry = pendingRegistry ?? new WorldRegistry(hostPending, gameHash); pendingRegistry = null; Registry.Discover(true);
+            if (toolRecovery != null) toolRecovery.Dispose();
+            toolRecovery = new NativeToolRecovery(Registry);
             avatars = new AvatarView();
             localPlayer = GameObject.Find("PLAYER"); localCamera = Camera.main;
             if (hostPending)
@@ -509,6 +512,7 @@ namespace SummerCoop.Game
             nativeHand = recoverInput = null; requests.Clear();
             sharedRequests.Clear();
             deferredRelease.Cancel();
+            if (toolRecovery != null) { toolRecovery.Dispose(); toolRecovery = null; }
         }
         private void LateUpdate()
         {
@@ -535,6 +539,7 @@ namespace SummerCoop.Game
             // Resume the local hand animation only after the host grants ownership.
             Player p; if (Session.World.Players.TryGetValue(Session.LocalId, out p) && (requestedKind == CommandKind.Take ? p.Held == requestedSeat : p.Seat == requestedSeat))
             {
+                if (requestedKind == CommandKind.Take) Registry.PrepareLocalCarry(requestedSeat);
                 NativeHooks.Replaying = true;
                 try { PlayMakerFSM component = requestedFsm.Owner as PlayMakerFSM; if (component != null) NativeAdapter.ExecuteState(new FsmBinding { Component = component }, requestedState); }
                 finally { NativeHooks.Replaying = false; }
@@ -549,8 +554,7 @@ namespace SummerCoop.Game
             if (nativeHeld != "" && actor.Held == "")
             {
                 if (nativeHand == null)
-                    foreach (PlayMakerFSM component in UnityEngine.Object.FindObjectsOfType<PlayMakerFSM>())
-                        if (component.FsmName == "PickUp" && component.transform.root.name == "PLAYER") { nativeHand = component; break; }
+                    nativeHand = NativeHandLayers.CurrentHand();
                 if (nativeHand != null && (nativeHand.ActiveStateName == "Part picked" || nativeHand.ActiveStateName == "Item picked" || nativeHand.ActiveStateName == "Tool picked"))
                 {
                     bool replaying = NativeHooks.Replaying; NativeHooks.Replaying = true;
@@ -615,6 +619,14 @@ namespace SummerCoop.Game
             personalKeys = new NativeKeys(root, saves.CurrentDirectory, world, identity);
         }
         public void SaveKeysNow() { if (personalKeys != null && nativeLoaded) personalKeys.Capture(); }
+        public void RestoreTools()
+        {
+            if (!Active || Joining || Application.loadedLevelName != "GAME" || Registry == null || toolRecovery == null)
+                throw new InvalidOperationException("Восстановление инструментов доступно после загрузки мира.");
+            int count = toolRecovery.Restore(Registry);
+            SetStatus(count == 0 ? "Чемоданчик с инструментами не найден в предметах игрока."
+                : "Инструменты восстановлены: " + count + ". Откройте чемоданчик и включите режим инструментов (F1).");
+        }
         private void DisposeStore() { CheckpointStore current = store; store = null; if (current != null) { try { current.Dispose(); } catch (IOException e) { Debug.LogException(e); } } }
         private void OnApplicationQuit()
         {
@@ -683,6 +695,7 @@ namespace SummerCoop.Game
                         if (Active)
                         {
                             Player p = Session.World.Players[Session.LocalId];
+                            if (GUILayout.Button("Восстановить инструменты в чемоданчиках")) RestoreTools();
                             if (GUILayout.Button(p.SleepReady ? "Отменить готовность ко сну" : "Готов ко сну (нужны все игроки)")) Session.Submit(new Command { Kind = CommandKind.Sleep, Number = p.SleepReady ? 0 : 1 });
                             if (GUILayout.Button("Возродиться дома")) Respawn();
                         }

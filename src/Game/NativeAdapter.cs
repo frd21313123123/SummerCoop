@@ -30,7 +30,16 @@ namespace SummerCoop.Game
             if (c.Kind == CommandKind.Sleep) return null;
             GameObject target = registry.ObjectOf(c.Target); FsmBinding fsm = registry.FsmOf(c.Target);
             if (target == null && fsm == null) return "Native target is unavailable";
-            if (c.Kind == CommandKind.Take) return target != null && target.GetComponent<Rigidbody>() != null ? null : "This object cannot be carried";
+            if (c.Kind == CommandKind.Take)
+            {
+                if (target == null || target.GetComponent<Rigidbody>() == null) return "This object cannot be carried";
+                if (player != "host" && handLayers == null && (target.CompareTag("PART") || target.CompareTag("ITEM")))
+                {
+                    try { handLayers = NativeHandLayers.Discover(); }
+                    catch (Exception error) { return "Native hand: " + error.Message; }
+                }
+                return null;
+            }
             if (c.Kind == CommandKind.Drop) return null;
             if (c.Kind == CommandKind.Drive) return DriveInput.Parse(c) == null ? "Invalid controls" : null;
             if (c.Kind == CommandKind.EnterSeat || c.Kind == CommandKind.LeaveSeat)
@@ -108,7 +117,6 @@ namespace SummerCoop.Game
                         target.GetComponent<Rigidbody>().isKinematic = true; target.transform.parent = null;
                         if (target.CompareTag("PART") || target.CompareTag("ITEM"))
                         {
-                            if (handLayers == null) handLayers = NativeHandLayers.Discover();
                             heldLayers[c.Target] = target.layer; target.layer = handLayers.Held;
                         }
                     }

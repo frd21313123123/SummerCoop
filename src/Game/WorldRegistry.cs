@@ -106,6 +106,7 @@ namespace SummerCoop.Game
             {
                 string name = cursor.name;
                 if (LocalHierarchy.IsNestedName(name) || PersonalDeathBody(cursor, name)
+                    || cursor.parent != null && ToolInventory.IsContainer(name, cursor.parent.name)
                     || cursor.parent != null && LocalHierarchy.IsPersonalSystemName(cursor.parent.name, name)) return true;
             }
             return false;
@@ -720,11 +721,11 @@ namespace SummerCoop.Game
                     }
                     b.Body = b.Object.GetComponent<Rigidbody>();
                     bool wantsBody = e.Properties.ContainsKey("@body");
-                    if (host && wantsBody && b.Body == null) b.Body = b.Object.AddComponent<Rigidbody>();
+                    if (wantsBody && b.Body == null) { b.Body = b.Object.AddComponent<Rigidbody>(); b.Body.isKinematic = !host; }
                     if (!wantsBody && b.Body != null) { if (b.Object.GetComponent<Joint>() == null) { UnityEngine.Object.DestroyImmediate(b.Body); b.Body = null; } else b.Body.isKinematic = true; }
+                    if (b.Body != null && e.Properties.TryGetValue("@mass", out a)) b.Body.mass = (float)a.Number;
                     if (host && b.Body != null)
                     {
-                        if (e.Properties.TryGetValue("@mass", out a)) b.Body.mass = (float)a.Number;
                         if (e.Properties.TryGetValue("@kinematic", out a)) b.Body.isKinematic = a.Number != 0;
                         b.Body.position = To(e.Position); b.Body.rotation = To(e.Rotation);
                         if (!b.Body.isKinematic) { b.Body.velocity = To(e.Velocity); b.Body.angularVelocity = To(e.AngularVelocity); }
@@ -854,10 +855,24 @@ namespace SummerCoop.Game
         {
             foreach (ObjectBinding b in Objects.Values) DisableClientPhysics(b);
         }
-        private static void DisableClientPhysics(ObjectBinding b)
+        public void PrepareLocalCarry(string id)
+        {
+            if (host) return;
+            ObjectBinding binding;
+            if (!Objects.TryGetValue(id, out binding) || binding.Object == null) return;
+            binding.Body = binding.Object.GetComponent<Rigidbody>();
+            // The native hand moves a dynamic body through its joint. All other
+            // scene bodies remain frozen replicas of the host simulation.
+            if (binding.Body != null) { binding.Body.isKinematic = false; binding.Body.WakeUp(); }
+        }
+        private void DisableClientPhysics(ObjectBinding b)
         {
             if (b.Object == null) return;
-            b.Body = b.Object.GetComponent<Rigidbody>(); if (b.Body != null && !b.Body.isKinematic) b.Body.isKinematic = true;
+            b.Body = b.Object.GetComponent<Rigidbody>();
+            CoopRuntime runtime = CoopRuntime.Instance; Player actor;
+            bool heldRoot = runtime != null && runtime.Session != null && runtime.Session.World != null
+                && runtime.Session.World.Players.TryGetValue(runtime.Session.LocalId, out actor) && actor.Held == b.Id;
+            if (!heldRoot && b.Body != null && !b.Body.isKinematic) b.Body.isKinematic = true;
             if (!b.PhysicsDisabled || b.DisabledBody != b.Body)
             {
                 foreach (MonoBehaviour component in b.Object.GetComponents<MonoBehaviour>())

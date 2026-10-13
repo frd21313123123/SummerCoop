@@ -35,9 +35,32 @@ namespace SummerCoop.Game
         }
         public static NativeHandLayers Discover()
         {
-            foreach (PlayMakerFSM fsm in Resources.FindObjectsOfTypeAll<PlayMakerFSM>())
-                if (fsm.FsmName == "PickUp" && fsm.transform.root.name == "PLAYER") return Read(fsm.FsmStates);
-            throw new InvalidOperationException("Native player hand is unavailable");
+            PlayMakerFSM fsm = CurrentHand();
+            if (fsm == null) throw new InvalidOperationException("Native player hand is unavailable");
+            if (!fsm.Fsm.Initialized) fsm.Fsm.Init(fsm);
+            return Read(fsm.FsmStates);
+        }
+        public static PlayMakerFSM CurrentHand()
+        {
+            // Resources also contains inactive PLAYER prefabs whose state actions
+            // have no initialized FSM. Only inspect the current scene actor.
+            GameObject player = GameObject.Find("PLAYER");
+            if (player != null) foreach (PlayMakerFSM fsm in player.GetComponentsInChildren<PlayMakerFSM>(true))
+            {
+                if (fsm.FsmName != "PickUp" || !IsCarryHand(fsm.FsmStates)) continue;
+                return fsm;
+            }
+            return null;
+        }
+        public static bool IsCarryHand(IEnumerable<FsmState> states)
+        {
+            bool held = false, dropped = false;
+            foreach (FsmState state in states)
+            {
+                if (state.Name == "Part picked") held = true;
+                if (state.Name == "Drop part") dropped = true;
+            }
+            return held && dropped;
         }
     }
 }

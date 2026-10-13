@@ -16,6 +16,11 @@ internal static class NativeBindingsTests
         NamedVariable name = NativeActionReader.Field(value, "GameObject") as NamedVariable;
         return name != null && (name.Name == "FPSCamera" || name.Name == "Hand");
     }
+    private static FsmState UninitializedState(string name)
+    {
+        FsmState state = (FsmState)System.Runtime.Serialization.FormatterServices.GetUninitializedObject(typeof(FsmState));
+        state.Name = name; return state;
+    }
     public static int Main()
     {
         try
@@ -60,6 +65,10 @@ internal static class NativeBindingsTests
                 && !NativeAssembly.Accepts(new[] { new FsmString { Name = "HandChild", Value = "starter(Clone)" } }, "alternator(Clone)"), "native alternate part slots accept their declared names and refuse unrelated parts");
             NativeHandLayers layers = NativeHandLayers.Read(new FsmStateAction[] { new SetLayer { layer = 16 } }, new FsmStateAction[] { new SetLayer { layer = 19 } });
             Check(layers.Held == 16 && layers.Dropped == 19, "real SetLayer actions define the same carry/drop collision layers used by the host");
+            Check(NativeHandLayers.IsCarryHand(new[] { UninitializedState("Part picked"), UninitializedState("Drop part") })
+                && !NativeHandLayers.IsCarryHand(new[] { UninitializedState("Spanner"), UninitializedState("Look for object") })
+                && !NativeHandLayers.IsCarryHand(new[] { UninitializedState("Part picked") }),
+                "actual carry-hand selector rejects the second PickUp FSM and incomplete templates without reading uninitialized actions");
             SetIntValue key = new SetIntValue { intVariable = new FsmInt { Name = "PlayerKeyGifu" }, intValue = 2 };
             info = NativeActionReader.Describe(key, Personal);
             Check(info.WritesPersonal && !NativeActionPolicy.Allowed(info, NativeActionScope.SharedActor), "actual truck key pickup cannot overwrite another player's key inventory");

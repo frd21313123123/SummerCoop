@@ -90,6 +90,7 @@ namespace SummerCoop.Game
             for (Transform cursor = go.transform; cursor != null; cursor = cursor.parent)
             {
                 if (SummerCoop.Core.LocalHierarchy.IsNestedName(cursor.name)) return false;
+                if (cursor.parent != null && SummerCoop.Core.ToolInventory.IsContainer(cursor.name, cursor.parent.name)) return false;
                 if (runtime.Registry.IdOf(cursor.gameObject) != "") return true;
             }
             return false;

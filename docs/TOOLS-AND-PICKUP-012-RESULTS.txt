@@ -1,0 +1,36 @@
+SummerCoop 0.1.12-alpha / local checks / 2026-10-13
+
+Game was not launched. No game process was started or stopped.
+Core: ALL 109 TESTS PASSED, including loopback TCP/UDP.
+Native bindings: ALL 22 NATIVE BINDING CHECKS PASSED.
+Installer: ALL 12 INSTALLER TESTS PASSED.
+Launcher: ALL 14 LAUNCHER TESTS PASSED; hidden WinForms UI checks passed.
+
+User session log from 0.1.11: 48 failed Take attempts, each with a
+NativeHandLayers.Read exception stack. No personal identifiers are included.
+The layer selector now uses the active scene PLAYER instead of resource prefabs.
+The real carry FSM is recognized by Part picked and Drop part without reading
+uninitialized action arrays. Discovery failure is returned during validation
+before ownership, transforms or physics are changed.
+
+Fixture update from 0.1.11 and repeated installation: PASS.
+Real installation: PASS.
+World revision=16101; retained shared entities=38302; exact money value unchanged.
+REMOVED=60 OMITTED_PERSONAL_REFERENCES=0 DETACHED_HELD=0
+EXACT_UNCHANGED_ENTITIES=38302 EXACT_EXPECTED_REPAIR=True
+Removed entries belong to native Tools inventories of wrench and ratchet cases.
+Original native save bytes, single-player files and vehicle-key profiles unchanged.
+Repeated fixture installation: every profile file and backup byte-identical.
+Installed DLL hashes equal the tested build.
+
+SHA256 SummerCoop.dll
+B53F106A1168C47F41DCA2B84D9CD5EF93B90D9A73642250BD7CEE5403955421
+SHA256 SummerCoop.Core.dll
+53C8E3769D2052CCA777A2589F7626B3821E73C82254CD5EF3D92E49F3666DAD
+SHA256 SummerCoop-Setup.exe
+CF122E178D6C7342AD05495C7F91EFF3BF86B45B1C6DBC75AA39323F50C768C7
+SHA256 SummerCoop-Launcher.exe
+A0C6D7BCF9ABADD921763A057B31DA88D3A84CA9C4D6D3F2F89E4C4D69E5F190
+
+Limits: no Unity physics, menu rendering or two-player gameplay was executed.
+These checks do not confirm measured FPS or absence of every possible freeze.
