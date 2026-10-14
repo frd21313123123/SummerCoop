@@ -1,0 +1,48 @@
+SummerCoop 0.1.13-alpha — 14 October 2026
+My Summer Car build 20171487, Unity 5.0.0f4, installed MSCLoader 1.4.2
+Game and Steam were not launched or stopped during this work.
+
+LOCAL VALIDATION
+115 core checks PASS, including localhost TCP/UDP and host/client session regression tests.
+26 managed native binding checks PASS against the actual installed game DLLs.
+12 installer transaction checks PASS.
+14 launcher checks PASS, plus hidden WinForms interface/layout checks.
+Saved hierarchy check PASS on a fresh copy of the user's world.
+
+The saved crankshaft had Installed=true, no Rigidbody, and an empty parent.
+The actual native Assembly SetParent action declares block/pivot_crankshaft as its parent,
+with local position and rotation reset. The following End state applies local coordinates.
+The actual local Hangover FSM declares HangoverStrenght, HangoverStrenghtMinus and TimeLeft.
+Native binding tests cover carried-part mount selection, local offsets, world-space rejection
+and resetting the actual Hangover variables without changing unrelated native values.
+
+PACKAGED INSTALLER
+Update from the preserved 0.1.12 DLL pair on an isolated game/profile copy: PASS.
+All 38,303 shared entities were exactly preserved by the installer migration.
+Revision 17,866 and the exact money value were preserved.
+Native save file sets and bytes were preserved.
+Repeat installation preserved every profile file and backup byte for byte: PASS.
+Installed DLL hashes matched the tested and packaged candidate: PASS.
+
+REAL INSTALLATION
+The same tested EXE installed the same DLL pair in the user's game: PASS.
+Shared world progress, native save bytes, personal vehicle/home keys and original
+single-player save file bytes were preserved: PASS.
+Only SummerCoop.dll is active in the game's Mods directory.
+Old DLLs and the profile were backed up before replacement.
+
+SHA-256
+SummerCoop.dll
+6D2D46E05E20ACADA8A22945C2A5F282435729C7E41CE9CD8DFDC6AE2CC74E84
+SummerCoop.Core.dll
+CC754AA412F7B1277F067D0C41434F24B2C2BAC6C71FE0581AD2582EEDB09995
+SummerCoop-Setup.exe
+A76CB9B30043BAD09A33140ECD69EE63C8C42A1AD8A29B57AB75E25CADFDD6CA
+SummerCoop-Launcher.exe
+81B0C6A5F89A4882C1A5FE05516AF6B1B93F523205297C476AD2869738EC0CD2
+
+LIMITS
+No Unity physics, in-game assembly animation, visual menu rendering or FPS was measured.
+These local checks are not an identical replacement for running the real game.
+Unique native Satsuma slots recover their free part; they do not create duplicate parts
+sharing the same native database and bolts. Repeatable item prefabs use new network IDs.

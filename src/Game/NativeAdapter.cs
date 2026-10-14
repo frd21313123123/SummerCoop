@@ -17,6 +17,8 @@ namespace SummerCoop.Game
         private readonly Dictionary<string, string> originals = new Dictionary<string, string>();
         private readonly Dictionary<string, int> heldLayers = new Dictionary<string, int>();
         private NativeHandLayers handLayers;
+        private readonly List<PendingMount> pendingMounts = new List<PendingMount>();
+        private sealed class PendingMount { public FsmBinding Binding; public string State, Part; public int Frames; }
         public readonly Dictionary<string, DriveInput> Drivers = new Dictionary<string, DriveInput>();
         private readonly Dictionary<string, Dictionary<Behaviour, bool>> controllerStates = new Dictionary<string, Dictionary<Behaviour, bool>>();
         private readonly Dictionary<string, bool> boatControlStates = new Dictionary<string, bool>();
@@ -28,6 +30,7 @@ namespace SummerCoop.Game
         public string Validate(string player, Command c, World world)
         {
             if (c.Kind == CommandKind.Sleep) return null;
+            if (c.Kind == CommandKind.Spawn) return registry.Spawner.Validate(player, c, world);
             GameObject target = registry.ObjectOf(c.Target); FsmBinding fsm = registry.FsmOf(c.Target);
             if (target == null && fsm == null) return "Native target is unavailable";
             if (c.Kind == CommandKind.Take)
@@ -60,6 +63,7 @@ namespace SummerCoop.Game
             {
                 Player p = world.Players[player]; GameObject held = registry.ObjectOf(p.Held);
                 if (held == null || !NativeAssembly.Accepts(fsm.Component.FsmVariables.StringVariables, held.name)) return "Wrong part for this attachment point";
+                if (NativeAssembly.MountParent(fsm, c.Argument) == null) return "Native mount parent is unavailable";
                 if (Vector3.Distance(player == "host" ? held.transform.position : HeldPosition(p), fsm.Component.transform.position) > 0.8f) return "Move the part to the attachment point";
                 FsmGameObject db = fsm.Component.FsmVariables.FindFsmGameObject("db_ThisPart");
                 if (db != null && db.Value != null) { PlayMakerFSM data = PlayMakerFSM.FindFsmOnGameObject(db.Value, "Data"); FsmBool installed = data == null ? null : data.FsmVariables.FindFsmBool("Installed"); if (installed != null && installed.Value) return "Part is already installed"; }
@@ -109,6 +113,10 @@ namespace SummerCoop.Game
             try
             {
                 GameObject target = registry.ObjectOf(c.Target); Player actor = world.Players[player]; string heldBefore = actor.Held;
+                if (c.Kind == CommandKind.Spawn)
+                {
+                    registry.Spawner.Create(player, c, world); return;
+                }
                 if (c.Kind == CommandKind.Take)
                 {
                     originals[c.Target] = world.Entities[c.Target].Parent;
@@ -163,12 +171,15 @@ namespace SummerCoop.Game
                     if (c.Kind == CommandKind.Attach)
                     {
                         FsmGameObject part = b.Component.FsmVariables.FindFsmGameObject("Part"); if (part == null) throw new InvalidOperationException("Assembly Part variable missing");
-                        GameObject carried = registry.ObjectOf(actor.Held); Transform previousParent = carried.transform.parent;
+                        GameObject carried = registry.ObjectOf(actor.Held);
                         part.Value = carried;
                         ExecuteState(b, c.Argument);
-                        if (carried == null || carried.transform.parent == null || carried.transform.parent == previousParent
-                            || WorldRegistry.PersonalObject(carried.transform.parent.gameObject))
-                            throw new InvalidOperationException("Native assembly did not mount the held part; ownership retained");
+                        NativeAssembly.Complete(b, c.Argument, carried);
+                        bool installed;
+                        if (NativeAssembly.InstallationState(carried, out installed) && !installed)
+                            throw new InvalidOperationException("Native installation state was not committed; ownership retained");
+                        registry.RememberMount(carried);
+                        pendingMounts.Add(new PendingMount { Binding = b, State = c.Argument, Part = actor.Held, Frames = 3 });
                         originals.Remove(actor.Held); heldLayers.Remove(actor.Held); actor.Held = "";
                     }
                     else
@@ -206,6 +217,17 @@ namespace SummerCoop.Game
         }
         public void Tick(World world)
         {
+            for (int i = pendingMounts.Count - 1; i >= 0; i--)
+            {
+                PendingMount pending = pendingMounts[i]; GameObject part = registry.ObjectOf(pending.Part);
+                if (part != null && NativeAssembly.Installed(part))
+                {
+                    NativeAssembly.Complete(pending.Binding, pending.State, part); registry.RememberMount(part);
+                    registry.CaptureRelated(world, pending.Binding.Id, pending.Part);
+                }
+                if (--pending.Frames <= 0) pendingMounts.RemoveAt(i);
+            }
+            registry.EnforceMounts();
             foreach (Player p in world.Players.Values)
             {
                 if (p.Id == "host" || p.Held == "") continue;
@@ -237,7 +259,16 @@ namespace SummerCoop.Game
                 if (f.Fsm.GetState("State 1") != null) ExecuteState(new FsmBinding { Component = f }, "State 1");
             }
         }
-        public void Rollback(World before) { registry.Apply(before, true); }
+        public void Rollback(World before)
+        {
+            if (registry.Spawner != null)
+            {
+                string created = registry.Spawner.CreatedItem;
+                if (!string.IsNullOrEmpty(created) && !before.Entities.ContainsKey(created)) registry.RemoveCreatedItem(created);
+                registry.Spawner.ClearCreatedItem();
+            }
+            registry.Apply(before, true);
+        }
         public DriveInput InputFor(CarController controller, World world)
         {
             foreach (Player player in world.Players.Values)

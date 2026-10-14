@@ -23,14 +23,22 @@ namespace SummerCoop.Game
             Skin.window.margin = new RectOffset(0, 0, 0, 0);
             Skin.label = Style(null, 16, TextAnchor.UpperLeft, new RectOffset(0, 0, 3, 3)); Skin.label.wordWrap = true;
             Skin.button = Style(normal, 16, TextAnchor.MiddleCenter, new RectOffset(10, 10, 7, 7));
+            Skin.button.wordWrap = true;
             Skin.button.hover.background = Skin.button.onHover.background = hover;
             Skin.button.active.background = Skin.button.onActive.background = active;
+            Skin.button.onNormal.background = Skin.button.onFocused.background = active;
             Skin.textField = Style(field, 16, TextAnchor.MiddleLeft, new RectOffset(8, 8, 6, 6));
             Skin.textField.focused.background = hover; Skin.textArea = new GUIStyle(Skin.textField) { wordWrap = true };
             Skin.toggle = Style(normal, 16, TextAnchor.MiddleLeft, new RectOffset(10, 10, 7, 7));
             Skin.toggle.onNormal.background = Skin.toggle.onFocused.background = active;
             Skin.toggle.hover.background = Skin.toggle.onHover.background = hover;
             Skin.box = Style(panel, 16, TextAnchor.UpperLeft, new RectOffset(8, 8, 8, 8));
+            Skin.horizontalSlider = Style(field, 0, TextAnchor.MiddleCenter, new RectOffset(0, 0, 0, 0)); Skin.horizontalSlider.fixedHeight = 16;
+            Skin.horizontalSliderThumb = Style(active, 0, TextAnchor.MiddleCenter, new RectOffset(0, 0, 0, 0)); Skin.horizontalSliderThumb.fixedWidth = 18; Skin.horizontalSliderThumb.fixedHeight = 16;
+            Skin.verticalScrollbar = Style(field, 0, TextAnchor.MiddleCenter, new RectOffset(0, 0, 0, 0)); Skin.verticalScrollbar.fixedWidth = 16;
+            Skin.verticalScrollbarThumb = Style(hover, 0, TextAnchor.MiddleCenter, new RectOffset(0, 0, 0, 0)); Skin.verticalScrollbarThumb.fixedWidth = 16;
+            Skin.verticalScrollbarUpButton = new GUIStyle { fixedHeight = 0 }; Skin.verticalScrollbarDownButton = new GUIStyle { fixedHeight = 0 };
+            Skin.horizontalScrollbar = new GUIStyle { fixedHeight = 0 }; Skin.scrollView = new GUIStyle();
             Skin.settings.cursorColor = Color.white; Skin.settings.selectionColor = new Color(0.20f, 0.55f, 0.80f, 0.8f);
         }
         private Texture2D Solid(Color color)

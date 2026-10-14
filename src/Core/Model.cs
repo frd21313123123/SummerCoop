@@ -7,7 +7,7 @@ namespace SummerCoop.Core
     public static class Protocol
     {
         public const int Version = 2;
-        public const string ModVersion = "0.1.12-alpha";
+        public const string ModVersion = "0.1.13-alpha";
         public const int MaxPlayers = 4;
         public const int MaxFrame = 262144;
         public const int MaxSnapshot = 67108864;
@@ -142,7 +142,7 @@ namespace SummerCoop.Core
         }
     }
 
-    public enum CommandKind : byte { Take, Drop, EnterSeat, LeaveSeat, Interact, Bolt, Attach, Detach, Wire, Purchase, Sleep, Drive }
+    public enum CommandKind : byte { Take, Drop, EnterSeat, LeaveSeat, Interact, Bolt, Attach, Detach, Wire, Purchase, Sleep, Drive, Spawn }
     public sealed class Command
     {
         public long Sequence;

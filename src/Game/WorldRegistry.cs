@@ -32,6 +32,10 @@ namespace SummerCoop.Game
         public bool LocalControls;
         public PlayMakerFSM StockFsm;
         public ConsumableVisuals StockVisuals;
+        public string MountParent = "";
+        public Vector3 MountPosition;
+        public Quaternion MountRotation;
+        public float SandboxCondition = -1;
     }
     public sealed class FsmBinding
     {
@@ -87,6 +91,48 @@ namespace SummerCoop.Game
         private const string GlobalId = "globals";
         public bool Applying { get; private set; }
         public string SchemaHash { get; private set; }
+        public NativeSpawner Spawner { get; private set; }
+        public void PrepareSpawner() { Spawner = new NativeSpawner(this, prefabs); }
+        private readonly List<ObjectBinding> mountedObjects = new List<ObjectBinding>();
+        public void RememberMount(GameObject part)
+        {
+            string id = IdOf(part); ObjectBinding binding;
+            if (id == "" || part.transform.parent == null || !Objects.TryGetValue(id, out binding)) return;
+            if (!mountedObjects.Contains(binding)) mountedObjects.Add(binding);
+            binding.MountParent = IdOf(part.transform.parent.gameObject);
+            binding.MountPosition = part.transform.localPosition; binding.MountRotation = part.transform.localRotation;
+        }
+        public void RepairInstalledMounts()
+        {
+            int restored = 0;
+            foreach (FsmBinding binding in Fsms.Values)
+            {
+                if (binding.Component == null || binding.Component.FsmName != "Assembly") continue;
+                FsmGameObject variable = binding.Component.FsmVariables.FindFsmGameObject("Part"); GameObject part = variable == null ? null : variable.Value;
+                if (part == null || part.GetComponent<Rigidbody>() != null || !NativeAssembly.Installed(part) || !NativeAssembly.BelongsToSlot(binding, part)) continue;
+                foreach (FsmState state in binding.Component.FsmStates)
+                {
+                    if (!state.Name.StartsWith("Assemble", StringComparison.Ordinal) || NativeAssembly.MountParent(binding, state.Name) == null) continue;
+                    // A variant slot must refer to the installed part, not a second loose variant.
+                    if (!NativeAssembly.Accepts(binding.Component.FsmVariables.StringVariables, part.name)) continue;
+                    NativeAssembly.Complete(binding, state.Name, part); RememberMount(part); restored++; break;
+                }
+            }
+            if (restored > 0) Debug.Log("[SummerCoop] Native installed mounts verified: " + restored);
+        }
+        public void EnforceMounts()
+        {
+            foreach (ObjectBinding binding in mountedObjects)
+            {
+                if (binding.Object == null || binding.MountParent == "") continue;
+                // A native removal can run outside a submitted remote command.
+                // Release its constraint immediately, before the incremental scan.
+                if (binding.Object.CompareTag("PART")) { binding.MountParent = ""; continue; }
+                if (binding.Body != null) continue;
+                GameObject parent = ObjectOf(binding.MountParent); if (parent == null) continue;
+                binding.Transform.parent = parent.transform; binding.Transform.localPosition = binding.MountPosition; binding.Transform.localRotation = binding.MountRotation;
+            }
+        }
         public WorldRegistry(bool host, string gameHash)
         {
             this.host = host;
@@ -518,6 +564,14 @@ namespace SummerCoop.Game
                     if (consumed != null) { e.Properties["@stock/capacity"] = builder.N(24); e.Properties["@stock/remaining"] = builder.N(ConsumableStock.Remaining(24, consumed.Value)); }
                 }
                 e.Properties["@loose"] = builder.B(b.Body != null && (tag == "PART" || tag == "ITEM" || tag == "TOOLS"));
+                if (b.Body != null && (tag == "PART" || tag == "ITEM")) b.MountParent = "";
+                if (b.Body == null && b.MountParent != "")
+                {
+                    e.Properties["@mount/parent"] = builder.R(b.MountParent);
+                    e.Properties["@mount/position"] = builder.V(From(b.MountPosition));
+                    e.Properties["@mount/rotation"] = builder.Q(From(b.MountRotation));
+                }
+                if (b.SandboxCondition >= 0) e.Properties["@sandbox/condition"] = builder.N(b.SandboxCondition);
                 for (int i = 0; i < b.Renderers.Length; i++) if (b.Renderers[i] != null)
                 {
                     e.Properties[Property("@render/", i, "")] = builder.B(b.Renderers[i].enabled);
@@ -676,7 +730,10 @@ namespace SummerCoop.Game
                     {
                         Transform parent = e.Parent == "" ? null : ObjectOf(e.Parent) == null ? null : ObjectOf(e.Parent).transform;
                         if (e.Parent != "" && parent == null) { Entity missing; throw new ProtocolException("Missing native parent for " + e.Key + ": " + (world.Entities.TryGetValue(e.Parent, out missing) ? missing.Key : e.Parent)); }
-                        if (b.Transform.parent != parent) { b.Transform.parent = parent; motionOrderDirty = true; }
+                        bool changedParent = b.Transform.parent != parent;
+                        if (changedParent) { b.Transform.parent = parent; motionOrderDirty = true; }
+                        if (MountedPose.MustSnap(changedParent, e.Properties.ContainsKey("@body"), e.Properties.ContainsKey("@mount/parent")))
+                        { motionTargets.Remove(e.Id); motionOrderDirty = true; }
                         if (full || !motionTargets.ContainsKey(e.Id)) { b.Transform.position = To(e.Position); b.Transform.rotation = To(e.Rotation); }
                     }
                     bool activationChanged = !b.LocalControls && b.Object.activeSelf != e.Active;
@@ -687,7 +744,18 @@ namespace SummerCoop.Game
                         // Still catch a Rigidbody recreated by native Start/OnEnable.
                         DisableClientPhysics(b); continue;
                     }
-                    Atom a; if (e.Properties.TryGetValue("@scale", out a)) b.Transform.localScale = To(a.Vector);
+                    Atom a;
+                    if (e.Properties.TryGetValue("@mount/parent", out a))
+                    {
+                        if (!mountedObjects.Contains(b)) mountedObjects.Add(b);
+                        b.MountParent = a.Text;
+                        if (e.Properties.TryGetValue("@mount/position", out a)) b.MountPosition = To(a.Vector);
+                        if (e.Properties.TryGetValue("@mount/rotation", out a)) b.MountRotation = To(a.Rotation);
+                    }
+                    else b.MountParent = "";
+                    if (e.Properties.TryGetValue("@sandbox/condition", out a)) b.SandboxCondition = (float)a.Number;
+                    else b.SandboxCondition = -1;
+                    if (e.Properties.TryGetValue("@scale", out a)) b.Transform.localScale = To(a.Vector);
                     if (e.Properties.TryGetValue("@name", out a) && b.Object.name != a.Text) b.Object.name = a.Text;
                     if (!b.LocalControls && e.Properties.TryGetValue("@layer", out a))
                     {
@@ -784,6 +852,7 @@ namespace SummerCoop.Game
                     binding.StockVisuals.Reconcile(binding.Object, prefab, Math.Max(0, Math.Min(24, (int)stock.Number)));
                 }
                 if (!host && full) DisableClientPhysics();
+                EnforceMounts();
             }
             finally { applyOrder.Clear(); applyDepths.Clear(); applyVisiting.Clear(); Applying = false; }
         }
@@ -840,9 +909,51 @@ namespace SummerCoop.Game
             GameObject go = (GameObject)UnityEngine.Object.Instantiate(prefab, To(e.Position), To(e.Rotation));
             Atom name; if (e.Properties.TryGetValue("@name", out name)) go.name = name.Text;
             go.SetActive(false); Walk(go.transform, true, e.Key); Objects[e.Id].Prefab = e.Prefab;
+            RegisterCreatedFsms(go);
+        }
+        public GameObject CreateNativeItem(string prefab, GameObject source, Vector3 position)
+        {
+            bool previous = Applying; Applying = true;
+            GameObject go = null;
+            try
+            {
+                go = (GameObject)UnityEngine.Object.Instantiate(source, position, Quaternion.identity);
+                go.name = source.name.EndsWith("(Clone)", StringComparison.Ordinal) ? source.name : source.name + "(Clone)";
+                go.SetActive(false); string key = "spawn/" + Guid.NewGuid().ToString("N");
+                Walk(go.transform, true, key); Objects[Identity.Stable(key)].Prefab = prefab;
+                RegisterCreatedFsms(go); go.SetActive(true); return go;
+            }
+            catch
+            {
+                if (go != null) { string id = IdOf(go); if (id != "") RemoveCreatedItem(id); else UnityEngine.Object.DestroyImmediate(go); }
+                throw;
+            }
+            finally { Applying = previous; }
+        }
+        public void RemoveCreatedItem(string root)
+        {
+            GameObject go = ObjectOf(root); if (go == null) return;
+            HashSet<string> removed = new HashSet<string>();
+            foreach (Transform child in go.GetComponentsInChildren<Transform>(true))
+            {
+                string id = IdOf(child.gameObject); if (id == "") continue;
+                removed.Add(id); objectIds.Remove(child.gameObject); Objects.Remove(id);
+                List<FsmBinding> owned;
+                if (fsmsByObject.TryGetValue(id, out owned)) foreach (FsmBinding binding in owned)
+                { Fsms.Remove(binding.Id); fsmIds.Remove(binding.Component.Fsm); captureFsms.Remove(binding); }
+                fsmsByObject.Remove(id); motionTargets.Remove(id); motionSequences.Remove(id); motionPrevious.Remove(id);
+            }
+            captureObjects.RemoveAll(delegate(ObjectBinding binding) { return removed.Contains(binding.Id); });
+            motionObjects.RemoveAll(delegate(ObjectBinding binding) { return removed.Contains(binding.Id); });
+            mountedObjects.RemoveAll(delegate(ObjectBinding binding) { return removed.Contains(binding.Id); });
+            motionOrderDirty = true; UnityEngine.Object.DestroyImmediate(go);
+        }
+        private void RegisterCreatedFsms(GameObject go)
+        {
             // Child object IDs are derived from the host-assigned spawn root, including after reparenting.
             foreach (PlayMakerFSM f in go.GetComponentsInChildren<PlayMakerFSM>(true))
             {
+                if (PersonalObject(f.gameObject) || IdOf(f.gameObject) == "") continue;
                 if (!f.Fsm.Initialized) f.Fsm.Init(f);
                 string owner = IdOf(f.gameObject); int ordinal = Array.IndexOf(f.GetComponents<PlayMakerFSM>(), f);
                 string key = Objects[owner].Key + "|fsm/" + f.FsmName + "/" + ordinal.ToString(CultureInfo.InvariantCulture);
@@ -913,7 +1024,10 @@ namespace SummerCoop.Game
         {
             foreach (BodyPose body in frame.Bodies)
             {
-                long last; if (!Objects.ContainsKey(body.Id) || LocallyHeld(body.Id) || (motionSequences.TryGetValue(body.Id, out last) && frame.Sequence <= last)) continue;
+                ObjectBinding binding;
+                long last; if (!Objects.TryGetValue(body.Id, out binding) || LocallyHeld(body.Id)
+                    || !MountedPose.AcceptMotion(binding.Body != null, binding.MountParent != "")
+                    || (motionSequences.TryGetValue(body.Id, out last) && frame.Sequence <= last)) continue;
                 if (!motionTargets.ContainsKey(body.Id)) motionOrderDirty = true;
                 motionSequences[body.Id] = frame.Sequence; motionTargets[body.Id] = body;
             }
@@ -942,6 +1056,7 @@ namespace SummerCoop.Game
                 if ((transform.position - target).sqrMagnitude < 0.00000001f && Math.Abs(Quaternion.Dot(transform.rotation, To(pose.Rotation))) > 0.9999999f) { transform.position = target; transform.rotation = To(pose.Rotation); completedMotion.Add(id); }
             }
             if (completedMotion.Count > 0) { foreach (string id in completedMotion) motionTargets.Remove(id); motionOrder.RemoveAll(completedMotionPredicate); }
+            EnforceMounts();
         }
         private static int NativeDepth(GameObject go) { int depth = 0; if (go != null) for (Transform t = go.transform; t.parent != null; t = t.parent) depth++; return depth; }
         private bool LocallyHeld(string id)

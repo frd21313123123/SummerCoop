@@ -102,6 +102,11 @@ namespace SummerCoop.Core
             if (double.IsNaN(c.Number) || double.IsInfinity(c.Number) || !c.Vector.IsFinite) return "Invalid number";
             Player p = World.Players[id];
             if (c.Kind == CommandKind.Sleep) return null;
+            if (c.Kind == CommandKind.Spawn)
+            {
+                string spawnError = PlayerControls.ValidateSpawn(World, p, c);
+                return spawnError ?? (adapter == null ? "No adapter" : adapter.Validate(id, c, World));
+            }
             Entity e;
             if (!World.Entities.TryGetValue(c.Target, out e)) return "Unknown target";
             V3 position = e.Position; ILiveCommandPosition live = adapter as ILiveCommandPosition;

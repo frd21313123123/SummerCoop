@@ -62,6 +62,11 @@ namespace SummerCoop.Game
         private float respawnTime;
         private Rect panel = new Rect(20, 20, 500, 0);
         private CoopMenuSkin menuSkin;
+        private int menuTab;
+        private Vector2 spawnScroll;
+        private string spawnSearch = "", selectedSpawn = "";
+        private float spawnCondition = 100;
+        private readonly float[] needValues = new float[PlayerControls.Needs.Length];
         private readonly Dictionary<string, float> requests = new Dictionary<string, float>();
         private readonly PendingNativeActions sharedRequests = new PendingNativeActions();
         private readonly DeferredHandRelease<Fsm> deferredRelease = new DeferredHandRelease<Fsm>();
@@ -247,6 +252,7 @@ namespace SummerCoop.Game
             }
             if (personalKeys != null) personalKeys.RestoreGlobals();
             Registry = pendingRegistry ?? new WorldRegistry(hostPending, gameHash); pendingRegistry = null; Registry.Discover(true);
+            Registry.PrepareSpawner();
             if (toolRecovery != null) toolRecovery.Dispose();
             toolRecovery = new NativeToolRecovery(Registry);
             avatars = new AvatarView();
@@ -265,6 +271,7 @@ namespace SummerCoop.Game
                     if (personal > 0) Debug.Log("[SummerCoop] Recovered checkpoint: excluded " + personal + " local player/menu entities; shared objects retained.");
                     Registry.Apply(recovered, true); world = recovered;
                 }
+                Registry.RepairInstalledMounts();
                 Registry.Capture(world, true); world.EnableChangeTracking(); Adapter = new NativeAdapter(Registry); authority = new Authority(world, Adapter, store);
                 // Admit peers only after the native scene is ready; early listeners let clients time out during load.
                 pendingTransport = hostSteamPending ? (ITransport)new SteamTransport(true, 0, gameHash) : LanTransport.Host(hostPortPending);
@@ -663,7 +670,18 @@ namespace SummerCoop.Game
             GUILayout.Label(status);
             try
             {
-                if (Session == null && !awaitingScene)
+                if (Active)
+                {
+                    GUILayout.BeginHorizontal();
+                    if (GUILayout.Toggle(menuTab == 0, "Сессия", GUI.skin.button)) menuTab = 0;
+                    if (GUILayout.Toggle(menuTab == 1, "Игрок", GUI.skin.button) && menuTab != 1) { menuTab = 1; ReadNeeds(); }
+                    if (GUILayout.Toggle(menuTab == 2, "Спаун", GUI.skin.button)) menuTab = 2;
+                    GUILayout.EndHorizontal();
+                }
+                else menuTab = 0;
+                if (Active && menuTab == 1) DrawPlayerControls();
+                else if (Active && menuTab == 2) DrawSpawnControls();
+                else if (Session == null && !awaitingScene)
                 {
                     GUILayout.BeginHorizontal(); GUILayout.Label("Имя", GUILayout.Width(90)); username = GUILayout.TextField(username, 48); GUILayout.EndHorizontal();
                     importSave = GUILayout.Toggle(importSave, "Создать мир из копии одиночного сохранения");
@@ -707,6 +725,65 @@ namespace SummerCoop.Game
             catch (Exception e) { SetStatus(e.Message); }
             finally { GUI.enabled = true; }
             GUI.DragWindow(new Rect(0, 0, panel.width, 40));
+        }
+        private void ReadNeeds()
+        {
+            for (int i = 0; i < needValues.Length; i++) { float value; if (NativePlayerControls.Read(PlayerControls.Needs[i], out value)) needValues[i] = PlayerControls.ClampPercent(value); }
+        }
+        private void DrawPlayerControls()
+        {
+            GUILayout.Label("Потребности и эффекты вашего персонажа");
+            if (GUILayout.Button("Убрать опьянение, похмелье, ожоги и аллергию"))
+            { int count = NativePlayerControls.ClearEffects(); SetStatus("Негативные эффекты сняты (" + count + ")."); }
+            for (int i = 0; i < needValues.Length; i++)
+            {
+                GUILayout.BeginHorizontal(); GUILayout.Label(PlayerControls.NeedLabels[i], GUILayout.Width(160));
+                needValues[i] = GUILayout.HorizontalSlider(needValues[i], 0, 100);
+                GUILayout.Label(needValues[i].ToString("0") + "%", GUILayout.Width(45)); GUILayout.EndHorizontal();
+            }
+            GUILayout.Label("0% — потребность удовлетворена; 100% — максимум.");
+            if (GUILayout.Button("Применить потребности"))
+            { for (int i = 0; i < needValues.Length; i++) NativePlayerControls.SetNeed(PlayerControls.Needs[i], needValues[i]); SetStatus("Потребности изменены."); }
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Обнулить все потребности")) { NativePlayerControls.ClearNeeds(); ReadNeeds(); SetStatus("Все потребности обнулены."); }
+            if (GUILayout.Button("Прочитать текущие")) ReadNeeds();
+            GUILayout.EndHorizontal();
+        }
+        private void DrawSpawnControls()
+        {
+            GUILayout.Label("Выберите предмет. Он появится перед вашим персонажем.");
+            GUILayout.BeginHorizontal(); GUILayout.Label("Поиск", GUILayout.Width(70)); spawnSearch = GUILayout.TextField(spawnSearch, 80); GUILayout.EndHorizontal();
+            SpawnChoice selected = null;
+            spawnScroll = GUILayout.BeginScrollView(spawnScroll, GUILayout.Height(220));
+            try
+            {
+                foreach (SpawnChoice choice in Registry.Spawner.Choices)
+                {
+                    if (choice.Id == selectedSpawn) selected = choice;
+                    if (spawnSearch != "" && choice.Name.IndexOf(spawnSearch, StringComparison.OrdinalIgnoreCase) < 0) continue;
+                    if (GUILayout.Toggle(selectedSpawn == choice.Id, choice.Name, GUI.skin.button)) { selectedSpawn = choice.Id; selected = choice; }
+                }
+            }
+            finally { GUILayout.EndScrollView(); }
+            if (selected != null && selected.HasCondition)
+            {
+                GUILayout.Label("Состояние: " + spawnCondition.ToString("0") + "%"); spawnCondition = GUILayout.HorizontalSlider(spawnCondition, 0, 100);
+                GUILayout.BeginHorizontal();
+                if (GUILayout.Button("Сломанная (0%)")) spawnCondition = 0;
+                if (GUILayout.Button("Изношенная (25%)")) spawnCondition = 25;
+                if (GUILayout.Button("Новая (100%)")) spawnCondition = 100;
+                GUILayout.EndHorizontal();
+            }
+            else GUILayout.Label("У выбранного предмета нет шкалы износа.");
+            if (selected != null && selected.Unique) GUILayout.Label("У этой детали один слот в игре. Вернётся её свободный экземпляр; установленную деталь сначала нужно снять.");
+            GUI.enabled = selected != null;
+            if (GUILayout.Button(selected != null && selected.Unique ? "Создать / вернуть выбранную деталь" : "Создать выбранный предмет"))
+            {
+                SendActionPose();
+                CommandResult result = Session.Submit(new Command { Kind = CommandKind.Spawn, Target = selectedSpawn, Number = spawnCondition });
+                if (result != null && !result.Accepted) SetStatus(result.Reason); else SetStatus("Запрос на предмет отправлен.");
+            }
+            GUI.enabled = true;
         }
         private ITransport SessionTransport() { return Session == null ? null : Session.Transport; }
         public void Respawn()

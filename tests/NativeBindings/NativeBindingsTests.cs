@@ -64,6 +64,21 @@ internal static class NativeBindingsTests
             Check(NativeAssembly.Accepts(new[] { new FsmString { Name = "HandChild", Value = "wheel stock(Clone)" }, new FsmString { Name = "HandChild2", Value = "wheel rally(Clone)" } }, "wheel rally(Clone)")
                 && !NativeAssembly.Accepts(new[] { new FsmString { Name = "HandChild", Value = "starter(Clone)" } }, "alternator(Clone)"), "native alternate part slots accept their declared names and refuse unrelated parts");
             NativeHandLayers layers = NativeHandLayers.Read(new FsmStateAction[] { new SetLayer { layer = 16 } }, new FsmStateAction[] { new SetLayer { layer = 19 } });
+            FsmOwnerDefault mountedPart = new FsmOwnerDefault { OwnerOption = OwnerDefaultOption.SpecifyGameObject, GameObject = new FsmGameObject { Name = "Part" } };
+            SetParent mount = new SetParent { gameObject = mountedPart, parent = new FsmGameObject { Name = "Parent" }, resetLocalPosition = true, resetLocalRotation = true };
+            Check(object.ReferenceEquals(NativeAssembly.MountAction(new FsmStateAction[] { new SetTag(), mount }), mount)
+                && NativeAssembly.MountAction(new FsmStateAction[] { new SetParent { gameObject = new FsmOwnerDefault { OwnerOption = OwnerDefaultOption.UseOwner } } }) == null,
+                "actual SetParent selects the carried part's declared mount and ignores owner-only parenting");
+            SetPosition offset = new SetPosition { gameObject = mountedPart, vector = new FsmVector3 { UseVariable = true }, x = new FsmFloat { UseVariable = true }, y = 0.125f, z = new FsmFloat { UseVariable = true }, space = UnityEngine.Space.Self };
+            UnityEngine.Vector3 nativeOffset = NativeAssembly.LocalOffset(new FsmStateAction[] { offset }, new UnityEngine.Vector3(2, 3, 4));
+            Check(nativeOffset.x == 2 && nativeOffset.y == .125f && nativeOffset.z == 4, "real local SetPosition preserves unspecified coordinates and applies the mount's native offset");
+            offset.space = UnityEngine.Space.World;
+            nativeOffset = NativeAssembly.LocalOffset(new FsmStateAction[] { offset }, new UnityEngine.Vector3(2, 3, 4));
+            Check(nativeOffset.y == 3, "world-space SetPosition cannot corrupt a local mount offset");
+            FsmFloat hangoverStrength = new FsmFloat { Name = "HangoverStrenght", Value = 5 }, hangoverTime = new FsmFloat { Name = "TimeLeft", Value = 100 }, unrelated = new FsmFloat { Name = "PlayerMoney", Value = 3000 };
+            FsmVariables hangoverVariables = new FsmVariables { FloatVariables = new[] { hangoverStrength, hangoverTime, unrelated } };
+            Check(NativePlayerControls.ClearHangoverVariables(hangoverVariables) == 2 && hangoverStrength.Value == 0 && hangoverTime.Value == 0 && unrelated.Value == 3000,
+                "actual Hangover variables reset without changing unrelated native values");
             Check(layers.Held == 16 && layers.Dropped == 19, "real SetLayer actions define the same carry/drop collision layers used by the host");
             Check(NativeHandLayers.IsCarryHand(new[] { UninitializedState("Part picked"), UninitializedState("Drop part") })
                 && !NativeHandLayers.IsCarryHand(new[] { UninitializedState("Spanner"), UninitializedState("Look for object") })
