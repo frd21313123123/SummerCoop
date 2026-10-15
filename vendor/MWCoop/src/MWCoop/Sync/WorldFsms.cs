@@ -404,6 +404,7 @@ namespace MWCoop
         {
             PlayMakerFSM f = w.F;
             if (f == null) return true;
+            if (MscBrewing.Owns(f) || Fires.OwnsMsc(f)) { rejected.Add(f); return true; }
             bool personal;
             try { if (!Classify(f, w, out personal)) { rejected.Add(f); return true; } }
             catch { return false; }

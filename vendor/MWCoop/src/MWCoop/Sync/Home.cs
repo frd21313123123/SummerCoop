@@ -260,6 +260,9 @@ namespace MWCoop
         public static bool CausedHere(GameObject go, float window)
         {
             if (go == null) return Session.IsHost;
+            // Taking an item locally supersedes its previous mover immediately;
+            // otherwise the first use after a handoff can be silently rejected.
+            if (FireTools.Held() == go || HeldAgo(go) < .5f) return true;
             float age;
             if (Props.MovedByOther(go, out age)) return false;
             if (HeldAgo(go) < window) return true;
@@ -493,6 +496,7 @@ namespace MWCoop
 
         static void ResolveKilju()
         {
+            if (MscRuntime.Enabled) return; // MSC uses ITEMS and the host-authoritative MscBrewing adapter.
             bucket = Game.FindAny(BucketPath);
             brew = bucket != null ? Game.FsmOn(bucket, "Use") : null;
             lid = GoVar(brew, "Lid") ?? Game.FindAny("EQUIPMENTS/bucket lid(itemx)");
@@ -635,6 +639,7 @@ namespace MWCoop
             int who = r.U8();
             if (Session.IsHost) who = from.Id;
             int kind = r.U8();
+            if (kind == MscBrewing.Request || kind == MscBrewing.Snapshot) { MscBrewing.OnMessage(from, kind, r); return; }
             // Relais aux autres invites (pas les annonces destinees a l'hote seul).
             if (Session.IsHost && kind != K_FleaPlaced) Session.Broadcast(new NetWriter(Msg.Home).U8(who).Raw(raw, 1, raw.Length - 1), true, who);
             if (!PlayerSync.InGame) return;

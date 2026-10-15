@@ -52,6 +52,21 @@ namespace MWCoop
             cancels.Add(c);
         }
 
+        // A host acknowledgement can arrive before the next frame restores
+        // a cancelled local action. Finish that cancellation before replaying
+        // the confirmed native action on the same FSM (not inside OnEnter).
+        public static void Resume(PlayMakerFSM f)
+        {
+            for (int i = cancels.Count - 1; i >= 0; i--)
+            {
+                Pending pending = cancels[i]; if (pending.F != f) continue;
+                cancels.RemoveAt(i);
+                Replay.Depth++;
+                try { if (f != null && f.ActiveStateName == pending.State) Game.SetState(f, pending.Back); }
+                finally { Replay.Depth--; foreach (FsmStateAction action in pending.Off) if (action != null) action.Enabled = true; }
+            }
+        }
+
         public static void Update()
         {
             for (int i = cancels.Count - 1; i >= 0; i--)
@@ -385,16 +400,21 @@ namespace MWCoop
         class Place
         {
             public string Key; public Transform Root; public bool Barrel;
-            public PlayMakerFSM Trigger, SetFire, Grilling, Heat;
+            public PlayMakerFSM Trigger, SetFire, Grilling, Heat, SaunaTime, Steam;
             public GameObject SetFireGo; public Transform Logs;
             public FsmState DestroyState;
             public int Auth = -1, SentWoods = -1; public bool SentBurning, WasBurning;
             public float SentTemp, SentHeat, SentAt, AppliedAt = -100f, ApplyAt;
             public string ApplyState;
             public bool PendingWood; public Vector3 LogPos; public string LogId = "";
+            public readonly MscEditClock Clock = new MscEditClock();
+            public readonly Dictionary<int, int> PendingLogs = new Dictionary<int, int>();
+            public readonly HashSet<string> UsedLogs = new HashSet<string>();
+            public float SteamUntil;
         }
         static readonly Dictionary<string, Place> places = new Dictionary<string, Place>();
         static readonly HashSet<PlayMakerFSM> placeFsms = new HashSet<PlayMakerFSM>();
+        static bool mscLeftHooked;
 
         class WoodHook : ModHook
         {
@@ -416,17 +436,40 @@ namespace MWCoop
             FsmGameObject c = p.Trigger.FsmVariables.FindFsmGameObject("Collider");
             GameObject log = c != null ? c.Value : null;
             float age;
-            if (log != null && Props.MovedByOther(log, out age) && age < 3f)
+            if (log != null && Home.HeldAgo(log) >= .5f && FireTools.Held() != log && Props.MovedByOther(log, out age) && age < 3f)
             {
                 // Copie d'une buche qu'un autre a jetee : c'est chez lui qu'elle compte.
                 FireTools.Cancel(p.Trigger, st, h, "Wait");
                 if (Time.realtimeSinceStartup >= nextCancelLog) { nextCancelLog = Time.realtimeSinceStartup + 5f; Log.Info("feux : buche d'un autre joueur dans " + p.Key + ", comptee chez lui"); }
                 return true;
             }
+            if (MscRuntime.Enabled && !Session.IsHost)
+            {
+                bool pending = false;
+                if (log != null) foreach (int instance in p.PendingLogs.Values) if (instance == log.GetInstanceID()) pending = true;
+                if (!pending)
+                {
+                    int sequence = p.Clock.Publish(false);
+                    p.PendingLogs[sequence] = log != null ? log.GetInstanceID() : 0;
+                    Session.SendAll(new NetWriter(Msg.Fire).U8(8).U8(Session.LocalId).Str(p.Key).I32(sequence).Str(LogIdentity(log))
+                        .Vec(log != null ? log.transform.position : p.Trigger.transform.position), true);
+                }
+                // Keep the log until accepted, including when another player
+                // fills the last free slot while this request is in flight.
+                FireTools.Cancel(p.Trigger, st, h, "Wait"); return true;
+            }
             p.PendingWood = true;
             p.LogPos = log != null ? log.transform.position : p.Trigger.transform.position;
-            p.LogId = log != null ? Props.ItemId(log) : "";
+            p.LogId = LogIdentity(log);
+            if (p.LogId.Length > 0) p.UsedLogs.Add(p.LogId);
             return false;
+        }
+
+        static string LogIdentity(GameObject log)
+        {
+            string id = log != null ? Props.ItemId(log) : "";
+            if (id.Length == 0 && log != null && log.GetComponent<Rigidbody>() != null) id = Props.WorldKeyOf(log.GetComponent<Rigidbody>()) ?? "";
+            return id;
         }
 
         static int Woods(Place p)
@@ -503,6 +546,18 @@ namespace MWCoop
                     if (gr != null) p.Grilling = Game.FsmOn(gr.gameObject, "Logic");
                     p.Logs = root.Find("Woods");
                     p.Heat = HeatSource(root) ?? (root.parent != null ? HeatSource(root.parent) : null);
+                    Transform simulation = root.Find("Simulation"), steam = root.Find("StoveTrigger");
+                    if (simulation != null)
+                    {
+                        PlayMakerFSM time = Game.FsmOn(simulation.gameObject, "Time");
+                        if (time != null && time.FsmVariables.FindFsmFloat("StoveHeat") != null) { p.SaunaTime = time; Replay.Claim(time, Mod); }
+                    }
+                    if (steam != null && p.SaunaTime != null)
+                    {
+                        p.Steam = Game.FsmOn(steam.gameObject, "Steam");
+                        if (p.Steam != null && Replay.Claim(p.Steam, Mod))
+                            FireTools.Insert(p.Steam, p.Steam.Fsm.GetState("Check stove heat"), new SteamHook { P = p }, false);
+                    }
                 }
                 else if (f.FsmName == "Use" && f.gameObject.name == "Trigger" && f.transform.parent != null && f.transform.parent.name.StartsWith("garbage barrel"))
                 {
@@ -546,10 +601,59 @@ namespace MWCoop
 
         static int PlaceFlags(Place p) { return (Burning(p) ? 1 : 0) | (p.SetFireGo != null && p.SetFireGo.activeSelf ? 2 : 0); }
 
+        public static bool OwnsMsc(PlayMakerFSM f)
+        {
+            return f != null && (f.FsmName == "Time" && f.FsmVariables.FindFsmFloat("StoveHeat") != null && Recon.Path(f.transform) == "COTTAGE/Sauna/Stove/Simulation"
+                || f.FsmName == "Steam" && Recon.Path(f.transform) == "COTTAGE/Sauna/Stove/StoveTrigger");
+        }
+        class SteamHook : ModHook
+        {
+            public Place P;
+            public override string Module { get { return Mod; } }
+            public override void OnEnter()
+            {
+                try
+                {
+                    if (Session.Active && Replay.Depth == 0)
+                    {
+                        if (Session.IsHost)
+                        {
+                            if (FireTools.GetF(P.SaunaTime, "StoveHeat", 0) > 350)
+                                Session.SendAll(new NetWriter(Msg.Fire).U8(10).U8(0).Str(P.Key), true);
+                            nextPlaces = 0;
+                        }
+                        else Session.SendAll(new NetWriter(Msg.Fire).U8(9).U8(Session.LocalId).Str(P.Key).I32(P.Clock.Publish(false)), true);
+                    }
+                }
+                catch (System.Exception e) { Replay.HookError(e); }
+                Finish();
+            }
+        }
+        static void SteamFx(Place p, bool on)
+        {
+            if (p.Steam == null) return;
+            FsmState state = p.Steam.Fsm.GetState("Steam"); if (state == null) return;
+            foreach (FsmStateAction action in FireTools.Actions(p.Steam, state))
+            {
+                object property = SummerCoop.Game.NativeActionReader.Field(action, "targetProperty");
+                object variable = SummerCoop.Game.NativeActionReader.Field(property, "TargetObject");
+                var value = variable as FsmObject;
+                var emitter = value != null ? value.Value as ParticleEmitter : null;
+                if (emitter != null && emitter.name == "Steam") emitter.emit = on;
+            }
+            if (on) p.SteamUntil = Time.realtimeSinceStartup + FireTools.GetF(p.Steam, "SteamTime", 4f);
+        }
+        static void WritePlace(NetWriter w, Place p, bool advance)
+        {
+            w.Str(p.Key).U8(Woods(p)).U8(PlaceFlags(p)).F32(FireTools.GetF(p.Heat, "Temperature", 0f)).F32(FireTools.GetF(p.Grilling, "HeatBuildup", 0f));
+            if (MscRuntime.Enabled) w.I32(advance ? p.Clock.Publish(true) : p.Clock.HostRevision).F32(FireTools.GetF(p.SaunaTime, "StoveHeat", 0)).F32(FireTools.GetF(p.SaunaTime, "SaunaHeat", 0));
+        }
+
         static void UpdatePlaces(float now)
         {
             foreach (Place p in places.Values)
             {
+                if (p.SteamUntil > 0 && now >= p.SteamUntil) { p.SteamUntil = 0; if (p.Steam == null || p.Steam.ActiveStateName != "Steam") SteamFx(p, false); }
                 if (p.ApplyState != null && now >= p.ApplyAt) { string s = p.ApplyState; p.ApplyState = null; ApplyFireState(p, s); }
                 // Buche entree ici : annoncee (Woods deja compte par l'etat).
                 if (p.PendingWood)
@@ -557,8 +661,12 @@ namespace MWCoop
                     p.PendingWood = false;
                     int n = Woods(p);
                     Log.Info("feux : buche dans " + p.Key + " ici (" + n + " en tout)");
-                    if (Session.Active) Session.SendAll(new NetWriter(Msg.Fire).U8(1).U8(Session.LocalId).Str(p.Key).U8(n).Vec(p.LogPos).Str(p.LogId)
-                                                        .U8(p.SetFireGo != null && p.SetFireGo.activeSelf ? 1 : 0), true);
+                    if (Session.Active)
+                    {
+                        var wood = new NetWriter(Msg.Fire).U8(1).U8(Session.LocalId).Str(p.Key).U8(n).Vec(p.LogPos).Str(p.LogId).U8(p.SetFireGo != null && p.SetFireGo.activeSelf ? 1 : 0);
+                        if (MscRuntime.Enabled) wood.I32(p.Clock.Publish(true)).Bool(true).U8(Session.LocalId).I32(0);
+                        Session.SendAll(wood, true);
+                    }
                 }
                 // Allume ici par le joueur ou la logique locale (pas un rejeu d'ici) : annonce.
                 bool burning = Burning(p);
@@ -575,18 +683,18 @@ namespace MWCoop
             foreach (Place p in places.Values)
             {
                 if (p.Root == null) continue;
-                int auth = FireTools.Nearest(p.Root.position, 15f, p.Auth);
+                int auth = MscRuntime.Enabled ? 0 : FireTools.Nearest(p.Root.position, 15f, p.Auth);
                 if (auth != p.Auth) { p.Auth = auth; p.SentWoods = -1; }
                 if (auth != Session.LocalId) continue;
                 int woods = Woods(p);
                 bool burning = Burning(p);
                 float temp = FireTools.GetF(p.Heat, "Temperature", 0f), heat = FireTools.GetF(p.Grilling, "HeatBuildup", 0f);
                 bool changed = woods != p.SentWoods || burning != p.SentBurning || Mathf.Abs(temp - p.SentTemp) > 2f || Mathf.Abs(heat - p.SentHeat) > 8f
-                               || (burning || woods > 0) && now - p.SentAt > 15f;
+                               || p.SaunaTime != null || (burning || woods > 0) && now - p.SentAt > 15f;
                 if (!changed) continue;
                 p.SentWoods = woods; p.SentBurning = burning; p.SentTemp = temp; p.SentHeat = heat; p.SentAt = now;
                 if (w == null) w = new NetWriter(Msg.Fire).U8(2).U8(Session.LocalId);
-                w.Str(p.Key).U8(woods).U8(PlaceFlags(p)).F32(temp).F32(heat);
+                WritePlace(w, p, true);
                 if (w.Length > 900) { Session.SendAll(w, true); w = null; }
             }
             if (w != null) Session.SendAll(w, true);
@@ -598,19 +706,28 @@ namespace MWCoop
             foreach (Place p in places.Values)
             {
                 if (w == null) w = new NetWriter(Msg.Fire).U8(2).U8(Session.LocalId);
-                w.Str(p.Key).U8(Woods(p)).U8(PlaceFlags(p)).F32(FireTools.GetF(p.Heat, "Temperature", 0f)).F32(FireTools.GetF(p.Grilling, "HeatBuildup", 0f));
+                WritePlace(w, p, true);
                 if (w.Length > 900) { FireTools.SendTo(to, w); w = null; }
             }
             if (w != null) FireTools.SendTo(to, w);
         }
 
-        static void OnWoodMsg(int who, string key, int woods, Vector3 pos, string logId, bool setFireOn)
+        static void OnWoodMsg(int who, string key, int woods, Vector3 pos, string logId, bool setFireOn, int revision, bool accepted, int actor, int sequence)
         {
             Place p;
             if (!places.TryGetValue(key, out p)) { Warn("foyer " + key + " introuvable ici"); return; }
-            SetWoods(p, woods);
-            if (setFireOn && p.SetFireGo != null && !p.SetFireGo.activeSelf) p.SetFireGo.SetActive(true);
+            if (MscRuntime.Enabled)
+            {
+                if (actor == Session.LocalId) p.PendingLogs.Remove(sequence);
+                if (Session.IsHost || who != 0) return;
+            }
+            if (!MscRuntime.Enabled || p.Clock.AcceptSnapshot(revision))
+            {
+                SetWoods(p, woods);
+                if (setFireOn && p.SetFireGo != null && !p.SetFireGo.activeSelf) p.SetFireGo.SetActive(true);
+            }
             // Sa buche : par son ID (suivie par Props), sinon une buche sans ID tout pres.
+            if (!accepted) return;
             GameObject log = logId.Length > 0 ? Props.ObjectOf(logId) : null;
             if (log == null)
             {
@@ -626,10 +743,11 @@ namespace MWCoop
             Log.Info("feux de #" + who + " : buche dans " + key + " (" + woods + " en tout)" + (log != null ? ", sa copie detruite ici" : ""));
         }
 
-        static void OnPlace(int who, string key, int woods, int flags, float temp, float heat)
+        static void OnPlace(int who, string key, int woods, int flags, float temp, float heat, int revision, float stove, float sauna)
         {
             Place p;
             if (!places.TryGetValue(key, out p)) { Warn("foyer " + key + " introuvable ici"); return; }
+            if (MscRuntime.Enabled && (Session.IsHost || who != 0 || !p.Clock.AcceptSnapshot(revision))) return;
             if (p.Auth == Session.LocalId) return;   // c'est nous qui faisons reference pour ce foyer
             bool burning = (flags & 1) != 0;
             if (Woods(p) != woods) SetWoods(p, woods);
@@ -644,6 +762,22 @@ namespace MWCoop
             }
             if (p.Heat != null && Mathf.Abs(FireTools.GetF(p.Heat, "Temperature", temp) - temp) > 2f) FireTools.SetF(p.Heat, "Temperature", temp);
             if (p.Grilling != null && Mathf.Abs(FireTools.GetF(p.Grilling, "HeatBuildup", heat) - heat) > 8f) FireTools.SetF(p.Grilling, "HeatBuildup", heat);
+            if (p.SaunaTime != null) { FireTools.SetF(p.SaunaTime, "StoveHeat", stove); FireTools.SetF(p.SaunaTime, "SaunaHeat", sauna); }
+        }
+
+        static void AddWoodRequest(int who, string key, int sequence, string id, Vector3 position)
+        {
+            Place p; if (!Session.IsHost || !places.TryGetValue(key, out p) || !p.Clock.AcceptRequest(who, sequence)) return;
+            bool accepted = Woods(p) < 4 && (id.Length == 0 || p.UsedLogs.Add(id));
+            if (accepted)
+            {
+                SetWoods(p, Woods(p) + 1);
+                if (p.SetFireGo != null) p.SetFireGo.SetActive(true);
+                GameObject log = id.Length > 0 ? Props.ObjectOf(id) : null;
+                if (log != null) Object.Destroy(log);
+            }
+            Session.SendAll(new NetWriter(Msg.Fire).U8(1).U8(0).Str(key).U8(Woods(p)).Vec(position).Str(id)
+                .U8(p.SetFireGo != null && p.SetFireGo.activeSelf ? 1 : 0).I32(p.Clock.Publish(true)).Bool(accepted).U8(who).I32(sequence), true);
         }
 
         static void OnLight(int who, string key)
@@ -762,6 +896,7 @@ namespace MWCoop
         // ================================================================ cycle
         public static void OnLevelLoaded()
         {
+            if (!mscLeftHooked) { mscLeftHooked = true; Session.PlayerLeft += player => { foreach (Place p in places.Values) p.Clock.ForgetActor(player.Id); }; }
             FireTools.OnLevelLoaded();
             ruled.Clear(); ruledFsms.Clear(); places.Clear(); placeFsms.Clear(); flags.Clear(); flagGos.Clear(); fresh.Clear();
             levels.Clear(); due.Clear();
@@ -822,23 +957,41 @@ namespace MWCoop
             byte[] raw = Session.IsHost ? r.Rest() : null;
             int kind = r.U8();
             int who = r.U8();
-            if (Session.IsHost)
+            if (Session.IsHost && !(MscRuntime.Enabled && (kind == 8 || kind == 9)))
             {
                 who = from.Id;
                 Session.Broadcast(new NetWriter(Msg.Fire).U8(kind).U8(who).Raw(raw, 2, raw.Length - 2), true, who);
             }
             if (loadedAt < 0) return;
+            if (Session.IsHost && (kind == 8 || kind == 9)) who = from.Id;
             switch (kind)
             {
-                case 1: { string k = r.Str(); int n = r.U8(); Vector3 pos = r.Vec(); string id = r.Str(); bool on = r.More && r.U8() != 0; OnWoodMsg(who, k, n, pos, id, on); break; }
+                case 1: { string k = r.Str(); int n = r.U8(); Vector3 pos = r.Vec(); string id = r.Str(); bool on = r.More && r.U8() != 0;
+                    int rev = MscRuntime.Enabled ? r.I32() : 0; bool accepted = !MscRuntime.Enabled || r.Bool(); int actor = MscRuntime.Enabled ? r.U8() : who, seq = MscRuntime.Enabled ? r.I32() : 0;
+                    OnWoodMsg(who, k, n, pos, id, on, rev, accepted, actor, seq); break; }
                 case 2:
-                    while (r.More) { string k = r.Str(); int n = r.U8(); int fl = r.U8(); float t = r.F32(), h = r.F32(); OnPlace(who, k, n, fl, t, h); }
+                    while (r.More) { string k = r.Str(); int n = r.U8(); int fl = r.U8(); float t = r.F32(), h = r.F32();
+                        int rev = MscRuntime.Enabled ? r.I32() : 0; float stove = MscRuntime.Enabled ? r.F32() : 0, sauna = MscRuntime.Enabled ? r.F32() : 0;
+                        OnPlace(who, k, n, fl, t, h, rev, stove, sauna); }
                     break;
                 case 3: { string k = r.Str(); string s = r.Str(); bool snap = r.More && r.U8() != 0; OnRuledState(who, k, s, snap); break; }
                 case 4: { string k = r.Str(); string ev = r.Str(); OnRequest(who, k, ev); break; }
                 case 5: { string k = r.Str(); bool on = r.U8() != 0; OnFlag(who, k, on); break; }
                 case 6: { string k = r.Str(); r.U8(); OnFlagRequest(who, k); break; }
                 case 7: { string k = r.Str(); OnLight(who, k); break; }
+                case 8: { string k = r.Str(); int seq = r.I32(); string id = r.Str(); Vector3 pos = r.Vec(); AddWoodRequest(who, k, seq, id, pos); break; }
+                case 9:
+                    {
+                        string k = r.Str(); int seq = r.I32(); Place p;
+                        if (Session.IsHost && places.TryGetValue(k, out p) && p.SaunaTime != null && p.Clock.AcceptRequest(who, seq))
+                        {
+                            float temperature = FireTools.GetF(p.SaunaTime, "StoveHeat", 0);
+                            FireTools.SetF(p.SaunaTime, "StoveHeat", Mathf.Max(0, temperature - 2)); nextPlaces = 0;
+                            if (temperature > 350) { SteamFx(p, true); Session.Broadcast(new NetWriter(Msg.Fire).U8(10).U8(0).Str(k), true, who); }
+                        }
+                        break;
+                    }
+                case 10: { string k = r.Str(); Place p; if (!Session.IsHost && who == 0 && places.TryGetValue(k, out p)) SteamFx(p, true); break; }
             }
         }
 

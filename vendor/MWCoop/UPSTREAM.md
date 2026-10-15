@@ -14,7 +14,13 @@ their native Tightness/Bolted totals, completed wiring connections and numbered
 alternator belts. These changes introduced network version 1042 (SummerCoop 0.3.0).
 SummerCoop 0.3.1 enables MSC's native CharacterMotor moving supports, follows
 standing riders in vehicle-local coordinates and excludes their own support
-from run-over detection. The current network version is 1043; all peers must
-update both mod DLLs together.
+from run-over detection. That release introduced network version 1043.
+
+SummerCoop 0.4.0 adds MSC's ITEMS equipment root, a host-authoritative native
+kilju adapter and canonical fireplace fuel updates. Island sauna heat and steam
+use MSC's Simulation/Time variables; coffee uses the MSC item locations.
+The current network version 1044 extends the fireplace format and adds Home kinds 8/9.
+All peers must update both mod DLLs together.
+The older workshop and moving-surface result files describe their own versions.
 
 No LICENSE file was present in the imported revision. The repository's MIT license does not relicense upstream code or assets. See the original README for third-party asset attribution. No upstream binaries or game assemblies were imported.

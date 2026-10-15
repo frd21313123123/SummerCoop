@@ -10,6 +10,7 @@ namespace MWCoop
         int local;
         public int HostRevision { get; private set; }
         public int Publish(bool host) { return host ? ++HostRevision : ++local; }
+        public void ForgetActor(int actor) { actors.Remove(actor); }
         public bool AcceptRequest(int actor, int revision)
         {
             int previous; actors.TryGetValue(actor, out previous);

@@ -308,7 +308,7 @@ namespace MWCoop
             var found = new List<Level>();
             foreach (PlayMakerFSM f in Object.FindObjectsOfType<PlayMakerFSM>())
             {
-                if (levelFsms.Contains(f) || f.transform.root.name != "EQUIPMENTS") continue;
+                if (levelFsms.Contains(f) || (f.transform.root.name != "EQUIPMENTS" && f.transform.root.name != "ITEMS")) continue;
                 string[] vars = null;
                 if (f.gameObject.name == "coffee pan(itemx)" && f.FsmName == "Data") vars = PanVars;
                 else if (f.gameObject.name == "coffee cup(itemx)" && f.FsmName == "Use") vars = CupVars;

@@ -1,4 +1,4 @@
-# Архитектура SummerCoop 0.3.1
+# Архитектура SummerCoop 0.4.0
 
 Основой служит MWCoop 0.95.3. Управляемый движок находится в `vendor/MWCoop/src/MWCoop`, граница с My Summer Car — в `src/MSC`. MSCLoader загружает `SummerCoop.dll`, которая создаёт MWCoop.Core. Прежний CoopRuntime в эту сборку не входит.
 

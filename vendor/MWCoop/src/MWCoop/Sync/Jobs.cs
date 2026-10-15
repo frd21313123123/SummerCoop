@@ -110,7 +110,7 @@ namespace MWCoop
         // Commande de vehicule sans sauvegarde : automate d'interaction, pas la logique de conduite.
         static bool IsControl(PlayMakerFSM f)
         {
-            if (MscParts.Owns(f) || MscTuning.Owns(f)) return false;
+            if (MscParts.Owns(f) || MscTuning.Owns(f) || MscBrewing.Owns(f) || Fires.OwnsMsc(f)) return false;
             if (!ControlFsms.Contains(f.FsmName) || CarDoors.Tracks(f)) return false;
             if (CarDoorsLike(f)) return false;                          // portieres, capots, hayons : CarDoors (meme pas encore vus)
             if (f.FsmName == "Screw" && Parts.IsBolt(f)) return false;   // vis des pieces : Parts

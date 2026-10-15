@@ -29,7 +29,7 @@ namespace MWCoop.Net
     // Session coop : l'hote fait autorite et relaie tout. [Coop] Mode=solo|hote|invite.
     public static class Session
     {
-        public const int NetVersion = 1043;   // MSC 0.3.1: vehicle-relative standing player poses.
+        public const int NetVersion = 1044;   // MSC 0.4.0: canonical kiln fuel/heat and native brewing.
         static readonly HashSet<int> authenticated = new HashSet<int>();
         public static Transport T;
         public static bool Active, IsHost;

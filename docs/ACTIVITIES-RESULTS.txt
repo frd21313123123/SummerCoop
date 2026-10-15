@@ -1,0 +1,98 @@
+SummerCoop 0.4.0 - native activities verification
+Recorded: 2026-10-15 13:04:23 +05:00
+Run: msc-activities-03
+
+host SHA256 0D15D9899149408FF36301D6FC4C4023331F91D5A0619351ACEAD09B247FF482  SummerCoop.dll
+host SHA256 C2E7847154A458EC6BB2387207C87A4A760624616367BA3B35CDB00206550936  References/SummerCoop.Core.dll
+
+host report:
+Engine=MWCoop 0.95.3 / MSC adapter 1
+Level=GAME
+ModVersion=0.4.0
+NetVersion=1044
+Ready=False
+Players=1
+SaveReceived=False
+Activity=ingredients;Pass=True;Sugar=2;Yeast=1
+Activity=wood-split;Pass=True;Pieces=2
+Activity=water;Pass=True;Water=4.003
+Activity=stove-wood;Pass=True;Woods=2;Visible=2
+Activity=lid-mounted;Pass=True;LidOn=True;Parent=PivotLid
+Activity=lid-removed;Pass=True;LidOn=False
+Activity=stove-concurrent;Pass=True;Woods=4;Visible=4
+Activity=stove-fire;Pass=True;State=Burn
+Activity=stove-full;Pass=True;Woods=4;UnusedLogs=2
+Activity=sauna-steam;Pass=True;StoveHeat=403.44;SteamVisual=True;SteamState=Idle
+Activity=sauna-heat;Pass=True;StoveHeat=406.12;SaunaHeat=67.66
+Activity=steam-personal;Pass=True;LocalState=Idle;BlurBefore=False;BlurAfter=False;StressBefore=1.599;StressAfter=2.799
+Activity=kilju-finished;Pass=True;Finished=True;Alcohol=0.0305;Time=61
+Activity=wood-burned;Pass=True;Woods=3;Visible=3
+Activity=kilju-bottled;Pass=True;ContainsKilju=True;Alcohol=0.0305;Water=2.503
+Activity=stove-capacity-race;Pass=True;Woods=4;UnusedLogs=1
+Activity=grill-opened;Pass=True;Sausages=4
+Activity=grill-cooked;Pass=True;Sausages=4;Correct=4
+Activity=grill-burnt;Pass=True;Sausages=4;Correct=4
+Activity=wood-cycle;Pass=True;Woods=3;Visible=3
+Activity=coffee-brewed;Pass=True;Coffee=0.298;Ground=3.214;Caffeine=0.299
+Activity=coffee-poured;Pass=True;Coffee=0.300;Caffeine=0.432
+Activity=coffee-drunk;Pass=True;Coffee=0.0000
+Activity=native-save-kilju;Pass=True;Values=18;Mismatches=0
+Activity=bucket-empty;Pass=True;Water=0;Sugar=0;Finished=False
+Activity=native-save-coffee;Pass=True;Values=5;Mismatches=0
+FrameP95ms=14.93
+FrameMaxms=12286.71
+client SHA256 0D15D9899149408FF36301D6FC4C4023331F91D5A0619351ACEAD09B247FF482  SummerCoop.dll
+client SHA256 C2E7847154A458EC6BB2387207C87A4A760624616367BA3B35CDB00206550936  References/SummerCoop.Core.dll
+
+client report:
+Engine=MWCoop 0.95.3 / MSC adapter 1
+Level=GAME
+ModVersion=0.4.0
+NetVersion=1044
+Ready=True
+Players=2
+SaveReceived=True
+Activity=ingredients;Pass=True;Sugar=2;Yeast=1
+Activity=wood-split;Pass=True;Pieces=2
+Activity=water;Pass=True;Water=4.003
+Activity=stove-wood;Pass=True;Woods=2;Visible=2
+Activity=lid-mounted;Pass=True;LidOn=True;Parent=PivotLid
+Activity=lid-removed;Pass=True;LidOn=False
+Activity=stove-concurrent;Pass=True;Woods=4;Visible=4
+Activity=stove-fire;Pass=True;State=Burn
+Activity=stove-full;Pass=True;Woods=4;UnusedLogs=2
+Activity=sauna-steam;Pass=True;StoveHeat=403.45;SteamVisual=True;SteamState=Steam
+Activity=sauna-heat;Pass=True;StoveHeat=406.05;SaunaHeat=67.65
+Activity=kilju-finished;Pass=True;Finished=True;Alcohol=0.0305;Time=61
+Activity=wood-burned;Pass=True;Woods=3;Visible=3
+Activity=kilju-bottled;Pass=True;ContainsKilju=True;Alcohol=0.0305;Water=2.503
+Activity=stove-capacity-race;Pass=True;Woods=4;UnusedLogs=1
+Activity=grill-opened;Pass=True;Sausages=4
+Activity=grill-cooked;Pass=True;Sausages=4;Correct=4
+Activity=grill-burnt;Pass=True;Sausages=4;Correct=4
+Activity=wood-cycle;Pass=True;Woods=3;Visible=3
+Activity=coffee-brewed;Pass=True;Coffee=0.278;Ground=3.402;Caffeine=0.278
+Activity=coffee-poured;Pass=True;Coffee=0.300;Caffeine=0.432
+Activity=coffee-drunk;Pass=True;Coffee=0.0000
+Activity=native-save-kilju;Pass=True;Values=18;Mismatches=0
+Activity=bucket-empty;Pass=True;Water=0;Sugar=0;Finished=False
+Activity=native-save-coffee;Pass=True;Values=5;Mismatches=0
+FrameP95ms=15.88
+FrameMaxms=12098.89
+
+Original single-player save files checked: 5; changed: 0
+
+Automated checks (121 component regressions are not 121 native MWCoop gameplay tests):
+build/test-results.txt: ALL 121 TESTS PASSED
+build/msc-tests/test-results.txt: ALL 17 MSC ADAPTER TESTS PASSED
+build/mwcoop-network-tests/test-results.txt: ALL 12 MSC ADAPTER TESTS PASSED
+build/launcher-tests/test-results.txt: ALL 19 LAUNCHER TESTS PASSED | PASS launcher GUI: settings, modes, validation, invitation callbacks, startup/forwarded invites, exact lobby selection, dismissal, failed launch retention and minimum-size layouts
+build/installer-tests/test-results.txt: ALL 12 INSTALLER TESTS PASSED
+
+Fixture limits: native FSM input/actions; items are spawned natively on both peers. No mouse or store-purchase automation.
+BrewTime=20 and BurnTime=30 in the fixture only; sauna is preheated; sausage Grilled/Burnt transitions are invoked directly.
+Native fermentation, fuel consumption, coffee and pouring then run in the game. No full grill thermal-curve test.
+ES2 tags are read back in the same process; no separate restart/reload, Jokke payment, fish-trap or full-gameplay test.
+Steam-personal checks the host local steam FSM and camera effect; natural stress drift is reported, not treated as a remote effect.
+The host records after the guest finishes; Ready=False/Players=1 then means the guest already quit.
+No two-account Steam/WAN test or 60 FPS guarantee. See ACTIVITIES.md for reproduction and scope.

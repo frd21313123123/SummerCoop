@@ -37,7 +37,7 @@ class MscAdapterTests
         public void Forget(object value) { }
         public void Close() { packets.Clear(); }
     }
-    static Transport Create() { return new Transport { NetVersion = 1043 }; }
+    static Transport Create() { return new Transport { NetVersion = 1044 }; }
     static int Main(string[] args)
     {
         try
@@ -83,6 +83,8 @@ class MscAdapterTests
                 var lateJoiner = new MWCoop.MscEditClock();
                 Assert(lateJoiner.AcceptSnapshot(hostRevision), "Late joiner rejected the current host snapshot");
                 Assert(!hostClock.AcceptRequest(2, 0) && !lateJoiner.AcceptSnapshot(0), "Unversioned edits were accepted");
+                hostClock.ForgetActor(2);
+                Assert(hostClock.AcceptRequest(2, 1) && hostClock.HostRevision == hostRevision, "A rejoining player's reset request sequence was rejected or changed the host revision");
             });
             Test("MSC policy excludes winter terrain, MWC shops and native DXR while retaining major coop modules", delegate {
                 foreach (Type type in new[] { typeof(MWCoop.Clearing), typeof(MWCoop.Kauppa), typeof(MWCoop.Frost), typeof(MWCoop.RayTracing) }) Assert(!MWCoop.MscRuntime.Supports(type), "Winter-only module enabled: " + type);
@@ -111,6 +113,25 @@ class MscAdapterTests
                 writer = new NetWriter(Msg.PlayerState); new SupportPose().Write(writer); bytes = writer.ToArray();
                 decoded = SupportPose.Read(new NetReader(bytes, 1, bytes.Length - 1));
                 Assert(!decoded.Attached && decoded.VehicleIndex == -1 && bytes.Length == 2, "Leaving a platform retained the old vehicle or coordinates");
+            });
+            Test("kilju snapshots retain persistent recipe values, fermentation progress and lid state", delegate {
+                var recipe = new BrewState { Sugar = 6, Yeast = 1, Water = 30, Alcohol = .14f, Sweetness = .2f, Time = 681, Vinegar = .0004f, Finished = true, LidOn = true };
+                var writer = new NetWriter(Msg.Home); recipe.Write(writer); byte[] bytes = writer.ToArray();
+                var reader = new NetReader(bytes, 1, bytes.Length - 1); BrewState decoded = BrewState.Read(reader);
+                Assert(!reader.More && recipe.Equals(decoded), "Persistent kilju contents changed on the wire");
+                writer = new NetWriter(Msg.Home); new BrewState().Write(writer); bytes = writer.ToArray();
+                decoded = BrewState.Read(new NetReader(bytes, 1, bytes.Length - 1));
+                Assert(decoded.Water == 0 && decoded.Sugar == 0 && !decoded.Finished && !decoded.LidOn, "An emptied bucket retained the previous recipe");
+            });
+            Test("invalid kilju quantities, nonfinite quality, truncated frames and invalid flags are rejected", delegate {
+                foreach (float value in new[] { float.NaN, float.PositiveInfinity, -1, 100 })
+                    Reject(delegate { new BrewState { Water = value }.Write(new NetWriter(Msg.Home)); });
+                Reject(delegate { new BrewState { Alcohol = .5f }.Write(new NetWriter(Msg.Home)); });
+                Reject(delegate { BrewState.Read(new NetReader(new byte[27], 0, 27)); });
+                byte[] bad = new byte[30]; bad[28] = 2;
+                Reject(delegate { BrewState.Read(new NetReader(bad, 0, bad.Length)); });
+                bad = new byte[30]; Buffer.BlockCopy(BitConverter.GetBytes(float.NaN), 0, bad, 0, 4);
+                Reject(delegate { BrewState.Read(new NetReader(bad, 0, bad.Length)); });
             });
             Test("invalid, truncated and excessive player support poses are refused before applying an avatar", delegate {
                 Reject(delegate { new SupportPose { Vehicle = 256 }.Write(new NetWriter(Msg.PlayerState)); });

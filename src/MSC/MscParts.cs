@@ -43,7 +43,7 @@ namespace MWCoop
         public static void Reset() { parts.Clear(); ids.Clear(); bindings.Clear(); byFsm.Clear(); hooked.Clear(); pending.Clear(); pendingBolts.Clear(); completedBolts.Clear(); totalClocks.Clear(); repairs.Clear(); remote.Clear(); nextScan = nextBoltSnapshot = 0; localBoltRevision = hostBoltRevision = 0; }
         public static bool Owns(PlayMakerFSM f)
         {
-            return f != null && (f.FsmName == "Assembly" || f.FsmName == "Removal" || f.FsmName == "Assemble" && Recon.Path(f.transform).IndexOf("Wiring", StringComparison.OrdinalIgnoreCase) >= 0 || IsBolt(f));
+            return f != null && !MscBrewing.Owns(f) && (f.FsmName == "Assembly" || f.FsmName == "Removal" || f.FsmName == "Assemble" && Recon.Path(f.transform).IndexOf("Wiring", StringComparison.OrdinalIgnoreCase) >= 0 || IsBolt(f));
         }
         public static bool IsBolt(PlayMakerFSM f) { return f != null && f.FsmName == "Screw" && f.FsmVariables.FindFsmInt("Stage") != null; }
         public static string IdOf(GameObject go)
