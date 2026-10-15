@@ -13,7 +13,7 @@ namespace SummerCoop.Launcher
         private Panel pageLobby, pageGuide, pageNotes;
         private MwGlassPanel rail;
         private Label pageTitle, pageSubtitle, gameFooter;
-        private MwButton netSteam, netLan, hostTile, joinTile, navLobby, navGuide, navNotes, themeButton;
+        private MwButton netSteam, netLan, hostTile, joinTile, navLobby, navGuide, navNotes, themeButton, btnLoader;
         private readonly Dictionary<Control, RectangleF> viewBounds = new Dictionary<Control, RectangleF>();
         private readonly Dictionary<Control, float> viewFonts = new Dictionary<Control, float>();
         private bool layingOut;
@@ -183,7 +183,8 @@ namespace SummerCoop.Launcher
             FlowLayoutPanel actions=new FlowLayoutPanel{AutoSize=true,Dock=DockStyle.Fill,BackColor=Color.Transparent,Margin=Padding.Empty};
             btnPlay=MakeButton("Играть",true);btnPlay.MinimumSize=new Size(220,48);((MwButton)btnPlay).IconName="play";btnPlay.Click+=delegate{Play();};
             btnInstall=MakeButton("Установить мод",false);btnInstall.MinimumSize=new Size(180,48);((MwButton)btnInstall).IconName="download";btnInstall.Click+=delegate{InstallMod();};
-            actions.Controls.Add(btnPlay);actions.Controls.Add(btnInstall);Add(card,actions);
+            btnLoader=(MwButton)MakeButton("Скачать MSCLoader",false);btnLoader.MinimumSize=new Size(200,48);btnLoader.IconName="download";btnLoader.Click+=delegate{OpenUrl(LoaderDownloadUrl);};btnLoader.Visible=false;
+            actions.Controls.Add(btnPlay);actions.Controls.Add(btnInstall);actions.Controls.Add(btnLoader);Add(card,actions);
         }
         private void SelectNetwork(bool steam)
         {

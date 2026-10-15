@@ -13,6 +13,8 @@ namespace SummerCoop.Launcher
 {
     internal sealed partial class MainForm : Form
     {
+        // Official MSCLoader download page, offered when the loader is missing.
+        internal const string LoaderDownloadUrl = "https://github.com/piotrulos/MSCModLoader/releases";
         private readonly LauncherSettings settings;
         private readonly string configPath;
         private readonly StringBuilder activity = new StringBuilder();
@@ -105,6 +107,7 @@ namespace SummerCoop.Launcher
         {
             if (disposing)
             {
+                ModPayload.ReleaseShared();
                 steamTimer.Stop();
                 steamTimer.Dispose();
                 if (steamClient != null) { steamClient.Invitation -= ReceiveInvitation; steamClient.Dispose(); }
@@ -191,13 +194,14 @@ namespace SummerCoop.Launcher
             bool found = HasGameFile(game, "mysummercar.exe");
             bool loader = found && HasGameFile(game, @"mysummercar_Data\Managed\MSCLoader.dll");
             lblGame.Text = !found ? "Выберите папку My Summer Car в настройках." :
-                !loader ? "Установите MSCLoader в папку игры." : "My Summer Car найдена · MSCLoader установлен";
+                !loader ? "Установите MSCLoader в папку игры — кнопка «Скачать MSCLoader» ниже." : "My Summer Car найдена · MSCLoader установлен";
             lblGame.ForeColor = loader ? MwStyle.Ok : MwStyle.Warn;
             bool installed = found && HasGameFile(game, @"Mods\SummerCoop.dll") &&
                 HasGameFile(game, @"Mods\References\SummerCoop.Core.dll");
-            lblMod.Text = installed ? "Мод установлен. Для совместной игры используйте одну сборку." : "Установите мод перед первым запуском.";
+            lblMod.Text = installed ? "Мод установлен. Перед запуском лаунчер проверит его версию." : "Мод не установлен — лаунчер установит его автоматически при запуске.";
             btnInstall.Text = installed ? "Обновить мод" : "Установить мод";
             btnInstall.Enabled = !busy && loader;
+            if (btnLoader != null) btnLoader.Visible = found && !loader;
             if (gameFooter != null) gameFooter.Text = found ? "✓ My Summer Car" : "My Summer Car · выберите папку";
         }
 
@@ -282,9 +286,10 @@ namespace SummerCoop.Launcher
             FocusLauncher();
         }
 
-        private void DismissInvitation()
+        private void DismissInvitation() { DismissInvitation(cmbInvites.SelectedItem as SteamInvitation); }
+
+        private void DismissInvitation(SteamInvitation invitation)
         {
-            SteamInvitation invitation = cmbInvites.SelectedItem as SteamInvitation;
             if (invitation == null) return;
             dismissedInvites[invitation.LobbyId] = DateTime.UtcNow;
             if (dismissedInvites.Count > 64)
@@ -307,11 +312,19 @@ namespace SummerCoop.Launcher
             cmbMode.SelectedIndex = (int)ConnectionMode.JoinSteam;
             cmbMethod.SelectedIndex = (int)LaunchMethod.Steam;
             txtLobby.Text = invitation.LobbyId.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            Play();
-            if (lastLaunchSucceeded && !IsDisposed) DismissInvitation();
+            // The launch may install or update the mod first, so the accepted
+            // invite is dismissed only after the game actually started.
+            PlayAccepted(delegate { if (!IsDisposed) DismissInvitation(invitation); });
         }
 
         private void Play()
+        {
+            PlayAccepted(null);
+        }
+
+        // onLaunched runs only after the game actually started, so accepted
+        // Steam invites stay visible while the mod is being installed.
+        private void PlayAccepted(Action onLaunched)
         {
             lastLaunchSucceeded = false;
             if (busy) { AppendHome("Дождитесь завершения установки."); return; }
@@ -333,14 +346,18 @@ namespace SummerCoop.Launcher
             }
             try { new Installer(new InstallerServices()).ValidateGame(settings.GamePath); }
             catch (Exception e) { AppendHome(e.Message); ShowPage(pageSettings); return; }
-            if (!File.Exists(Path.Combine(settings.GamePath, @"Mods\SummerCoop.dll")) ||
-                !File.Exists(Path.Combine(settings.GamePath, @"Mods\References\SummerCoop.Core.dll")))
-            {
-                AppendHome("Нажмите «Установить мод» перед запуском.");
-                btnInstall.Focus();
-                return;
-            }
             if (!SaveUIToSettings(true)) return;
+            // Setup is built into the launcher: the embedded pair is compared
+            // with the installed DLLs and the game starts only afterwards.
+            StartInstall(false, delegate
+            {
+                LaunchGame();
+                if (lastLaunchSucceeded && onLaunched != null) onLaunched();
+            });
+        }
+
+        private void LaunchGame()
+        {
             List<string> args = GameArgs.Build(settings);
             try
             {
@@ -388,7 +405,6 @@ namespace SummerCoop.Launcher
             if (busy) return;
             SaveUIToSettings(false);
             string game = settings.GamePath, profile = settings.ProfilePath;
-            bool disable = settings.DisableOtherMods;
             if (game.Length == 0 || profile.Length == 0)
             {
                 AppendHome("Укажите папку игры и сохранение мира в настройках.");
@@ -396,15 +412,28 @@ namespace SummerCoop.Launcher
                 return;
             }
             if (!SaveUIToSettings(true)) return;
+            StartInstall(true, null);
+        }
+
+        // Runs the shared installer in the background. Automatic launches pass
+        // force=false, so a pair that already matches the embedded payload is
+        // left untouched; the manual button reinstalls unconditionally.
+        private void StartInstall(bool force, Action continuation)
+        {
+            string game = settings.GamePath, profile = settings.ProfilePath;
+            bool disable = settings.DisableOtherMods;
             busy = true;
             pageHome.Enabled = pageLobby.Enabled = pageSettings.Enabled = false;
             btnInstall.Enabled = btnPlay.Enabled = false;
-            AppendHome("Установка…");
+            AppendHome(force ? "Установка…" : "Проверка установленной сборки…");
             BackgroundWorker worker = new BackgroundWorker();
             worker.DoWork += delegate(object s, DoWorkEventArgs e)
             {
-                using (LauncherPayload payload = new LauncherPayload())
-                    e.Result = new Installer(new InstallerServices()).Install(game, profile, payload.Value, disable, AppendHome);
+                ModPayload payload = ModPayload.Shared();
+                Installer installer = new Installer(new InstallerServices());
+                if (!force && installer.IsCurrent(game, payload.Value)) return;
+                if (!force) AppendHome("Установленный мод отличается от сборки лаунчера. Обновление…");
+                installer.Install(game, profile, payload.Value, disable, AppendHome);
             };
             worker.RunWorkerCompleted += delegate(object s, RunWorkerCompletedEventArgs e)
             {
@@ -412,16 +441,15 @@ namespace SummerCoop.Launcher
                 pageHome.Enabled = pageLobby.Enabled = pageSettings.Enabled = true;
                 btnPlay.Enabled = true;
                 RefreshStatuses();
+                worker.Dispose();
                 if (e.Error != null)
                 {
                     AppendHome("Установка не завершена: " + e.Error.Message);
-                    if (e.Error is UnauthorizedAccessException) AppendHome("Нет прав записи. Запустите от имени администратора.");
+                    if (e.Error is UnauthorizedAccessException) AppendHome("Нет прав записи. Запустите лаунчер от имени администратора.");
+                    return;
                 }
-                else
-                {
-                    AppendHome("Готово! Можно нажимать «Играть».");
-                }
-                worker.Dispose();
+                if (continuation != null) continuation();
+                else AppendHome("Готово! Можно нажимать «Играть».");
             };
             worker.RunWorkerAsync();
         }
@@ -487,28 +515,6 @@ namespace SummerCoop.Launcher
                 Process.Start(new ProcessStartInfo(target) { UseShellExecute = true });
             }
             catch (Exception e) { AppendHome(e.Message); }
-        }
-
-        private sealed class LauncherPayload : IDisposable
-        {
-            internal Payload Value;
-            private readonly string directory;
-            internal LauncherPayload()
-            {
-                directory = SafePath.Under(Path.GetTempPath(), "SummerCoop-Launcher-" + Guid.NewGuid().ToString("N"));
-                SafePath.NoLinks(directory);
-                Directory.CreateDirectory(directory);
-                try { Value = Payload.Extract(directory); }
-                catch { Dispose(); throw; }
-            }
-            public void Dispose()
-            {
-                if (!Directory.Exists(directory)) return;
-                SafePath.NoLinks(directory);
-                foreach (string child in Directory.GetDirectories(directory, "*", SearchOption.AllDirectories)) SafePath.NoLinks(child);
-                foreach (string file in Directory.GetFiles(directory, "*", SearchOption.AllDirectories)) SafePath.NoLinks(file);
-                Directory.Delete(directory, true);
-            }
         }
     }
 }

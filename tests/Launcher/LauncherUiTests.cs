@@ -25,7 +25,15 @@ internal static class LauncherUiTests
 
     private static object Call(MainForm form, string name, params object[] args)
     {
-        return typeof(MainForm).GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic).Invoke(form, args);
+        MethodInfo match = null;
+        foreach (MethodInfo method in typeof(MainForm).GetMethods(BindingFlags.Instance | BindingFlags.NonPublic))
+        {
+            if (method.Name != name || method.GetParameters().Length != args.Length) continue;
+            if (match != null) throw new Exception("Overloaded test helper call: " + name);
+            match = method;
+        }
+        if (match == null) throw new Exception("Test helper cannot find: " + name);
+        return match.Invoke(form, args);
     }
 
     private static void Check(bool condition, string message)
@@ -41,6 +49,24 @@ internal static class LauncherUiTests
         {
             form.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
             bitmap.Save(path);
+        }
+    }
+
+    private static void CheckGlassClip(MainForm form)
+    {
+        MwScenePanel scene = Field<MwScenePanel>(form, "content");
+        MwGlassPanel card = Field<MwGlassPanel>(form, "rail");
+        using (Bitmap bitmap = new Bitmap(card.Width, card.Height))
+        using (Graphics g = Graphics.FromImage(bitmap))
+        {
+            g.Clear(Color.Magenta);
+            Rectangle clip = new Rectangle(8, 8, 18, 18);
+            g.SetClip(clip);
+            scene.Glass(g, card);
+            Check(bitmap.GetPixel(80, 80).ToArgb() == Color.Magenta.ToArgb(),
+                "Glass painting escaped the child repaint clip");
+            Check(bitmap.GetPixel(16, 16).ToArgb() != Color.Magenta.ToArgb(),
+                "Glass repaint did not draw inside the child clip");
         }
     }
 
@@ -88,6 +114,7 @@ internal static class LauncherUiTests
                 form.ShowInTaskbar = false;
                 form.Opacity = 0;
                 form.Show();
+                CheckGlassClip(form);
                 ComboBox mode = Field<ComboBox>(form, "cmbMode");
                 Check(mode.SelectedIndex == (int)ConnectionMode.JoinSteam, "saved mode changed while loading");
                 Check(Field<TextBox>(form, "txtName").Text == "Saved Player", "saved name lost while loading");
@@ -144,6 +171,23 @@ internal static class LauncherUiTests
                 Check(Field<TextBox>(form, "txtPort").Focused, "invalid port not focused");
                 Field<ComboBox>(form, "cmbGame").Text = "\"invalid path\"";
                 Check(Field<Label>(form, "lblGame").Text.Contains("Выберите папку"), "invalid game path not explained");
+                // The launcher offers the loader download and says that the mod
+                // itself is installed automatically before a launch. The folder
+                // is rebuilt from scratch so an earlier run cannot leave the
+                // loader DLL behind and hide the hint.
+                string fakeGame = Path.Combine(directory, "fixture-game");
+                if (Directory.Exists(fakeGame)) Directory.Delete(fakeGame, true);
+                Directory.CreateDirectory(Path.Combine(fakeGame, "mysummercar_Data"));
+                File.WriteAllText(Path.Combine(fakeGame, "mysummercar.exe"), "fixture");
+                Field<ComboBox>(form, "cmbGame").Text = fakeGame;
+                Call(form, "RefreshStatuses");
+                Check(Field<Label>(form, "lblGame").Text.Contains("Установите MSCLoader"), "missing loader not explained");
+                Check(Field<MwButton>(form, "btnLoader").Visible, "loader download hidden");
+                Directory.CreateDirectory(Path.Combine(fakeGame, @"mysummercar_Data\Managed"));
+                File.WriteAllText(Path.Combine(fakeGame, @"mysummercar_Data\Managed\MSCLoader.dll"), "loader");
+                Call(form, "RefreshStatuses");
+                Check(!Field<MwButton>(form, "btnLoader").Visible, "loader download still visible");
+                Check(Field<Label>(form, "lblMod").Text.Contains("не установлен"), "missing mod not explained");
                 form.Close();
             }
             FakeSteam steam = new FakeSteam();
@@ -185,7 +229,7 @@ internal static class LauncherUiTests
                 form.Close();
             }
             Check(steam.Disposed, "Steam callback client not disposed");
-            Console.WriteLine("PASS launcher GUI: settings, modes, validation, invitation callbacks, startup/forwarded invites, exact lobby selection, dismissal, failed launch retention and minimum-size layouts");
+            Console.WriteLine("PASS launcher GUI: settings, modes, validation, invitation callbacks, startup/forwarded invites, exact lobby selection, dismissal, failed launch retention, MSCLoader hints and minimum-size layouts");
             return 0;
         }
         catch (Exception error) { Console.Error.WriteLine(error); return 1; }

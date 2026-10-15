@@ -30,7 +30,7 @@ jobs:
         run: ./tools/build.ps1 -TestsOnly
       - name: Test the actual MWCoop transport and codec without game binaries
         run: ./tools/test-mwcoop-network.ps1
-      - name: Test installation transactions and compile the Windows installer
+      - name: Test installation transactions used by the launcher
         run: ./tools/test-installer.ps1
       - name: Test launcher arguments, settings and Windows interface
         run: ./tools/test-launcher.ps1

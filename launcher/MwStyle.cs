@@ -103,7 +103,10 @@ namespace SummerCoop.Launcher
             RectangleF r=new RectangleF(.5f,.5f,card.Width-1,card.Height-1);
             using(GraphicsPath p=MwStyle.Round(r,22*Width/1280f))
             {
-                GraphicsState state=g.Save(); g.SetClip(p);
+                // Transparent children ask their parent to paint through a
+                // translated, clipped Graphics. Replacing that clip paints
+                // over neighbouring labels and leaves copies of their text.
+                GraphicsState state=g.Save(); g.SetClip(p,CombineMode.Intersect);
                 if(blur!=null) g.DrawImage(blur,-origin.X,-origin.Y);
                 using(SolidBrush b=new SolidBrush(MwStyle.Dark?Color.FromArgb(128,14,24,52):Color.FromArgb(150,255,255,255))) g.FillPath(b,p);
                 g.Restore(state);
@@ -140,7 +143,9 @@ namespace SummerCoop.Launcher
         protected override void OnPaintBackground(PaintEventArgs e)
         {
             MwScenePanel scene=null;for(Control p=Parent;p!=null;p=p.Parent) if(p is MwScenePanel){scene=(MwScenePanel)p;break;}
-            if(scene==null) {base.OnPaintBackground(e);return;} e.Graphics.SmoothingMode=SmoothingMode.AntiAlias;scene.Glass(e.Graphics,this);
+            base.OnPaintBackground(e);
+            if(scene==null) return;
+            e.Graphics.SmoothingMode=SmoothingMode.AntiAlias;scene.Glass(e.Graphics,this);
         }
     }
     internal sealed class MwButton : Button

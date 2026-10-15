@@ -274,6 +274,21 @@ namespace SummerCoop.Setup
             }
             if (services.IsGameRunning(game)) throw new IOException("Закройте My Summer Car перед установкой.");
         }
+        // The launcher checks this before launching, so an up-to-date pair is
+        // left untouched and the embedded payload only touches the game when
+        // the installed DLLs are missing or belong to another build.
+        internal bool IsCurrent(string gamePath, Payload payload)
+        {
+            string mods = SafePath.Under(Path.GetFullPath(gamePath), "Mods");
+            for (int i = 0; i < 2; i++)
+            {
+                string destination = SafePath.Under(mods, Payload.Files[i]);
+                if (!File.Exists(destination)) return false;
+                SafePath.NoLinks(destination);
+                if (!SafePath.Hash(destination).Equals(payload.Hashes[Payload.Files[i]], StringComparison.OrdinalIgnoreCase)) return false;
+            }
+            return true;
+        }
         internal InstallResult Install(string gamePath, string profilePath, Payload payload, bool disableOthers, Action<string> log)
         {
             string game = Path.GetFullPath(gamePath), profile = Path.GetFullPath(profilePath);
@@ -289,8 +304,7 @@ namespace SummerCoop.Setup
                 List<string> others = new List<string>();
                 if (disableOthers && Directory.Exists(mods)) FindOtherMods(mods, mods, destinations, others);
                 foreach (string destination in destinations) SafePath.NoLinks(destination);
-                bool same = true;
-                for (int i = 0; i < 2; i++) same &= File.Exists(destinations[i]) && SafePath.Hash(destinations[i]).Equals(payload.Hashes[Payload.Files[i]], StringComparison.OrdinalIgnoreCase);
+                bool same = IsCurrent(game, payload);
                 bool hasWorld = File.Exists(Path.Combine(profile, "world.scw"));
                 if (hasWorld && !same && (!File.Exists(destinations[0]) || !File.Exists(destinations[1])))
                     throw new IOException("Для обновления существующего мира нужны прежние DLL SummerCoop. Восстановите их из резервной копии.");

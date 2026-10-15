@@ -24,25 +24,18 @@ $files | ForEach-Object { (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA2
 $zip = Join-Path $root ('dist\SummerCoop-' + $version + '.zip')
 Compress-Archive -LiteralPath (Join-Path $release 'Mods'),(Join-Path $release 'README.md'),(Join-Path $release 'LICENSE'),(Join-Path $release 'THIRD_PARTY_NOTICES.md'),(Join-Path $release 'vendor'),(Join-Path $release 'docs'),(Join-Path $release 'install.ps1'),(Join-Path $release 'SHA256.txt') -DestinationPath $zip -Force
 Write-Output $zip
-$installerOutput = Join-Path $root ('dist\SummerCoop-Setup-' + $version + '.exe')
 $launcherOutput = Join-Path $root ('dist\SummerCoop-Launcher-' + $version + '.exe')
-& (Join-Path $PSScriptRoot 'build-installer.ps1') -PackagePath $release -OutputPath $installerOutput
 & (Join-Path $PSScriptRoot 'build-launcher.ps1') -PackagePath $release -OutputPath $launcherOutput
-# Keep the usual aliases when possible; an older open launcher must not prevent
-# packaging a separately named, reviewable update.
-foreach ($artifact in @(
-    @{ Source = $installerOutput; Alias = 'SummerCoop-Setup.exe' },
-    @{ Source = $launcherOutput; Alias = 'SummerCoop-Launcher.exe' }
-)) {
-    $aliasPath = Join-Path (Join-Path $root 'dist') $artifact.Alias
-    try {
-        Copy-Item -LiteralPath $artifact.Source -Destination $aliasPath -Force -ErrorAction Stop
-        ((Get-FileHash -LiteralPath $aliasPath -Algorithm SHA256).Hash + '  ' + $artifact.Alias) | Set-Content -LiteralPath ($aliasPath + '.sha256') -Encoding ASCII
-    } catch [IO.IOException] {
-        Write-Warning ('Open EXE retained: ' + $aliasPath + '. Use ' + $artifact.Source)
-    } catch [UnauthorizedAccessException] {
-        Write-Warning ('EXE alias unavailable: ' + $aliasPath + '. Use ' + $artifact.Source)
-    }
+# The launcher is the only setup tool; keep its usual alias when possible. An
+# older open launcher must not prevent packaging a separately named update.
+$aliasPath = Join-Path (Join-Path $root 'dist') 'SummerCoop-Launcher.exe'
+try {
+    Copy-Item -LiteralPath $launcherOutput -Destination $aliasPath -Force -ErrorAction Stop
+    ((Get-FileHash -LiteralPath $aliasPath -Algorithm SHA256).Hash + '  SummerCoop-Launcher.exe') | Set-Content -LiteralPath ($aliasPath + '.sha256') -Encoding ASCII
+} catch [IO.IOException] {
+    Write-Warning ('Open EXE retained: ' + $aliasPath + '. Use ' + $launcherOutput)
+} catch [UnauthorizedAccessException] {
+    Write-Warning ('EXE alias unavailable: ' + $aliasPath + '. Use ' + $launcherOutput)
 }
 $sourceZip = Join-Path $root ('dist\SummerCoop-' + $version + '-source.zip')
 Compress-Archive -LiteralPath (Join-Path $root 'src'),(Join-Path $root 'vendor'),(Join-Path $root 'tests'),(Join-Path $root 'tools'),(Join-Path $root 'launcher'),(Join-Path $root 'docs'),(Join-Path $root '.github'),(Join-Path $root 'README.md'),(Join-Path $root 'LICENSE'),(Join-Path $root 'THIRD_PARTY_NOTICES.md'),(Join-Path $root '.gitignore'),(Join-Path $root '.gitattributes') -DestinationPath $sourceZip -Force

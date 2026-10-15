@@ -1,8 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Security.Principal;
+using System.Text;
 using System.Threading;
 using System.Windows.Forms;
+using SummerCoop.Setup;
 
 namespace SummerCoop.Launcher
 {
@@ -43,15 +46,19 @@ namespace SummerCoop.Launcher
                 {
                     int at = arg.IndexOf('=');
                     string name = at < 0 ? arg : arg.Substring(0, at);
-                    if (name != "--detect" && name != "--print-args" && name != "--mode" && name != "--game" && name != "--profile" && name != "--name" && name != "--address" && name != "--port" && name != "--password" && name != "--lobby")
+                    if (name != "--detect" && name != "--print-args" && name != "--install" && name != "--keep-other-mods" && name != "--log" && name != "--mode" && name != "--game" && name != "--profile" && name != "--name" && name != "--address" && name != "--port" && name != "--password" && name != "--lobby")
                         throw new ArgumentException("Unknown argument: " + name);
                     options.Add(name, at < 0 ? "" : arg.Substring(at + 1));
                 }
                 if (options.ContainsKey("--detect"))
                 {
-                    foreach (string game in SummerCoop.Setup.SteamDiscovery.Discover()) Console.WriteLine(game);
+                    List<string> games = SteamDiscovery.Discover();
+                    foreach (string game in games) Console.WriteLine(game);
+                    string logFile;
+                    if (options.TryGetValue("--log", out logFile) && logFile.Length != 0) File.WriteAllLines(logFile, games.ToArray(), Encoding.UTF8);
                     return 0;
                 }
+                if (options.ContainsKey("--install")) return Install(options);
                 if (options.ContainsKey("--print-args"))
                 {
                     LauncherSettings s = FromOptions(options);
@@ -60,9 +67,39 @@ namespace SummerCoop.Launcher
                     Console.WriteLine(GameArgs.ToCommandLine(GameArgs.Build(s)));
                     return 0;
                 }
-                throw new ArgumentException("Use --detect or --print-args --mode=host-lan|join-lan|host-steam|join-steam|solo --game=PATH [--profile=PATH] [--name=NAME] [--address=IP] [--port=PORT] [--password=PWD] [--lobby=ID]");
+                throw new ArgumentException("Use --detect [--log=PATH], --print-args --mode=host-lan|join-lan|host-steam|join-steam|solo --game=PATH [--profile=PATH] [--name=NAME] [--address=IP] [--port=PORT] [--password=PWD] [--lobby=ID] or --install --game=PATH [--profile=PATH] [--keep-other-mods] [--log=PATH]");
             }
             catch (Exception e) { Console.Error.WriteLine("Ошибка: " + e.Message); return 1; }
+        }
+
+        // Setup is built into the launcher; this keeps the automation contract
+        // of the former standalone installer (--install --game=PATH ...).
+        private static int Install(Dictionary<string, string> options)
+        {
+            string logFile; options.TryGetValue("--log", out logFile);
+            List<string> lines = new List<string>();
+            Action<string> log = delegate(string line) { lines.Add(line); Console.WriteLine(line); };
+            try
+            {
+                string gamePath, profile;
+                if (!options.TryGetValue("--game", out gamePath) || gamePath.Trim().Length == 0)
+                {
+                    List<string> games = SteamDiscovery.Discover();
+                    if (games.Count != 1) throw new IOException("Укажите --game=PATH: найдена не одна игровая папка.");
+                    gamePath = games[0];
+                }
+                if (!options.TryGetValue("--profile", out profile) || profile.Trim().Length == 0) profile = Installer.DefaultProfile;
+                ModPayload payload = ModPayload.Shared();
+                new Installer(new InstallerServices()).Install(gamePath, profile, payload.Value, !options.ContainsKey("--keep-other-mods"), log);
+                log("Готово. Запустите игру через лаунчер; меню SummerCoop открывается клавишей F6.");
+                return 0;
+            }
+            catch (Exception e) { log("Ошибка: " + e.Message); return 1; }
+            finally
+            {
+                ModPayload.ReleaseShared();
+                if (logFile != null) File.WriteAllLines(logFile, lines.ToArray(), Encoding.UTF8);
+            }
         }
 
         private static LauncherSettings FromOptions(Dictionary<string, string> options)

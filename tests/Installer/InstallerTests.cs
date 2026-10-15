@@ -114,6 +114,20 @@ internal static class InstallerTests
             });
             Test("Other mods can be retained explicitly", delegate
             { using (Fixture f = new Fixture()) { Write(f.Game, @"Mods\Other.dll", "other"); Check(f.Install(false).DisabledMods == 0 && File.Exists(Path.Combine(f.Game, @"Mods\Other.dll")), "Retention option ignored"); } });
+            Test("IsCurrent detects missing, matching and changed DLLs", delegate
+            {
+                using (Fixture f = new Fixture())
+                {
+                    Installer installer = new Installer(f.Services);
+                    Check(!installer.IsCurrent(f.Game, f.Payload), "Missing pair reported as current");
+                    f.Install(true);
+                    Check(installer.IsCurrent(f.Game, f.Payload), "Installed pair reported as outdated");
+                    Write(f.Game, @"Mods\SummerCoop.dll", "changed");
+                    Check(!installer.IsCurrent(f.Game, f.Payload), "Changed DLL reported as current");
+                    File.Delete(Path.Combine(f.Game, @"Mods\References\SummerCoop.Core.dll"));
+                    Check(!installer.IsCurrent(f.Game, f.Payload), "Missing core reported as current");
+                }
+            });
             Test("Repeat install keeps an already matching world byte for byte", delegate
             {
                 using (Fixture f = new Fixture())
