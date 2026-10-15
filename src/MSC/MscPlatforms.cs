@@ -18,6 +18,12 @@ namespace MWCoop
 
         public static void Reset()
         {
+            if (platform != null)
+            {
+                if (active != null) active.SetValue(platform, null);
+                if (hit != null) hit.SetValue(platform, null);
+                if (velocity != null) velocity.SetValue(platform, Vector3.zero);
+            }
             Restore(); player = null; motor = null; platform = null;
             enabled = grounded = active = hit = velocity = null; SupportBody = null;
         }

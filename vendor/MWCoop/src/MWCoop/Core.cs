@@ -26,7 +26,7 @@ namespace MWCoop
         {
             Perf.FixedStart();
             Perf.Begin();
-            try { VehicleSync.RevLimiterFixed(); VehicleSync.FixedUpdate(); }
+            try { VehicleSync.RevLimiterFixed(); VehicleSync.FixedUpdate(); MscFireworks.FixedUpdate(); }
             catch (System.Exception e) { if (Time.frameCount % 600 == 0) Log.Warn("voitures (physique) : " + e.Message); }
             Perf.End("(physique)");
             Perf.FixedEnd();
@@ -121,6 +121,10 @@ namespace MWCoop
             new Mod("lanceur", MWCoop.Net.Admin.Update),
             new Mod("supports MSC", MscPlatforms.Update),
             new Mod("kilju MSC", MscBrewing.Update),
+            new Mod("sommeil MSC", MscSleep.Update),
+            new Mod("ile MSC", MscIsland.Update),
+            new Mod("feux MSC", MscFireworks.Update),
+            new Mod("liquides MSC", MscFluids.Update),
             new Mod("joueurs", PlayerSync.Update),
             new Mod("monde", World.Update),
             new Mod("radio", Radio.Update),

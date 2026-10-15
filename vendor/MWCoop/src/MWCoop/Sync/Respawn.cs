@@ -304,6 +304,7 @@ namespace MWCoop
             pl.transform.position = to;
             pl.transform.rotation = Quaternion.Euler(0f, pl.transform.eulerAngles.y, 0f);
             if (cc != null) cc.enabled = true;
+            MscRespawn.RestoreControls(pl);
             Needs();
             Log.Info("reapparition : a " + place.Name + " en " + to.ToString("F2"));
             Hud.Toast(Lang.T("De retour \u00E0 ", "Back at ") + Lang.T(place.Name, place.NameEn));

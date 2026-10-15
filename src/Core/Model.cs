@@ -7,7 +7,7 @@ namespace SummerCoop.Core
     public static class Protocol
     {
         public const int Version = 2;
-        public const string ModVersion = "0.4.0";
+        public const string ModVersion = "0.4.1";
         public const int MaxPlayers = 4;
         public const int MaxFrame = 262144;
         public const int MaxSnapshot = 67108864;

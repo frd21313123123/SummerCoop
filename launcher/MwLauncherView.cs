@@ -159,7 +159,7 @@ namespace SummerCoop.Launcher
             MwGlassPanel news=new MwGlassPanel();Place(pageHome,news,360,490,640,166);
             Caption(news,"ЧТО НОВОГО",20,12,440,24,11,true).ForeColor=MwStyle.Grey;
             Caption(news,"SummerCoop "+LauncherInfo.ModVersion,20,42,580,26,18,true);
-            Caption(news,"Островная баня, дрова и приготовление килью.\nГриль, кофе и синхронизация ёмкостей.",20,80,580,54,14,false).ForeColor=MwStyle.Grey;
+            Caption(news,"Возрождение, жидкости автомобиля и предметы острова.\nПереноска дров, покупки и совместный сон.",20,80,580,54,14,false).ForeColor=MwStyle.Grey;
             MwGlassPanel invitation=new MwGlassPanel();Place(pageHome,invitation,360,490,640,166);
             Caption(invitation,"ПРИГЛАШЕНИЕ STEAM",20,12,580,24,11,true).ForeColor=MwStyle.Accent;
             cmbInvites=Choice();Place(invitation,cmbInvites,20,44,600,30);

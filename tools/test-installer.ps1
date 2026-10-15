@@ -9,5 +9,13 @@ if (!(Test-Path -LiteralPath $compiler)) { throw '.NET Framework C# compiler is 
 $testExe = Join-Path $testDir 'SummerCoop.InstallerTests.exe'
 & $compiler /nologo /langversion:5 /target:exe ('/out:' + $testExe) (Join-Path $root 'tools\Installer\InstallerCore.cs') (Join-Path $root 'tests\Installer\InstallerTests.cs')
 if ($LASTEXITCODE) { throw 'Installer tests build failed.' }
-& $testExe | Tee-Object -FilePath (Join-Path $testDir 'test-results.txt')
-if ($LASTEXITCODE) { throw 'Installer tests failed.' }
+# Sandboxed shells may supply a deeply nested TEMP directory. Keep fixture
+# paths short enough for .NET Framework's native 260-character path limit.
+$fixtureTemp = Join-Path $root 'build\it-temp'
+New-Item -ItemType Directory -Path $fixtureTemp -Force | Out-Null
+$previousTemp = $env:TEMP; $previousTmp = $env:TMP
+try {
+    $env:TEMP = $fixtureTemp; $env:TMP = $fixtureTemp
+    & $testExe | Tee-Object -FilePath (Join-Path $testDir 'test-results.txt')
+    if ($LASTEXITCODE) { throw 'Installer tests failed.' }
+} finally { $env:TEMP = $previousTemp; $env:TMP = $previousTmp }

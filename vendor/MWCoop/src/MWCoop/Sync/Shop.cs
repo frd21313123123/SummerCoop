@@ -122,6 +122,8 @@ namespace MWCoop
             public int ServeWho, ServeSerial, LastStart;            // commande que le serveur sert en ce moment
             public bool ReplayOrder;                               // commande rejouee : Keijo a mettre au service
             public GameObject LastMade;                            // plateau, assiette de la commande en cours
+            public Vars MscCart;
+            public System.Collections.ArrayList MscItems, MscSprays;
         }
         class Replayed
         {
@@ -494,13 +496,18 @@ namespace MWCoop
         // Comptoir reconnu : son genre, ses etats de paiement. Null : pas un comptoir suivi ici.
         static Counter NewCounter(PlayMakerFSM f, string n)
         {
+            if (f.FsmName == "Data" && Recon.Path(f.transform) == "STORE/StoreCashRegister/Register")
+            {
+                ClaimBagCreator(f);
+                return new Counter { Key = Recon.Path(f.transform) + "::Data", Kind = "msc-store", Label = "в магазине Teimo", Fsm = f, PayStates = new[] { "Purchase" }, Wait = 120 };
+            }
             string fsm = f.FsmName, kind = null, label = null, key = null;
             string[] states = null;
             float wait = 30f;
             Transform parent = f.transform.parent;
             PlayMakerFSM waiter = null;
             string wStart = null, wPlace = null;
-            if (fsm == "Data" && n == "CashRegisterLogic")
+            if (fsm == "Data" && (n == "CashRegisterLogic" || n == "Register" && f.transform.parent != null && f.transform.parent.name == "PubCashRegister"))
             {
                 string path = Recon.Path(f.transform);
                 if (path.Contains("/PostOffice/")) return null;   // courrier (autre lot)
@@ -589,7 +596,17 @@ namespace MWCoop
                     foreach (FsmState s in f.Fsm.States)
                     {
                         List<CreateObject> acts = null;
-                        foreach (FsmStateAction a in s.Actions) { var co = a as CreateObject; if (co != null) { if (acts == null) acts = new List<CreateObject>(); acts.Add(co); } }
+                        foreach (FsmStateAction a in s.Actions)
+                        {
+                            var co = a as CreateObject; if (co == null) continue;
+                            if (co.storeObject == null || co.storeObject.IsNone)
+                            {
+                                var output = new FsmGameObject("MWCoopMade" + s.Name);
+                                var variables = new List<FsmGameObject>(f.FsmVariables.GameObjectVariables); variables.Add(output);
+                                f.FsmVariables.GameObjectVariables = variables.ToArray(); co.storeObject = output;
+                            }
+                            if (acts == null) acts = new List<CreateObject>(); acts.Add(co);
+                        }
                         if (acts == null || System.Array.Exists(s.Actions, a => a is Made)) continue;
                         var list = new List<FsmStateAction>(s.Actions);
                         list.Add(new Made { C = c, Acts = acts.ToArray() });
@@ -1252,6 +1269,13 @@ namespace MWCoop
         static void WriteVars(PlayMakerFSM f, NetWriter w)
         {
             FsmVariables v = f.FsmVariables;
+            if (Recon.Path(f.transform) == "STORE/StoreCashRegister/Register")
+            {
+                w.U8(1).Str("Total").F32(v.GetFsmFloat("Total").Value);
+                var quantities = new List<FsmInt>(); foreach (FsmInt x in v.IntVariables) if (x.Name.StartsWith("Q")) quantities.Add(x);
+                w.U8(quantities.Count); foreach (FsmInt x in quantities) w.Str(x.Name).I32(x.Value);
+                w.U8(0).U8(0); return;
+            }
             var fl = new List<FsmFloat>(); foreach (FsmFloat x in v.FloatVariables) if (!SkipVar(x.Name)) fl.Add(x);
             var il = new List<FsmInt>(); foreach (FsmInt x in v.IntVariables) if (!SkipVar(x.Name)) il.Add(x);
             var bl = new List<FsmBool>(); foreach (FsmBool x in v.BoolVariables) if (!SkipVar(x.Name)) bl.Add(x);
@@ -1402,6 +1426,18 @@ namespace MWCoop
             if (!c.Hooked) HookCounter(c);
             string idle = f.ActiveStateName;
             FsmVariables fv = f.FsmVariables;
+            if (c.Kind == "msc-store")
+            {
+                c.MscCart = new Vars();
+                foreach (FsmInt x in fv.IntVariables) if (x.Name.StartsWith("Q")) c.MscCart.I.Add(new KeyValuePair<string, int>(x.Name, x.Value));
+                foreach (FsmFloat x in fv.FloatVariables) if (x.Name == "Total" || x.Name == "PriceTotal") c.MscCart.F.Add(new KeyValuePair<string, float>(x.Name, x.Value));
+                var list = Var(f, "List");
+                var a = ListOn(list, "Items"); var b = ListOn(list, "Spraycans");
+                c.MscItems = a != null ? (System.Collections.ArrayList)a.Clone() : null; c.MscSprays = b != null ? (System.Collections.ArrayList)b.Clone() : null;
+                bool products = false; foreach (var x in it.V.I) if (x.Key.StartsWith("Q") && x.Value > 0) products = true;
+                GameObject creator = Var(f, "BagCreator");
+                if (products && creator != null && !creator.activeInHierarchy) Game.SetState(Game.FsmOn(creator, "Create"), "Spawn bag");
+            }
             foreach (var x in it.V.F) { FsmFloat t = fv.FindFsmFloat(x.Key); if (t != null) t.Value = x.Value; }
             // Location de la table des puces : RENT a la table passe deja par le monde (automate de SaleTable).
             foreach (var x in it.V.I) { FsmInt t = fv.FindFsmInt(x.Key); if (t != null) t.Value = c.Kind == "puces" && x.Key == "Weeks" ? 0 : x.Value; }
@@ -1426,6 +1462,7 @@ namespace MWCoop
         {
             c.MutedUntil = c.MutedAt + 120f;   // service du plat (cuisine, micro-ondes) : plus long qu'une biere
             Transform ol = c.Fsm.transform.root.Find("Stuff/LOD/ActivateBar/OrderList");
+            if (ol == null && Recon.Path(c.Fsm.transform).StartsWith("STORE/")) { GameObject native = Game.FindAny("STORE/LOD/ActivateBar/OrderList"); if (native != null) ol = native.transform; }
             if (ol == null || !ol.gameObject.activeSelf) return;   // deja cachee (par le jeu, ou un rejeu en cours)
             ol.gameObject.SetActive(false);
             c.Hidden = ol.gameObject;
@@ -2031,6 +2068,16 @@ namespace MWCoop
 
         static void UnmuteCounter(Counter c)
         {
+            if (c.MscCart != null && c.Fsm != null)
+            {
+                foreach (var x in c.MscCart.I) c.Fsm.FsmVariables.GetFsmInt(x.Key).Value = x.Value;
+                foreach (var x in c.MscCart.F) c.Fsm.FsmVariables.GetFsmFloat(x.Key).Value = x.Value;
+                var list = Var(c.Fsm, "List");
+                var a = ListOn(list, "Items"); var b = ListOn(list, "Spraycans");
+                if (a != null && c.MscItems != null) { a.Clear(); a.AddRange(c.MscItems); }
+                if (b != null && c.MscSprays != null) { b.Clear(); b.AddRange(c.MscSprays); }
+                c.MscCart = null; c.MscItems = c.MscSprays = null;
+            }
             if (c.Hidden != null) { c.Hidden.SetActive(true); c.Hidden = null; Log.Info("magasin : carte du bar rendue (" + (c.Fsm != null ? c.Fsm.ActiveStateName : "?") + ", " + Wallet.State() + ")"); }
             if (c.Muted == null) return;
             Unmute(c.Muted);

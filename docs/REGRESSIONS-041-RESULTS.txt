@@ -1,0 +1,118 @@
+SummerCoop 0.4.1 - native regression verification
+Run: msc-regression-12
+Recorded: 2026-10-15 18:13:16 +05:00
+
+host native engine/loader diagnostic lines: 28
+  EndOfStreamException: Failed to read past end of stream.
+  IndexOutOfRangeException: Array index is out of range.
+  InvalidOperationException: Steamworks is not initialized.
+  System.InvalidOperationException: Steamworks is not initialized.
+  System.IO.FileNotFoundException: D:\programing 2\ml-sum\.local\game\mysummercar_Data\Managed\Ionic.Zip.Reduced.dll
+host SHA256 2F891E649A88D747E394704DC0AB073B2E9F4089577B24E3A0C45B314C0D485E SummerCoop.dll
+host SHA256 1BC496150FB8FC6C7264F4EB9140CAAA3539A93B905801028B73C40137AC7339 References/SummerCoop.Core.dll
+
+host report:
+Engine=MWCoop 0.95.3 / MSC adapter 1
+Level=GAME
+ModVersion=0.4.1
+NetVersion=1045
+ModMvid=990db224-12b1-4ed0-b91f-1e34ad308aaf
+TestCursorUnlocked=True
+TestAudioMuted=True
+TestCursorActionsSuppressed=311
+Ready=False
+Players=1
+SaveReceived=False
+Regression=revive-standing;Pass=True;Wait key;Position=1.4
+Regression=revive-crouch;Pass=True;State=Crouched 1
+Regression=log-no-auto-split;Pass=True;JoinedBodies=2;Split=0
+Regression=revive-drive;Pass=True;Vehicle=JONNEZ ES(Clone)
+Regression=log-axe-split;Pass=True;Split=2
+Regression=revive-from-driver;Pass=True;Vehicle=;State=Wait key
+Regression=carrier-host-add;Pass=True;Count=1;Visible=1
+Regression=carrier-guest-take;Pass=True;Count=0;Visible=0
+Regression=fluids-host-fill;Pass=True;Values=0.212186977,0.414373934,0.20341967,0.20341967,0.202186987,1.25,
+Regression=fluids-guest-fill;Pass=True;Values=0.413422823,0.816845536,0.4046555,0.4046555,0.4034228,2.5,
+Regression=carrier-guest-add;Pass=True;Count=1;Visible=1
+Regression=carrier-host-take;Pass=True;Count=0;Visible=0
+Regression=lamp-on;Pass=True;State=Wait player 2
+Regression=lamp-off;Pass=True;State=Wait player
+Regression=island-bucket-fill;Pass=True;Water=5
+Regression=island-dipper-water;Pass=True;Water=4.8
+Regression=firework-fuse;Pass=True;State=ON 3;Position=(-841.14, -2.53, 505.48);Kinematic=False;Mass=0.5;Distance=6.377946;Constraints=FreezeRotation;Joints=0;Parent=none;Fixed=True;Drag=0;TimeScale=1;Force=False:yNone=False:AddForce(gameObject=rocket(Clone), atPosition=(0.0, 0.0, 0.0), vector=(0.0, 0.0, 0.0), x=0, y=27, z=0, space=Self, forceMode=Force, everyFrame=True)
+Regression=firework-flight;Pass=True;State=ON;Position=(-840.84, 43.92, 505.62);Kinematic=False;Mass=0.5;Distance=46.26697;Constraints=FreezeRotation;Joints=0;Parent=none;Fixed=True;Drag=0;TimeScale=1;Force=False:yNone=False:AddForce(gameObject=rocket(Clone), atPosition=(0.0, 0.0, 0.0), vector=(0.0, 0.0, 0.0), x=0, y=27, z=0, space=Self, forceMode=Force, everyFrame=True)
+Regression=firework-explosion;Pass=True;State=ON 2;Position=(-840.84, 467.82, 505.69);Kinematic=False;Mass=0.5;Distance=469.7328;Constraints=FreezeRotation;Joints=0;Parent=none;Fixed=True;Drag=0;TimeScale=1;Force=False:yNone=False:AddForce(gameObject=rocket(Clone), atPosition=(0.0, 0.0, 0.0), vector=(0.0, 0.0, 0.0), x=0, y=27, z=0, space=Self, forceMode=Force, everyFrame=True)
+Regression=host-sleeps-alone;Pass=True;Hour=14;State=14-16;Ambient=RGBA(0.282, 0.282, 0.426, 1.000)
+Regression=guest-sleeps-alone;Pass=True;Hour=14;State=14-16
+Regression=sleep-together;Pass=True;Hour=24;State=00-02;Ambient=RGBA(0.000, 0.000, 0.000, 1.000)
+Regression=fuel-driver-owner;Pass=True;Owner=1;Fuel=2.14999986
+Regression=pub-guest-payment;Pass=True;Before=3000;After=3000
+Regression=pub-guest-products;Pass=True;Ids=beer-1-1734001
+Regression=pub-host-payment;Pass=True;Before=3000;After=2992
+Regression=pub-host-products;Pass=True;Ids=beer-0-5833001,beer-1-1734001
+Regression=store-guest-payment;Pass=True;Before=2992;After=2992;Bags=1
+Regression=store-other-cart;Pass=True;Pizza=1
+FrameP95ms=20.72
+FrameMaxms=3640.40
+client native engine/loader diagnostic lines: 28
+  EndOfStreamException: Failed to read past end of stream.
+  FileNotFoundException: output_log.txt does not exist
+  IndexOutOfRangeException: Array index is out of range.
+  InvalidOperationException: Steamworks is not initialized.
+  System.InvalidOperationException: Steamworks is not initialized.
+client SHA256 2F891E649A88D747E394704DC0AB073B2E9F4089577B24E3A0C45B314C0D485E SummerCoop.dll
+client SHA256 1BC496150FB8FC6C7264F4EB9140CAAA3539A93B905801028B73C40137AC7339 References/SummerCoop.Core.dll
+
+client report:
+Engine=MWCoop 0.95.3 / MSC adapter 1
+Level=GAME
+ModVersion=0.4.1
+NetVersion=1045
+ModMvid=990db224-12b1-4ed0-b91f-1e34ad308aaf
+TestCursorUnlocked=True
+TestAudioMuted=True
+TestCursorActionsSuppressed=282
+Ready=True
+Players=2
+SaveReceived=True
+Regression=log-no-auto-split;Pass=True;JoinedBodies=2;Split=0
+Regression=log-axe-split;Pass=True;Split=2
+Regression=carrier-host-add;Pass=True;Count=1;Visible=1
+Regression=revive-standing;Pass=True;Wait key;Position=1.4
+Regression=revive-crouch;Pass=True;State=Crouched 1
+Regression=revive-drive;Pass=True;Vehicle=JONNEZ ES(Clone)
+Regression=revive-from-driver;Pass=True;Vehicle=;State=Wait key
+Regression=carrier-guest-take;Pass=True;Count=0;Visible=0
+Regression=fluids-host-fill;Pass=True;Values=0.212186977,0.414373934,0.20341967,0.20341967,0.202186987,1.25,
+Regression=fluids-guest-fill;Pass=True;Values=0.413422823,0.816845536,0.4046555,0.4046555,0.4034228,2.5,
+Regression=carrier-guest-add;Pass=True;Count=1;Visible=1
+Regression=carrier-host-take;Pass=True;Count=0;Visible=0
+Regression=lamp-on;Pass=True;State=Wait player 2
+Regression=lamp-off;Pass=True;State=Wait player
+Regression=island-bucket-fill;Pass=True;Water=5
+Regression=island-dipper-water;Pass=True;Water=4.8
+Regression=firework-fuse;Pass=True;State=ON 3;Position=(-841.26, -2.53, 505.42);Kinematic=True;Mass=0.5;Distance=6.246523;Constraints=None;Joints=0;Parent=none;Fixed=True;Drag=0;TimeScale=1;Force=False:yNone=False:AddForce(gameObject=rocket(Clone), atPosition=(0.0, 0.0, 0.0), vector=(0.0, 0.0, 0.0), x=0, y=27, z=0, space=Self, forceMode=Force, everyFrame=True)
+Regression=firework-flight;Pass=True;State=ON;Position=(-840.84, 40.87, 505.62);Kinematic=True;Mass=0.5;Distance=43.25047;Constraints=None;Joints=0;Parent=none;Fixed=True;Drag=0;TimeScale=1;Force=False:yNone=False:AddForce(gameObject=rocket(Clone), atPosition=(0.0, 0.0, 0.0), vector=(0.0, 0.0, 0.0), x=0, y=27, z=0, space=Self, forceMode=Force, everyFrame=True)
+Regression=firework-explosion;Pass=True;State=ON 2;Position=(-840.84, 467.82, 505.69);Kinematic=False;Mass=0.5;Distance=469.7329;Constraints=None;Joints=0;Parent=none;Fixed=True;Drag=0;TimeScale=1;Force=False:yNone=False:AddForce(gameObject=rocket(Clone), atPosition=(0.0, 0.0, 0.0), vector=(0.0, 0.0, 0.0), x=0, y=27, z=0, space=Self, forceMode=Force, everyFrame=True)
+Regression=host-sleeps-alone;Pass=True;Hour=14;State=14-16;Ambient=RGBA(0.282, 0.282, 0.426, 1.000)
+Regression=guest-sleeps-alone;Pass=True;Hour=14;State=14-16
+Regression=sleep-together;Pass=True;Hour=24;State=00-02;Ambient=RGBA(0.000, 0.000, 0.000, 1.000)
+Regression=fuel-driver-owner;Pass=True;Owner=1;Fuel=2.14999986
+Regression=pub-guest-payment;Pass=True;Before=3000;After=2992
+Regression=pub-guest-products;Pass=True;Ids=beer-1-1734001
+Regression=pub-host-payment;Pass=True;Before=2992;After=2992
+Regression=pub-host-products;Pass=True;Ids=beer-0-5833001,beer-1-1734001
+Regression=store-guest-payment;Pass=True;Before=2992;After=2981.05;Bags=1
+FrameP95ms=19.04
+FrameMaxms=7032.03
+
+Original saves checked: 5; changed: 0
+
+build/test-results.txt: ALL 121 TESTS PASSED
+build/msc-tests/test-results.txt: ALL 17 MSC ADAPTER TESTS PASSED
+build/mwcoop-network-tests/test-results.txt: ALL 12 MSC ADAPTER TESTS PASSED
+build/launcher-tests/test-results.txt: ALL 19 LAUNCHER TESTS PASSED | PASS launcher GUI: settings, modes, validation, invitation callbacks, startup/forwarded invites, exact lobby selection, dismissal, failed launch retention, MSCLoader hints and minimum-size layouts
+build/installer-tests/test-results.txt: ALL 13 INSTALLER TESTS PASSED
+
+Scope/fixture limits: see REGRESSIONS-041.md. Two local native MSC processes over UDP; no two-account Steam/WAN test.
+No full assembled-engine thermal/leak endurance test and no claim of error-free gameplay in every scenario.

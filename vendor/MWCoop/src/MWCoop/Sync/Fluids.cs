@@ -24,7 +24,7 @@ namespace MWCoop
     {
         static readonly HashSet<string> Names = new HashSet<string> {
             "Wear", "Condition", "Dirt", "Oil", "OilLevel", "Fluid", "FuelLevel", "Fuel", "WaterLevel", "Water",
-            "Coolant", "BrakeFluidF", "BrakeFluidR", "Level" };
+            "Coolant", "BrakeFluidF", "BrakeFluidR", "ClutchFluid", "OilGrade", "OilContamination", "FluidGasoline", "FluidDiesel", "FluidOil", "FluidCoolant", "FluidUrine", "Level" };
         static readonly HashSet<string> SkipFsm = new HashSet<string> {
             "Scale", "Explosion", "Temp", "Assembly", "Flicker", "Jumping", "Paint", "Pressure" };
 
@@ -42,8 +42,13 @@ namespace MWCoop
         // recue ecrasait celle versee ici. Un niveau a remplir ne monte que si on le remplit : ce qui monte ici sur une
         // valeur que l'on n'envoie pas part en AJOUT (« +cle », volume), garde ici d'ici la, ajoute chez les autres.
         static readonly HashSet<string> FillNames = new HashSet<string> {
-            "FuelLevel", "Fuel", "Oil", "OilLevel", "Fluid", "WaterLevel", "Water", "Coolant", "BrakeFluidF", "BrakeFluidR" };
+            "FuelLevel", "Fuel", "Oil", "OilLevel", "Fluid", "WaterLevel", "Water", "Coolant", "BrakeFluidF", "BrakeFluidR", "ClutchFluid" };
         static bool Fill(Watch x) { return !x.Septic && FillNames.Contains(x.Var.Name); }
+        static bool NotOurs(Watch x)
+        {
+            int authority = MscFluids.Authority(x.Fsm);
+            return authority >= 0 ? authority != Session.LocalId : VehicleSync.RemotelyDriven(x.Fsm.transform) || x.Contested && !Session.IsHost;
+        }
 
         static Rigidbody gifu;   // corps de la GIFU (racine de la citerne)
 
@@ -110,8 +115,8 @@ namespace MWCoop
                 string root = Game.RootName(t);
                 if (root == "GUI" || root == "PLAYER" || t.name.StartsWith("CapTrigger")) continue;
                 seen.Add(f);
-                bool later;
-                string owner = KeyOf(t, out later);
+                bool later = false;
+                string owner = MscFluids.ReservoirKey(f) ?? KeyOf(t, out later);
                 if (later) seen.Remove(f);   // bidon tenu ou range : cle au prochain releve
                 if (owner == null) continue;
                 foreach (FsmFloat v in f.FsmVariables.FloatVariables)
@@ -178,13 +183,15 @@ namespace MWCoop
             nextPoll = now + 1f;
             bool alone = Session.RemoteCount == 0;
             bool septicHere = SepticAuthority() == Session.LocalId;
+            var filled = new HashSet<PlayMakerFSM>();
+            foreach (Watch x in watches) if (x.Fsm != null && Fill(x) && NotOurs(x) && x.Var.Value > x.Last + .00001f) filled.Add(x.Fsm);
             NetWriter w = null;
             foreach (Watch x in watches)
             {
                 if (x.Fsm == null) continue;
                 float v = x.Var.Value;
                 if (x.Contested && now - x.WindowStart > 30f) x.Contested = false;   // plus de conflit depuis 30 s
-                if (x.Pending > 0.02f && now >= x.NextDelta && !alone)
+                if (x.Pending > 0.00001f && now >= x.NextDelta && !alone)
                 {
                     if (w != null && w.Length + 6 + System.Text.Encoding.UTF8.GetByteCount(x.Key) > 1000) { Session.SendAll(w, true); w = null; }
                     if (w == null) w = new NetWriter(Msg.Fluid).U8(Session.LocalId);
@@ -192,7 +199,9 @@ namespace MWCoop
                     if (++fills % 20 == 1) Log.Info("liquides et usure : " + x.Key + " rempli ici de " + x.Pending.ToString("F2") + ", envoye en ajout");
                     x.Pending = 0f; x.NextDelta = now + 0.5f;
                 }
-                if (Mathf.Abs(v - x.Last) <= 0.005f + 0.001f * Mathf.Abs(v)) continue;
+                if (float.IsNaN(v) || float.IsInfinity(v)) continue;
+                bool metadata = MscFluids.Metadata(x.Var.Name) && filled.Contains(x.Fsm);
+                if (!metadata && Mathf.Abs(v - x.Last) <= 0.00001f + 0.00001f * Mathf.Abs(v)) continue;
                 if (alone) { x.Last = v; continue; }   // personne a prevenir : l'arrivant recevra l'instantane
                 if (x.Septic)
                 {
@@ -200,9 +209,9 @@ namespace MWCoop
                     if (!septicHere) { x.Last = v; continue; }
                     if (now < x.NextSend) continue;
                 }
-                else if (VehicleSync.RemotelyDriven(x.Fsm.transform) || (x.Contested && !Session.IsHost) || now < x.NextSend)
+                else if (!metadata && (NotOurs(x) || now < x.NextSend))
                 {
-                    bool notOurs = VehicleSync.RemotelyDriven(x.Fsm.transform) || (x.Contested && !Session.IsHost);
+                    bool notOurs = NotOurs(x);
                     if (notOurs && Fill(x) && v > x.Last) { x.Pending += v - x.Last; x.Last = v; continue; }   // rempli ici : en ajout
                     if (now >= x.NextSend) x.Last = v;   // derive locale ignoree
                     continue;
@@ -213,7 +222,7 @@ namespace MWCoop
                 // Lots limites en octets (un message fiable tient dans un paquet de 1150 octets).
                 if (w != null && w.Length + 6 + System.Text.Encoding.UTF8.GetByteCount(x.Key) > 1000) { Session.SendAll(w, true); w = null; }
                 if (w == null) w = new NetWriter(Msg.Fluid).U8(Session.LocalId);
-                w.Str(x.Key).F32(v);
+                w.Str((metadata ? "=" : "") + x.Key).F32(v);
             }
             if (w != null) Session.SendAll(w, true);
         }
@@ -241,25 +250,34 @@ namespace MWCoop
             {
                 string key = r.Str();
                 float v = r.F32();
-                if (relay != null) relay.Str(key).F32(v);
                 Watch x;
                 bool add = key.Length > 1 && key[0] == '+';
-                if (add) key = key.Substring(1);
+                bool metadata = key.Length > 1 && key[0] == '=';
+                string wireKey = key;
+                if (add || metadata) key = key.Substring(1);
                 if (!byKey.TryGetValue(key, out x) || x.Fsm == null)
                 {
                     if (now >= nextWarn) { nextWarn = now + 10f; Log.Warn("liquides et usure : " + key + " introuvable ici"); }
                     continue;
                 }
+                if (float.IsNaN(v) || float.IsInfinity(v) || add && (v <= 0 || v > 10000)
+                    || metadata && !MscFluids.Metadata(x.Var.Name)) continue;
+                int authority = MscFluids.Authority(x.Fsm);
+                // The host also seeds a newly joined peer with its last
+                // canonical copy when a different player owns this vehicle.
+                bool hostSeed = !Session.IsHost && from != null && from.Id == 0 && who == 0;
+                if (authority >= 0 && !add && !metadata && who != authority && !hostSeed) continue;
+                if (relay != null) relay.Str(wireKey).F32(v);
                 if (add)
                 {
                     // Rempli par un autre : ajoute a la valeur d'ici (pas un releve : ne compte pas comme dispute).
-                    x.Var.Value += v; x.Last += v;
+                    x.Var.Value = MscFluids.Clamp(x.Fsm, x.Var.Name, x.Var.Value + v); x.Last = x.Var.Value;
                     if (++fillsIn % 20 == 1) Log.Info("liquides et usure : " + key + " rempli de " + v.ToString("F2") + " par le joueur #" + who + " -> " + x.Var.Value.ToString("F2"));
                     continue;
                 }
                 // (remplissage fait ici depuis le dernier releve, pas encore parti : garde par-dessus la valeur recue)
-                if (Fill(x) && x.Var.Value > x.Last && (VehicleSync.RemotelyDriven(x.Fsm.transform) || x.Contested && !Session.IsHost)) x.Pending += x.Var.Value - x.Last;
-                x.Var.Value = v + (Fill(x) ? x.Pending : 0f);
+                if (Fill(x) && x.Var.Value > x.Last && NotOurs(x)) x.Pending += x.Var.Value - x.Last;
+                x.Var.Value = MscFluids.Clamp(x.Fsm, x.Var.Name, v + (Fill(x) ? x.Pending : 0f));
                 x.Last = x.Var.Value;
                 Tally(x, false, now);
                 if (++applied % 200 == 1) Log.Info("liquides et usure : " + applied + " valeurs recues (" + key + " = " + v + ", joueur #" + who + ")");

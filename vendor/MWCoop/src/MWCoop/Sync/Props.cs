@@ -239,6 +239,7 @@ namespace MWCoop
                 if (bagKey != null) { Register(rb, bagKey, null); continue; }
                 PlayMakerFSM use = null;
                 string pre;
+                if (Jobs.JoinedLog(rb.gameObject)) continue;
                 string id = worldKeys.TryGetValue(rb.gameObject, out pre) && pre.StartsWith("w:cbx:") ? pre : ItemId(rb.gameObject, out use);   // (objets de Cheatbox++ : leur cle)
                 if (id.Length == 0) id = PackageKey(rb.gameObject);
                 if (id.Length == 0) id = WorldKey(rb) ?? "";
@@ -281,10 +282,18 @@ namespace MWCoop
             Register(rb, id, null);
         }
 
+        public static void TakePhysics(GameObject go)
+        {
+            Rigidbody rb = go != null ? go.GetComponent<Rigidbody>() : null; Prop p;
+            if (rb != null && byBody.TryGetValue(rb, out p))
+            { p.RemoteBy = -1; p.HeadBy = -1; Unride(p); settling.Remove(p); SetKinematic(p, false); }
+            if (rb != null) rb.isKinematic = false;
+        }
+
         // Objet tout juste cree (Consume, a sa creation) : suivi tout de suite, sans attendre le releve.
         public static void Track(GameObject go)
         {
-            if (nextScan < 0 || go == null) return;
+            if (nextScan < 0 || go == null || Jobs.JoinedLog(go)) return;
             Rigidbody rb = go.GetComponent<Rigidbody>();
             if (rb == null || byBody.ContainsKey(rb)) return;
             PlayMakerFSM use;
@@ -480,6 +489,7 @@ namespace MWCoop
         // Objet au repos dont l'hote fait foi (ni tenu, ni deplace par un autre, ni transporte par un autre).
         static bool HostResends(Prop p)
         {
+            if (p.Body != null && MscFireworks.Flying(p.Body.gameObject)) return false;
             if (p.Body == null || p == held || p.RemoteBy >= 0 || p.RideOut >= 0 || p.Hidden || settling.Contains(p) || !p.Body.gameObject.activeInHierarchy) return false;
             // Piece montee sur un vehicule (portiere, capot...) : elle suit la voiture, pas de recalage.
             Transform root = VehicleSync.CarRoot(p.Body.transform);
@@ -842,6 +852,7 @@ namespace MWCoop
             }
             if (state == STORED) { stored.Add(id); storedBy[id] = who; } else stored.Remove(id);
             if (p == null || p.Body == null || p == held) return;
+            if (MscFireworks.Flying(p.Body.gameObject)) return;
             if (state != STORED && p.Body.transform.parent != null && VehicleSync.CarRoot(p.Body.transform) != null) return;   // (montee ici : voir plus haut)
             // Range ici (ou dans notre main, eteint : outil du jeu) : c'est nous qui l'avons, pas a cacher.
             if (state == STORED && (storedHere.ContainsKey(id) || (hand != null && hand.FsmVariables.GetFsmGameObject("PickedObject").Value == p.Body.gameObject))) return;

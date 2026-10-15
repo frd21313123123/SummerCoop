@@ -36,6 +36,8 @@ namespace MWCoop
                 catch (Exception e) { if (actionError.Length == 0) { actionError = e.ToString(); Log.Error("MSC platform probe: " + e); } }
                 try { MscActivitiesProbe.Update(); }
                 catch (Exception e) { if (actionError.Length == 0) { actionError = e.ToString(); Log.Error("MSC activities probe: " + e); } }
+                try { MscRegressionProbe.Update(); }
+                catch (Exception e) { if (actionError.Length == 0) { actionError = e.ToString(); Log.Error("MSC regression probe: " + e); } }
                 if (MscRuntime.Argument("--summercoop-test-garage-channel").Length > 0)
                 {
                     try { MscGarageProbe.Update(); }
@@ -56,10 +58,16 @@ namespace MWCoop
             int duration; if (!int.TryParse(MscRuntime.Argument("--summercoop-test-duration"), out duration)) duration = 35;
             float finish = duration + (Session.IsHost ? 8 : 0); // Guest records before the host closes its transport.
             float timeout = MscRuntime.Argument("--summercoop-test-garage-channel").Length > 0 || MscRuntime.Argument("--summercoop-test-workshop-channel").Length > 0 || MscRuntime.Argument("--summercoop-test-platform-channel").Length > 0 || MscRuntime.Argument("--summercoop-test-activities-channel").Length > 0 ? 420 : 180;
+            if (MscRuntime.Argument("--summercoop-test-regression-channel").Length > 0) timeout = 600;
             if (!(readyAt >= 0 && Time.realtimeSinceStartup - readyAt >= finish) && Time.realtimeSinceStartup - began < timeout) return;
             List<string> report = new List<string>();
             report.Add("Engine=MWCoop 0.95.3 / MSC adapter 1"); report.Add("Level=" + Application.loadedLevelName);
             report.Add("ModVersion=" + Version.Text); report.Add("NetVersion=" + Session.NetVersion);
+            report.Add("ModMvid=" + typeof(MscRuntime).Assembly.ManifestModule.ModuleVersionId);
+            report.Add("TestCursorUnlocked=" + MscTestEnvironment.CursorUnlocked);
+            report.Add("TestCursorLockMode=" + Cursor.lockState + ";Visible=" + Cursor.visible);
+            report.Add("TestAudioMuted=" + MscTestEnvironment.AudioMuted);
+            report.Add("TestCursorActionsSuppressed=" + MscTestEnvironment.SuppressedCursorActions);
             report.Add("Ready=" + ready); report.Add("Players=" + Session.Players.Count); report.Add("PartsBindings=" + MscParts.Count);
             report.Add("Vehicles=" + VehicleSync.Count); report.Add("WorldFsms=" + WorldFsms.Count);
             report.Add("SaveReceived=" + SaveTransfer.Received); report.Add("SaveDirectory=" + MscProfile.SaveDirectory);
@@ -72,6 +80,7 @@ namespace MWCoop
             report.AddRange(MscBeltProbe.Results);
             report.AddRange(MscPlatformProbe.Results);
             report.AddRange(MscActivitiesProbe.Results);
+            report.AddRange(MscRegressionProbe.Results);
             foreach (string failure in MscRuntime.Failures) report.Add("ModuleError=" + failure);
             frames.Sort();
             if (frames.Count > 0) { report.Add("FrameP95ms=" + frames[(int)((frames.Count - 1) * .95)].ToString("F2", CultureInfo.InvariantCulture)); report.Add("FrameMaxms=" + frames[frames.Count - 1].ToString("F2", CultureInfo.InvariantCulture)); }

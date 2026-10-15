@@ -11,6 +11,7 @@ namespace SummerCoop.Game
         public override string Version { get { return Core.Protocol.ModVersion; } }
         public override void ModSetup()
         {
+            MWCoop.MscTestEnvironment.Install();
             SetupFunction(Setup.OnMenuLoad, Menu);
             SetupFunction(Setup.PreLoad, BeforeGame);
         }

@@ -26,7 +26,7 @@ namespace MWCoop
             new[] { "extincteur", "FPSCamera/Extinguisher" },
             new[] { "rouleau de tissu", "FPSCamera/FabricRoll" },
             new[] { "grattoir", "FPSCamera/IceScraper" },
-            new[] { "louche du sauna", "FPSCamera/FPSCamera/SaunaThrow" },
+            new[] { "louche du sauna", "FPSCamera/FPSCamera/SaunaThrow/Pivot" },
             new[] { "pistolet 98", "FPSCamera/FPSCamera/Fuel/Pivot/**/Pistol 98" },
             new[] { "pistolet diesel", "FPSCamera/FPSCamera/Fuel/Pivot/**/Pistol D" },
             new[] { "pistolet fioul", "FPSCamera/FPSCamera/Fuel/Pivot/**/Pistol PÖ" },

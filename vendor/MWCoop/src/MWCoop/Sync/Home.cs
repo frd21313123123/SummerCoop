@@ -640,6 +640,9 @@ namespace MWCoop
             if (Session.IsHost) who = from.Id;
             int kind = r.U8();
             if (kind == MscBrewing.Request || kind == MscBrewing.Snapshot) { MscBrewing.OnMessage(from, kind, r); return; }
+            if (kind == MscSleep.Request || kind == MscSleep.Response) { MscSleep.OnMessage(from, kind, r); return; }
+            if (kind == MscIsland.Request || kind == MscIsland.Snapshot) { MscIsland.OnMessage(from, kind, r); return; }
+            if (kind >= MscFireworks.Request && kind <= MscFireworks.Pose) { MscFireworks.OnMessage(from, kind, r); return; }
             // Relais aux autres invites (pas les annonces destinees a l'hote seul).
             if (Session.IsHost && kind != K_FleaPlaced) Session.Broadcast(new NetWriter(Msg.Home).U8(who).Raw(raw, 1, raw.Length - 1), true, who);
             if (!PlayerSync.InGame) return;

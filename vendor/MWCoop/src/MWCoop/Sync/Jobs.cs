@@ -110,7 +110,7 @@ namespace MWCoop
         // Commande de vehicule sans sauvegarde : automate d'interaction, pas la logique de conduite.
         static bool IsControl(PlayMakerFSM f)
         {
-            if (MscParts.Owns(f) || MscTuning.Owns(f) || MscBrewing.Owns(f) || Fires.OwnsMsc(f)) return false;
+            if (MscParts.Owns(f) || MscTuning.Owns(f) || MscBrewing.Owns(f) || MscSleep.Owns(f) || Fires.OwnsMsc(f)) return false;
             if (!ControlFsms.Contains(f.FsmName) || CarDoors.Tracks(f)) return false;
             if (CarDoorsLike(f)) return false;                          // portieres, capots, hayons : CarDoors (meme pas encore vus)
             if (f.FsmName == "Screw" && Parts.IsBolt(f)) return false;   // vis des pieces : Parts
@@ -195,7 +195,7 @@ namespace MWCoop
         public static void OnLevelLoaded()
         {
             jobs.Clear(); hooked.Clear(); reserved.Clear(); classified.Clear(); jobCars.Clear(); waitingJobs.Clear(); waitingSet.Clear();
-            creators.Clear(); creatorsWaiting.Clear(); tagged.Clear(); wells.Clear(); wellsWaiting.Clear();
+            creators.Clear(); creatorsWaiting.Clear(); tagged.Clear(); newborn.Clear(); wells.Clear(); wellsWaiting.Clear();
             SewageHose.OnLevelLoaded();
             RunOver.OnLevelLoaded();
             specialsScanned = false; logTrigger = null; ltCollider = null;
@@ -277,7 +277,8 @@ namespace MWCoop
                                     // Pieces et points de montage : Parts (comme WorldFsms). Une piece montee est sous la voiture : son
                                     // automate Data (sauvegarde) etait suivi ici aussi -- clics de demontage / montage rejoues en double,
                                     // la piece montee chez l'un restait en l'air chez l'autre (Hall0wMan, 11/10 : reservoir 19 L, siege).
-                                    && !(f.FsmName == "Data" && Parts.IdOf(f.gameObject).Length > 0) && !on.StartsWith("VINP") && !MscTuning.Owns(f);
+                                    && !(f.FsmName == "Data" && Parts.IdOf(f.gameObject).Length > 0) && !on.StartsWith("VINP") && !MscTuning.Owns(f)
+                                    && !MscFluids.Owns(f) && !MscSleep.Owns(f) && !MscIsland.Owns(f) && !MscShop.Owns(f);
                         c = new Classified { Path = keep ? Recon.Path(f.transform) + "::" + f.FsmName : null, Control = control };
                         classified[f] = c;
                     }
@@ -815,10 +816,10 @@ namespace MWCoop
         class SplitHook : ModHook
         {
             public override string Module { get { return "quetes (bois)"; } }
-            public string Id;
+            public string Id; public PlayMakerFSM Fsm;
             public override void OnEnter()
             {
-                try { if (Replay.Depth == 0 && !applying) Split(Id); } catch (System.Exception e) { Replay.HookError(e); }
+                try { if (Replay.Depth == 0 && !applying) { if (ProtectNewLog(Id, Fsm, this)) return; Split(Id); } } catch (System.Exception e) { Replay.HookError(e); }
                 Finish();
             }
         }
@@ -920,6 +921,11 @@ namespace MWCoop
         static void Tag(GameObject made, string id)
         {
             Rigidbody[] bodies = made.GetComponentsInChildren<Rigidbody>(true);
+            if (bodies.Length > 1)
+            {
+                FixedJoint joint = made.GetComponentInChildren<FixedJoint>();
+                newborn[id] = new LogBirth { At = Time.realtimeSinceStartup, Force = joint != null ? joint.breakForce : 500, Torque = joint != null ? joint.breakTorque : 500 };
+            }
             for (int i = 0; i < bodies.Length; i++)
             {
                 GameObject go = bodies[i].gameObject;
@@ -930,7 +936,9 @@ namespace MWCoop
                 tagged[bid] = go;
                 PlayMakerFSM cj = Game.FsmOn(go, "Check joint");
                 if (cj != null) HookSplit(cj, id);
-                Props.Track(go);
+                // A log on the chopping block is one jointed assembly. Sending
+                // its two bodies independently stretches/breaks that joint.
+                if (bodies.Length == 1) Props.Track(go);
             }
             lastId = id;
         }
@@ -942,7 +950,7 @@ namespace MWCoop
             try
             {
                 var list = new List<FsmStateAction>(s.Actions);
-                list.Insert(0, new SplitHook { Id = id });
+                list.Insert(0, new SplitHook { Id = id, Fsm = cj });
                 s.Actions = list.ToArray();
                 hooked.Add(cj);
             }
@@ -969,7 +977,12 @@ namespace MWCoop
             Creator c;
             if (!creators.TryGetValue(key, out c) || c.F == null) { Log.Warn("bois : createur " + key + " introuvable ici, " + id + " perdu"); return; }
             GameObject made = null;
-            if (c.Ready && c.F.gameObject.activeInHierarchy)
+            // Replaying the creator applies a fresh random rotation, then the
+            // received pose teleports two connected bodies again. PhysX can
+            // break their joint on that first frame. Instantiate jointed logs
+            // at the final pose once, as a single assembly.
+            bool jointed = c.Prefab != null && c.Prefab.GetComponentsInChildren<FixedJoint>(true).Length > 0;
+            if (!jointed && c.Ready && c.F.gameObject.activeInHierarchy)
             {
                 // La meme creation que chez l'autre (son, rattachement), sans ce qui touche au joueur d'ici.
                 FsmGameObject v = c.F.FsmVariables.FindFsmGameObject("Log");
@@ -995,8 +1008,12 @@ namespace MWCoop
                 if (prefab == null) { Log.Warn("bois : pas de modele pour " + key + ", " + id + " perdu"); return; }
                 made = (GameObject)Object.Instantiate(prefab, pos, rot);
             }
-            made.transform.position = pos;
-            made.transform.rotation = rot;
+            if (jointed)
+            {
+                var log = c.F.FsmVariables.FindFsmGameObject("Log"); if (log != null) log.Value = made;
+                var empty = c.F.FsmVariables.FindFsmBool("NoLog"); if (empty != null) empty.Value = false;
+            }
+            else { made.transform.position = pos; made.transform.rotation = rot; }
             Tag(made, id);
             Log.Info("bois : " + made.name + " " + id + " cree par #" + who + " (" + key + ")");
         }
@@ -1005,7 +1022,27 @@ namespace MWCoop
         {
             if (!Session.Active) return;
             Session.SendAll(new NetWriter(Msg.Job).U8(Session.LocalId).Str("@fend").Str(id), true);
+            Props.SoonScan();
             Log.Info("bois : buche " + id + " fendue ici");
+        }
+
+        sealed class LogBirth { public float At, Force, Torque; }
+        static readonly Dictionary<string, LogBirth> newborn = new Dictionary<string, LogBirth>();
+        static bool ProtectNewLog(string id, PlayMakerFSM f, SplitHook hook)
+        {
+            LogBirth birth;
+            if (f == null || !newborn.TryGetValue(id, out birth) || Time.realtimeSinceStartup - birth.At > .5f) return false;
+            GameObject other;
+            if (!tagged.TryGetValue(id + "a", out other) || other == null || other == f.gameObject) return false;
+            FixedJoint joint = f.GetComponent<FixedJoint>();
+            if (joint == null)
+            {
+                joint = f.gameObject.AddComponent<FixedJoint>(); joint.connectedBody = other.GetComponent<Rigidbody>();
+                joint.autoConfigureConnectedAnchor = false; joint.anchor = Vector3.zero;
+                joint.connectedAnchor = other.transform.InverseTransformPoint(f.transform.position);
+                joint.breakForce = birth.Force; joint.breakTorque = birth.Torque;
+            }
+            FireTools.Cancel(f, f.Fsm.GetState("State 2"), hook, "State 1"); return true;
         }
 
         static FsmInt LogsChopped()
@@ -1045,6 +1082,7 @@ namespace MWCoop
             if (count != null) count.Value = c0;
             FixedJoint fj = b.GetComponent<FixedJoint>();
             if (fj != null) Object.Destroy(fj);
+            Props.SoonScan();
             Log.Info("bois : buche " + id + " fendue par #" + who);
         }
 
@@ -1074,6 +1112,14 @@ namespace MWCoop
             if (!tagged.TryGetValue(id, out go)) return;
             tagged.Remove(id);   // (pas renvoye)
             if (go != null) Object.Destroy(go);
+        }
+
+        public static bool JoinedLog(GameObject go)
+        {
+            if (go == null || go.name != "log(Clone)") return false;
+            Transform root = go.transform;
+            if (root.parent != null && root.parent.name == "log(Clone)") root = root.parent;
+            return root.GetComponentInChildren<FixedJoint>() != null;
         }
 
         // ---------------------------------------------------------------- fendeuse (Cutter/FeedLog)

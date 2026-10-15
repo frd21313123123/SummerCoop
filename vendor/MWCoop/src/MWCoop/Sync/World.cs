@@ -183,7 +183,7 @@ namespace MWCoop
         public static void Update()
         {
             if (!Session.Active || !PlayerSync.InGame || !Find()) return;
-            if (!Session.IsHost)
+            if (!Session.IsHost && !MscRuntime.Enabled)
             {
                 // Chaque image : le lit ne doit pas accelerer le temps tout seul.
                 SetBeds(hostFast ? SleepScale : NormalScale);
@@ -195,9 +195,8 @@ namespace MWCoop
             }
             if (Session.IsHost)
             {
-                bool fast = HostSleep();
-                PassOutAlone(fast);
-                BedAlone(fast);
+                bool fast = !MscRuntime.Enabled && HostSleep();
+                if (!MscRuntime.Enabled) { PassOutAlone(fast); BedAlone(fast); }
                 if (Time.realtimeSinceStartup < nextSend) return;
                 nextSend = Time.realtimeSinceStartup + (fast ? 0.1f : 1f);
                 if (Session.RemoteCount == 0) return;
@@ -210,8 +209,9 @@ namespace MWCoop
                     .Quat(cloudObjects != null ? cloudObjects.rotation : Quaternion.identity)
                     .F32(GlobalFloat("AmbientTemperature"))
                     .Bool(MscWeather.Raining(forecast)).Bool(cloudObjects != null && cloudObjects.gameObject.activeSelf)
-                    .F32(GlobalFloat("GlobalTimeScale"));
-                if (needleHour != null && needleMinute != null) w.F32(needleHour.localEulerAngles.y).F32(needleMinute.localEulerAngles.y);
+                    .F32(MscRuntime.Enabled ? 300f : GlobalFloat("GlobalTimeScale"));
+                w.F32(needleHour != null ? needleHour.localEulerAngles.y : 0).F32(needleMinute != null ? needleMinute.localEulerAngles.y : 0);
+                w.F32(FireTools.GetF(sunColor, "Minutes", 0));
                 Session.Broadcast(w, false);
             }
         }
@@ -326,7 +326,7 @@ namespace MWCoop
             float hostScale = r.F32();
             bool fast = hostScale <= SleepScale + 0.01f;
             hostFast = fast;
-            SetBeds(fast ? SleepScale : NormalScale);
+            if (!MscRuntime.Enabled) SetBeds(fast ? SleepScale : NormalScale);
             FsmFloat scale = FsmVariables.GlobalVariables.FindFsmFloat("GlobalTimeScale");
             if (scale != null && Mathf.Abs(scale.Value - hostScale) > 0.01f)
             {
@@ -350,7 +350,7 @@ namespace MWCoop
             {
                 Log.Info("monde : heure " + t.Value + " -> " + hour + " (hote)");
                 t.Value = hour;
-                sunColor.SendEvent("TIMESKIP");
+                sunColor.SendEvent(MscRuntime.Enabled ? "WAKEUP" : "TIMESKIP");
                 if (weather != null) weather.FsmVariables.GetFsmInt("Time").Value = hour;
             }
             if (sunRotation != null)
@@ -369,6 +369,7 @@ namespace MWCoop
                 }
             }
             if (clouds != null) clouds.position = cloudsPos;
+            if (r.More) FireTools.SetF(sunColor, "Minutes", r.F32());
             if (cloudObjects != null) { cloudObjects.position = objPos; cloudObjects.rotation = objRot; }
             FsmFloat amb = FsmVariables.GlobalVariables.FindFsmFloat("AmbientTemperature");
             if (amb != null) amb.Value = temp;
