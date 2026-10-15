@@ -1,0 +1,42 @@
+SummerCoop 0.2.0-alpha — launcher Steam invitations
+Date: 2026-10-15
+
+Change scope: launcher only. Existing MWCoop-based MSC game DLLs are unchanged.
+Game invitation entry point: F10 -> Steam overlay invite dialog.
+Launcher callback entry points: LobbyInvite_t and GameLobbyJoinRequested_t.
+Steam app: My Summer Car, 516750.
+
+Command:
+  tools/test-launcher.ps1 -GamePath .local/game
+
+PASS: 19 launcher core checks (14 existing + 5 invitation/launch routing checks).
+PASS: real WinForms GUI with fake Steam events, pending list, duplicate handling,
+      precise lobby selection, failed launch retention, dismissal, startup and
+      forwarded invitations, minimum window size and settings/validation checks.
+PASS: real installed MSC Assembly-CSharp-firstpass.dll Steamworks.NET types and
+      native Steam libraries load in the .NET Framework launcher process.
+PASS: both real callback delegate signatures bind to launcher handlers.
+PASS: real LobbyInvite_t and GameLobbyJoinRequested_t structures decode without
+      narrowing their 64-bit lobby IDs; My Winter Car app invites are filtered.
+PASS: closed Steam returns an explanatory status and does not crash.
+
+Not exercised: live SteamAPI initialization with a logged-in Steam account,
+delivery of a real invitation from another account, or two-account Steam P2P
+gameplay. Steam was not running during these checks. Packet dispatch tests use
+the real game structures with locally supplied values, not network delivery.
+
+Manual acceptance check requiring two Steam accounts with MSC:
+1. Both users run Steam and this launcher with the same mod/game build installed.
+2. Host creates a Steam game, waits for the lobby and uses F10 to invite the guest.
+3. Guest sees the sender in the launcher and selects Accept and play.
+4. Verify guest game receives the selected lobby ID and joins the host's world.
+5. Repeat by accepting in Steam with the launcher open.
+6. Configure the launcher %command% launch option from Settings, close it and
+   repeat by accepting in Steam. Verify one launcher window displays the invite.
+7. Reject an invite, send another, and check bad/missing game installation leaves
+   an actionable status and retains the pending invite.
+
+The launcher never force-closes a running MSC process. Close MSC before launching
+another connection from the launcher. Pending UI invites expire after 30 minutes;
+forwarded startup requests expire after 10 minutes. Host lobby availability is
+determined by Steam and the game's existing connection/handshake checks.

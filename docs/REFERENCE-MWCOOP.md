@@ -1,3 +1,5 @@
+> С версии 0.2.0-alpha основой стал MWCoop 0.95.3. Актуальная архитектура и результаты: [MWCOOP-MSC.md](MWCOOP-MSC.md), [MWCOOP-MSC-RESULTS.txt](MWCOOP-MSC-RESULTS.txt). Ниже сохранена история предыдущей архитектуры 0.1.x.
+
 # MWCoop как ориентир для SummerCoop
 
 Исследован 11 октября 2026 по запросу пользователя: [My Winter Car — Coop на Nexus](https://www.nexusmods.com/mywintercar/mods/3180), автор andarium20, [исходники Parricidium/MWCoop](https://github.com/Parricidium/MWCoop). Просмотрена конкретная ревизия `052f94b503eeec9991fe33ba9150d955cfd0fe05`; дальнейшие изменения автора могут отличаться.

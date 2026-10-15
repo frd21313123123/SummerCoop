@@ -36,6 +36,7 @@ namespace SummerCoop.Launcher
         public bool DisableOtherMods = true;
         public bool CloseOnLaunch;
         public bool ImportSave;
+        public bool DarkTheme = true;
 
         public static string DefaultProfile()
         {
@@ -83,6 +84,7 @@ namespace SummerCoop.Launcher
             sb.AppendLine("DisableOtherMods=" + (DisableOtherMods ? "1" : "0"));
             sb.AppendLine("CloseOnLaunch=" + (CloseOnLaunch ? "1" : "0"));
             sb.AppendLine("ImportSave=" + (ImportSave ? "1" : "0"));
+            sb.AppendLine("DarkTheme=" + (DarkTheme ? "1" : "0"));
             Directory.CreateDirectory(Path.GetDirectoryName(path));
             File.WriteAllText(path, sb.ToString(), Encoding.UTF8);
         }
@@ -116,13 +118,14 @@ namespace SummerCoop.Launcher
             if (values.TryGetValue("DisableOtherMods", out v)) s.DisableOtherMods = v != "0";
             if (values.TryGetValue("CloseOnLaunch", out v)) s.CloseOnLaunch = v == "1";
             if (values.TryGetValue("ImportSave", out v)) s.ImportSave = v == "1";
+            if (values.TryGetValue("DarkTheme", out v)) s.DarkTheme = v != "0";
             return s;
         }
     }
 
     public static class LauncherInfo
     {
-        public const string ModVersion = "0.1.13-alpha";
+        public const string ModVersion = "0.3.0";
         public const int ProtocolVersion = 2;
         public const int DefaultPort = 27842;
     }
@@ -132,18 +135,31 @@ namespace SummerCoop.Launcher
         // Build the launch request without starting a process, so routing can be tested locally.
         public static ProcessStartInfo Launch(LauncherSettings s, string steamExe)
         {
+            return Launch(s, steamExe, false);
+        }
+
+        // Once SteamAPI_Init has succeeded for MSC in this process, start the
+        // game as its child. -applaunch would reopen the launch
+        // option/launcher or report that MSC (the launcher) is already running.
+        public static ProcessStartInfo Launch(LauncherSettings s, string steamExe, bool steamSessionReady)
+        {
             string commandLine = ToCommandLine(Build(s));
             bool steamMode = s.Mode == ConnectionMode.HostSteam || s.Mode == ConnectionMode.JoinSteam;
             if (steamMode && s.LaunchMethod == LaunchMethod.DirectExe)
                 throw new ArgumentException("Для игры через Steam выберите способ запуска «Автоматически» или «Steam» в настройках.");
             bool useSteam = s.LaunchMethod == LaunchMethod.Steam || (s.LaunchMethod == LaunchMethod.Auto && steamMode);
-            if (useSteam && (string.IsNullOrEmpty(steamExe) || !File.Exists(steamExe)))
+            if (useSteam && !steamSessionReady && (string.IsNullOrEmpty(steamExe) || !File.Exists(steamExe)))
                 throw new FileNotFoundException("steam.exe не найден. Запустите Steam, затем повторите запуск, или откройте My Summer Car из библиотеки Steam. Для LAN / VPN можно выбрать прямой запуск EXE.");
-            ProcessStartInfo info = useSteam
+            ProcessStartInfo info = useSteam && !steamSessionReady
                 ? new ProcessStartInfo(steamExe, "-applaunch 516750 " + commandLine)
                 : new ProcessStartInfo(Path.Combine(s.GamePath, "mysummercar.exe"), commandLine);
             info.WorkingDirectory = s.GamePath;
             info.UseShellExecute = false;
+            if (useSteam && steamSessionReady)
+            {
+                info.EnvironmentVariables["SteamAppId"] = "516750";
+                info.EnvironmentVariables["SteamGameId"] = "516750";
+            }
             return info;
         }
         public static string PortText(int port)
@@ -237,7 +253,7 @@ namespace SummerCoop.Launcher
                 case ConnectionMode.HostLan: return "Вы создаёте мир. Друзьям понадобятся ваш IP, порт и пароль, если он задан.";
                 case ConnectionMode.JoinLan: return "Введите адрес и порт, которые сообщил создатель игры.";
                 case ConnectionMode.HostSteam: return "Вы создаёте мир. Пригласите друзей через Steam в игре.";
-                case ConnectionMode.JoinSteam: return "Введите номер лобби, который сообщил создатель игры.";
+                case ConnectionMode.JoinSteam: return "Примите приглашение ниже или в Steam. Номер лобби также можно ввести вручную.";
                 default: return "Игра запустится без подключения. Создать игру или присоединиться можно через F6.";
             }
         }

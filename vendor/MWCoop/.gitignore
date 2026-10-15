@@ -1,0 +1,27 @@
+# Produits de compilation et paquets
+build/
+dist/out/
+
+# Captures des instances de test
+run/*.png
+
+# Jamais de fichiers du jeu dans le depot (propriete d'Amistech)
+*.assets
+*.resource
+
+# Webhook Discord des annonces (secret)
+dist/discord-webhook.txt
+
+# Reference hors jeu (contenu du jeu : jamais dans le depot)
+ref/*
+!ref/LISEZMOI.md
+
+# Reglages locaux de Claude Code (permissions propres a ce PC)
+.claude/settings.local.json
+.claude/*.lock
+
+# Lien d invitation Discord du lanceur : seulement sur le PC qui compile (jamais sur GitHub)
+launcher/discord.local.h
+
+# Captures de mise au point du ray tracing
+docs/rt/

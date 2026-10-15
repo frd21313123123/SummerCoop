@@ -1,6 +1,10 @@
 param([string]$GamePath = $env:SUMMERCOOP_GAME_PATH, [switch]$TestsOnly, [switch]$SkipTests)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
+if (!$TestsOnly) {
+    & (Join-Path $PSScriptRoot 'build-mwcoop.ps1') -GamePath $GamePath -SkipTests:$SkipTests
+    return
+}
 $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework\v4.0.30319\csc.exe'
 if (!(Test-Path -LiteralPath $compiler)) { throw '.NET Framework C# compiler is missing.' }
 $buildDir = Join-Path $root 'build'

@@ -1,0 +1,45 @@
+SummerCoop 0.2.1-alpha — transport and respawn verification
+Date: 2026-10-15 Asia/Yekaterinburg
+Core component checks: 121 passed.
+MSC adapter/codec checks: 12 passed, including actual UDP.
+No-game network/codec checks: 8 passed, including actual UDP and seeded loss/reordering.
+Launcher checks: 19 passed plus WinForms fixture checks.
+
+GAME/LAN run msc-vehicles-04: native entry/exit and controlled velocity while seated.
+Only the three successfully exercised vehicle types are listed below.
+
+Role=host
+VehicleProbe=JONNEZ,driver=guest,role=observer,pass=True,distance=15.23,ownerSamples=38/38,entry=,exit=
+VehicleProbe=JONNEZ,driver=host,role=driver,pass=True,distance=16.80,ownerSamples=37/37,entry=a cote, automate actif -> Player in car,exit=native exit
+VehicleProbe=BOAT,driver=guest,role=observer,pass=True,distance=16.86,ownerSamples=38/38,entry=,exit=
+VehicleProbe=BOAT,driver=host,role=driver,pass=True,distance=17.41,ownerSamples=38/38,entry=a cote, automate actif -> Player in car,exit=native exit
+VehicleProbe=KEKMET,driver=guest,role=observer,pass=True,distance=16.73,ownerSamples=36/36,entry=,exit=
+VehicleProbe=KEKMET,driver=host,role=driver,pass=True,distance=10.86,ownerSamples=38/38,entry=a cote, automate actif -> Player in car,exit=native exit
+RespawnProbe=church,pass=True,position=(-1425.61, 5.40, 1149.08),state=choix False, mort active False, joueur (-1425.61, 5.40, 1149.08), controleur actif, soif 8
+RespawnProbe=parents,pass=True,position=(-9.80, -0.29, 11.70),state=choix False, mort active False, joueur (-9.80, -0.29, 11.70), controleur actif, soif 8
+
+Role=client
+VehicleProbe=JONNEZ,driver=guest,role=driver,pass=True,distance=15.39,ownerSamples=36/36,entry=a cote, automate actif -> Player in car,exit=native exit
+VehicleProbe=JONNEZ,driver=host,role=observer,pass=True,distance=16.41,ownerSamples=38/38,entry=,exit=
+VehicleProbe=BOAT,driver=guest,role=driver,pass=True,distance=17.00,ownerSamples=37/37,entry=a cote, automate actif -> Player in car,exit=native exit
+VehicleProbe=BOAT,driver=host,role=observer,pass=True,distance=17.21,ownerSamples=39/39,entry=,exit=
+VehicleProbe=KEKMET,driver=guest,role=driver,pass=True,distance=17.17,ownerSamples=38/38,entry=a cote, automate actif -> Player in car,exit=native exit
+VehicleProbe=KEKMET,driver=host,role=observer,pass=True,distance=10.80,ownerSamples=39/39,entry=,exit=
+RespawnProbe=church,pass=True,position=(-1425.61, 5.40, 1149.08),state=choix False, mort active False, joueur (-1425.61, 5.40, 1149.08), controleur actif, sang eteint, soif 8
+RespawnProbe=parents,pass=True,position=(-9.80, -0.29, 11.70),state=choix False, mort active False, joueur (-9.80, -0.29, 11.70), controleur actif, sang eteint, soif 8
+
+Satsuma: shared production decoder and owner policy are covered by component checks.
+Native driving in the unassembled QA world is NOT confirmed. Native driver-seat
+assembly reported Installed=True, but the automated enter sequence remained
+in Wait for player. Both driver and observer samples therefore failed.
+Do not treat the attempted Satsuma scenario as a successful gameplay test.
+
+Limits: controlled velocity tests prove transport updates while a native driver
+is seated, not engine tuning, complete Satsuma assembly, long drives or Steam
+gameplay between two accounts. Earlier QA work required cleanup of one test
+process that stayed alive after the mod logged normal shutdown.
+
+PASS original native save filename set and all SHA256 hashes unchanged.
+Published DLL SHA256 values:
+9E3FC5C613865531DF632270AED0F42CD663F6DECFE21293BD81A5B84DFF553F  SummerCoop.dll
+1875469CF55A4631A035AAD173413A342AEAA0060C226E191FEBD59F3B55F1EA  SummerCoop.Core.dll

@@ -28,6 +28,8 @@ jobs:
           persist-credentials: false
       - name: Compile core and run all tests without the game
         run: ./tools/build.ps1 -TestsOnly
+      - name: Test the actual MWCoop transport and codec without game binaries
+        run: ./tools/test-mwcoop-network.ps1
       - name: Test installation transactions and compile the Windows installer
         run: ./tools/test-installer.ps1
       - name: Test launcher arguments, settings and Windows interface

@@ -1,3 +1,5 @@
+> С версии 0.2.0-alpha основой стал MWCoop 0.95.3. Актуальная архитектура и результаты: [MWCOOP-MSC.md](MWCOOP-MSC.md), [MWCOOP-MSC-RESULTS.txt](MWCOOP-MSC-RESULTS.txt). Ниже сохранена история предыдущей архитектуры 0.1.x.
+
 # GitHub Actions
 
 Workflow [build.yml](../.github/workflows/build.yml) запускается после каждого push, для pull request и вручную через Actions → Build SummerCoop → Run workflow.

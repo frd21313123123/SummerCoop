@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Security.Principal;
+using System.Threading;
 using System.Windows.Forms;
 
 namespace SummerCoop.Launcher
@@ -9,11 +11,27 @@ namespace SummerCoop.Launcher
         [STAThread]
         private static int Main(string[] args)
         {
-            if (args.Length != 0) return CommandLine(args);
+            SteamLaunchRequest request;
+            try { if (!SteamLaunchRequest.TryParse(args, out request)) return CommandLine(args); }
+            catch (Exception error) { MessageBox.Show(error.Message, "Приглашение SummerCoop", MessageBoxButtons.OK, MessageBoxIcon.Warning); return 1; }
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-            Application.Run(new MainForm());
-            return 0;
+            // Steam can start another copy when an invite is accepted. Keep one
+            // window per Windows user/session and forward the lobby atomically.
+            string identity = WindowsIdentity.GetCurrent().User.Value;
+            using (Mutex instance = new Mutex(false, @"Local\SummerCoop.Launcher." + identity))
+            {
+                bool owns;
+                try { owns = instance.WaitOne(0); }
+                catch (AbandonedMutexException) { owns = true; }
+                if (!owns)
+                {
+                    try { new SteamLaunchInbox(LauncherSettings.ConfigPath()).Send(request); return 0; }
+                    catch (Exception error) { MessageBox.Show("Не удалось передать приглашение открытому лаунчеру: " + error.Message, "SummerCoop"); return 1; }
+                }
+                try { Application.Run(new MainForm(request)); return 0; }
+                finally { instance.ReleaseMutex(); }
+            }
         }
 
         private static int CommandLine(string[] args)

@@ -24,16 +24,9 @@ for ($i = 0; $i -lt $files.Count; $i++) {
 }
 $lines | Set-Content -LiteralPath $manifest -Encoding ASCII
 $resources += '/resource:' + $manifest + ',SummerCoop.Payload.SHA256'
-# Фон вшивается в тот же EXE: один файл без внешних картинок.
-# Внешний background.jpg/png рядом с EXE по-прежнему имеет приоритет в рантайме.
-$background = $null
-foreach ($candidate in @('launcher\assets\background.png','launcher\assets\background.jpg','launcher\assets\background.jpeg')) {
-    $full = Join-Path $root $candidate
-    if (Test-Path -LiteralPath $full -PathType Leaf) { $background = $full; break }
-}
-if ($background) { $resources += '/resource:' + $background + ',SummerCoop.Launcher.Background' }
-else { Write-Warning 'Background art not found in launcher/assets; the launcher will use the drawn placeholder.' }
-& $compiler /nologo /langversion:5 /target:winexe /optimize+ /platform:anycpu ('/out:' + $OutputPath) ('/win32manifest:' + (Join-Path $root 'launcher\app.manifest')) /reference:System.dll /reference:System.Drawing.dll /reference:System.Windows.Forms.dll $resources (Join-Path $root 'tools\Installer\InstallerCore.cs') (Join-Path $root 'launcher\LauncherCore.cs') (Join-Path $root 'launcher\BackgroundArt.cs') (Join-Path $root 'launcher\MainForm.cs') (Join-Path $root 'launcher\Program.cs')
+$resources += '/resource:' + (Join-Path $root 'launcher\assets\background.png') + ',SummerCoop.Launcher.Background'
+$sources = @(Get-ChildItem -LiteralPath (Join-Path $root 'launcher') -Filter '*.cs' -File | Sort-Object Name | ForEach-Object FullName)
+& $compiler /nologo /langversion:5 /target:winexe /optimize+ /platform:anycpu ('/out:' + $OutputPath) ('/win32manifest:' + (Join-Path $root 'launcher\app.manifest')) /reference:System.dll /reference:System.Drawing.dll /reference:System.Windows.Forms.dll $resources (Join-Path $root 'tools\Installer\InstallerCore.cs') $sources
 if ($LASTEXITCODE) { throw 'Launcher build failed.' }
 ((Get-FileHash -LiteralPath $OutputPath -Algorithm SHA256).Hash + '  ' + [IO.Path]::GetFileName($OutputPath)) | Set-Content -LiteralPath ($OutputPath + '.sha256') -Encoding ASCII
 Write-Output $OutputPath

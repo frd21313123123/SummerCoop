@@ -1,5 +1,7 @@
 param([string]$GamePath = 'E:\SteamLibrary\steamapps\common\My Summer Car')
 $ErrorActionPreference = 'Stop'
+& (Join-Path $PSScriptRoot 'test-msc-adapter.ps1') -GamePath $GamePath
+return
 $root = Split-Path -Parent $PSScriptRoot
 $managed = Join-Path $GamePath 'mysummercar_Data\Managed'
 $testDir = Join-Path $root 'build\native-bindings'

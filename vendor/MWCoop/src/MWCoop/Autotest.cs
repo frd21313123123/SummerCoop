@@ -1,0 +1,2654 @@
+﻿using HutongGames.PlayMaker;
+using UnityEngine;
+
+namespace MWCoop
+{
+    // Scenarios des instances de test ([Test] Autotest=...), pilotes par le contenu (jamais de
+    // touches injectees). Le deroule des menus (PasserIntro, Continuer, NouvellePartie) est dans Flow.
+    //  marche : le joueur avance et tourne en rond (avatar vu par les autres)
+    public static class Autotest
+    {
+        static float t0 = -1;
+        static System.Collections.Generic.List<float> captureTimes;
+
+        // [Test] BoissonDefile=1 (hote) : de 60 s, chaque boisson de Drinks.Names 8 s a tour de role, en buvant ;
+        // [Test] CaptureBoisson=1 (invite, avec CameraAvatar) : capture dumps\ecran-boisson-<nom>.png 3 s apres chaque
+        // nouvelle boisson dans la main de l'avatar.
+        public static int DrinkCycle
+        {
+            get
+            {
+                if (t0 < 0 || Config.GetInt("Test", "BoissonDefile", 0) == 0) return 0;
+                float t = Time.realtimeSinceStartup - t0 - 60f;
+                if (t < 0f) return 0;
+                int i = 1 + (int)(t / 8f);
+                return i < Drinks.Names.Length ? i : 0;
+            }
+        }
+        static string capName;
+        static float capAt;
+        // [Test] Autotest=pantin : le joueur 2 est « mort » (pantin chez les autres) de 30 a 45 s, en marchant ; captures.
+        public static bool TestDead;
+        // [Test] MesureCamera=1 : a-coups vus a l'ecran (passager surtout) : a chaque image, l'ecart de la camera (et de la
+        // voiture ou l'on est assis) a un mouvement regulier -- p(t) - 2 p(t-1) + p(t-2), ramene a des images de 1/60 s --,
+        // et chaque seconde la mediane, le 95e centile et le pire, en millimetres, avec la vitesse.
+        static float nanNext;
+        static Vector3 mc1, mc2, mv1, mv2; static float md1 = -1f, md2 = -1f, mcNext; static readonly System.Collections.Generic.List<float> mcJ = new System.Collections.Generic.List<float>(), mvJ = new System.Collections.Generic.List<float>();
+        static void MeasureCam(float t)
+        {
+            Transform cam = PlayerSync.LocalCamera;
+            if (cam == null) return;
+            Transform carT = Seats.SeatedCar;
+            if (carT == null && VehicleSync.LocalDrivingRoot != null) carT = VehicleSync.LocalDrivingRoot;
+            Vector3 p = cam.position, v = carT != null ? carT.position : p;
+            float dt = Time.unscaledDeltaTime;
+            if (md2 > 0f && md1 > 0f && dt > 0f)
+            {
+                // (pas inegaux : second ecart divise par les pas, ramene a 1/60 s)
+                Vector3 a = ((p - mc1) / dt - (mc1 - mc2) / md1) * (1f / 60f) * (1f / 60f) / ((dt + md1) * 0.5f);
+                Vector3 b = ((v - mv1) / dt - (mv1 - mv2) / md1) * (1f / 60f) * (1f / 60f) / ((dt + md1) * 0.5f);
+                mcJ.Add(a.magnitude * 1000f); mvJ.Add(b.magnitude * 1000f);
+            }
+            mc2 = mc1; mc1 = p; mv2 = mv1; mv1 = v; md2 = md1; md1 = dt;
+            if (Time.realtimeSinceStartup < mcNext) return;
+            mcNext = Time.realtimeSinceStartup + 1f;
+            if (mcJ.Count < 10) { mcJ.Clear(); mvJ.Clear(); return; }
+            mcJ.Sort(); mvJ.Sort();
+            float spd = carT != null && carT.GetComponent<Rigidbody>() != null ? carT.GetComponent<Rigidbody>().velocity.magnitude : 0f;
+            Log.Info("autotest : a-coups camera med " + mcJ[mcJ.Count / 2].ToString("F2") + " p95 " + mcJ[mcJ.Count * 95 / 100].ToString("F2") + " max " + mcJ[mcJ.Count - 1].ToString("F1")
+                + " mm | voiture med " + mvJ[mvJ.Count / 2].ToString("F2") + " p95 " + mvJ[mvJ.Count * 95 / 100].ToString("F2") + " max " + mvJ[mvJ.Count - 1].ToString("F1")
+                + " mm | " + mcJ.Count + " images, " + (carT != null ? carT.name + " " + spd.ToString("F1") + " m/s" : "a pied"));
+            mcJ.Clear(); mvJ.Clear();
+        }
+
+        public static void CaptureSoon(string name, float delay) { capName = name; capAt = Time.realtimeSinceStartup + delay; }
+
+        // [Test] Autotest=cabine, CabinePassager=1 : en fin d'image (ce qui est rendu), l'avatar du conducteur dans le repere
+        // de la voiture ou l'invite est assis, pendant qu'elle roule : etendue de ses positions (0 attendu ; avant le
+        // correctif du 10/10, vitesse x duree d'image vers l'arriere).
+        static bool lateAv; static Vector3 lateMin, lateMax; static float lateLogAt; static int lateN;
+        public static int BeltLookLate = -1;   // (essais : regard force en fin d'image vers la ceinture : 0 rangee, 1 boucle)
+        // [Test] TestPedale=brake|clutch|throttle : de 40 a 60 s (temps de jeu), cette pedale de [Test] TestVoiture enfoncee ici
+        // (15 degres, comme l'automate du jeu), apres CarVisuals et avant les avatars -- le pied du conducteur doit la suivre.
+        public static void PedalTest()
+        {
+            string tped = Config.Get("Test", "TestPedale", "");
+            float t = Time.timeSinceLevelLoad;
+            if (tped.Length == 0 || t < 40f || t > 60f) return;
+            Rigidbody pb = VehicleSync.Body(Config.Get("Test", "TestVoiture", "SORBET"));
+            if (pb != null) foreach (Transform x in pb.GetComponentsInChildren<Transform>(true)) if (x.name == "pivot_" + tped) x.localRotation = Quaternion.Euler(15f, 0f, 0f);
+        }
+
+        public static void LateMeasure()
+        {
+            Vector3 blt;
+            // (camera d'essai aux yeux du joueur, meme reglage que la sienne : le jeu replace la camera du passager)
+            if (BeltLookLate >= 0 && PlayerSync.LocalCamera != null && Seats.TestBeltTarget(BeltLookLate, out blt))
+            {
+                Camera src = PlayerSync.LocalCamera.GetComponent<Camera>();
+                if (testCam == null) { testCam = new GameObject("MWCoop-CameraEssai").AddComponent<Camera>(); testCam.depth = 100; testCam.nearClipPlane = src != null ? src.nearClipPlane : 0.03f; testCam.fieldOfView = src != null ? src.fieldOfView : 60f; }
+                testCam.transform.position = PlayerSync.LocalCamera.position;
+                testCam.transform.rotation = Quaternion.LookRotation(blt - PlayerSync.LocalCamera.position, PlayerSync.LocalCamera.up);
+            }
+            if (Config.GetInt("Test", "JournalSiege", 0) != 0 && Time.frameCount % 300 < 3)
+                foreach (Avatar a in PlayerSync.Avatars)
+                {
+                    Transform pv = a.PelvisBone, car = a.VehicleT;
+                    if (pv != null && car != null) Log.Info("siege : fin d'image " + Time.frameCount + " bassin " + car.InverseTransformPoint(pv.position).ToString("F2") + " racine " + car.InverseTransformPoint(a.Root.transform.position).ToString("F2"));
+                }
+            if (Config.Get("Test", "Autotest", "") != "cabine" || Config.GetInt("Test", "CabinePassager", 0) == 0 || Net.Session.IsHost || !Seats.Seated) return;
+            Rigidbody b = VehicleSync.Body(Config.Get("Test", "TestVoiture", "SORBET(190-200psi)"));
+            if (b == null) return;
+            foreach (Avatar a in PlayerSync.Avatars)
+            {
+                if (a.Root == null) continue;
+                float v = VehicleSync.RemoteSpeed(a.Player.Id);
+                if (v < 3f) continue;
+                Vector3 lp = b.transform.InverseTransformPoint(a.Root.transform.position);
+                if (!lateAv) { lateAv = true; lateMin = lateMax = lp; } else { lateMin = Vector3.Min(lateMin, lp); lateMax = Vector3.Max(lateMax, lp); }
+                lateN++;
+                if (Time.realtimeSinceStartup >= lateLogAt)
+                {
+                    lateLogAt = Time.realtimeSinceStartup + 1f;
+                    Log.Info("autotest : fin d'image, conducteur dans la voiture " + lp.ToString("F3") + " a " + (v * 3.6f).ToString("F0") + " km/h ; etendue " + (lateMax - lateMin).ToString("F3") + " m sur " + lateN + " images");
+                }
+            }
+        }
+
+        public static void Update()
+        {
+            string mode = Config.Get("Test", "Autotest", "");
+            WaitScreen.Test(mode, Time.realtimeSinceStartup);   // au menu : avant le filtre GAME
+            Contenu.MenuTest(mode);
+            // [Test] Captures=s1,s2... : capture d'ecran a ces secondes depuis le lancement (menu compris), dumps\ecran-<s>.png.
+            if (captureTimes == null)
+            {
+                captureTimes = new System.Collections.Generic.List<float>();
+                foreach (string c in Config.Get("Test", "Captures", "").Split(',')) { float v; if (float.TryParse(c.Trim(), out v)) captureTimes.Add(v); }
+            }
+            if (captureTimes.Count > 0 && Time.realtimeSinceStartup >= captureTimes[0])
+            {
+                string png = System.IO.Path.Combine(System.IO.Path.Combine(Log.DataDir, "dumps"), "ecran-" + ((int)captureTimes[0]).ToString("000") + ".png");
+                System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(png));
+                Application.CaptureScreenshot(png);
+                Log.Info("autotest : capture " + png + " (" + Application.loadedLevelName + ")");
+                captureTimes.RemoveAt(0);
+            }
+            if (capName != null && Time.realtimeSinceStartup >= capAt)
+            {
+                string png = System.IO.Path.Combine(System.IO.Path.Combine(Log.DataDir, "dumps"), "ecran-" + capName + ".png");
+                Application.CaptureScreenshot(png);
+                Log.Info("autotest : capture " + png);
+                capName = null;
+            }
+            if (Application.loadedLevelName != "GAME") { t0 = -1; return; }
+            if (t0 < 0) t0 = Time.realtimeSinceStartup;
+            float t = Time.realtimeSinceStartup - t0;
+            // Essais propres a chaque module (chacun ses modes et son compteur d'etapes).
+            CarDoors.Test(mode, t); Npcs.Test(mode, t); Props.Test(mode, t); AssembleIcon.Test(mode, t); DroneCam.Test(mode, t); TaxiCustomer.Test(mode, t); WalletPanel.Test(mode, t); Cheats.Test(mode, t); MapPanel.Test(mode, t); ModSecondMachtwagen.Test(mode, t); Consume.Test(mode, t);
+            Wallet.Test(mode, t); Traffic.Test(mode, t); Machines.Test(mode, t); HandTools.Test(mode, t); ThirdPerson.Test(mode, t); LogPiles.Test(mode, t); CarSale.Test(mode, t); VehicleSync.TestRelais(mode, t); Consume.TestPick(mode, t); Fluids.TestFill(mode, t); ModMachtwagen300D.Test(mode, t); SleepingBags.Test(mode, t); ModCheatbox.Test(mode, t); CarLeaks.Test(mode, t);
+            if (mode == "sondesac" && t > 20f && step == 0)
+            {
+                step = 1;
+                foreach (string sp in new[] { "Spawner/BagContentsFleetari", "Spawner/BagContentsStore" })
+                {
+                    GameObject g = Game.FindAny(sp);
+                    PlayMakerFSM f = g != null ? Game.FsmOn(g, "Logic") : null;
+                    if (f == null) continue;
+                    foreach (string sn in new[] { "Items", "State 7", "State 15", "State 4", "State 16", "Check empty" })
+                    {
+                        HutongGames.PlayMaker.FsmState s = f.Fsm.GetState(sn);
+                        if (s == null || s.Actions == null) continue;
+                        foreach (var a in s.Actions) Log.Info("autotest : sac " + sp + "/" + sn + " : " + Recon.Describe(a));
+                    }
+                }
+            }
+            if (mode == "sondeoptions" && t > 20f && step == 0)
+            {
+                step = 1;
+                GameObject db = Game.FindAny("Systems/OptionsDB");
+                if (db != null)
+                    foreach (PlayMakerFSM f in db.GetComponents<PlayMakerFSM>())
+                        foreach (string sn in new[] { "Save data 2", "Load 2", "Save data", "Load", "State 3" })
+                        {
+                            HutongGames.PlayMaker.FsmState s = f.Fsm.GetState(sn);
+                            if (s == null || s.Actions == null) continue;
+                            for (int i = 0; i < s.Actions.Length && i < 40; i++) Log.Info("autotest : options " + f.FsmName + "/" + sn + " : " + Recon.Describe(s.Actions[i]));
+                        }
+            }
+            Frost.Test(mode, t); Tow.Test(mode, t); Calls.Test(mode, t); Wear.Test(mode, t);
+            Cooking.Test(mode, t); Fires.Test(mode, t); Garage.Test(mode, t); Home.Test(mode, t); Gestures.Test(mode, t);
+            VehicleSync.Test(mode, t); Jobs.Test(mode, t); SewageHose.Test(mode, t); RunOver.Test(mode, t); CustomPaint.Test(mode, t); FuelPrices.Test(mode, t); Wear.TestCup(mode, t); PhoneKeys.Test(mode, t); CarHits.Test(mode, t); Gestures.Test2(mode, t); WindowCranks.Test(mode, t); Pvp.Test(mode, t); ModRam1500.Test(mode, t); TeimoSled.Test(mode, t); Parts.Test(mode, t); Races.Test(mode, t); Rally.Test(mode, t); Kartturi.Test(mode, t); Net.ModServe.Test(mode, t); Kauppa.TestKartturi(mode, t); Kauppa.TestKartturiDrive(mode, t); PushDoors.Test(mode, t);
+            MWCoop.Net.SaveTransfer.Test(mode, t); World.Test(mode, t); Menu.Test(mode, t); Studio.Test(mode, t);
+            if (mode == "marche" && t > 5f)
+            {
+                GameObject p = GameObject.Find("PLAYER");
+                var cc = p != null ? p.GetComponent<CharacterController>() : null;
+                if (cc == null) return;
+                p.transform.Rotate(0, 40f * Time.deltaTime, 0);
+                cc.SimpleMove(p.transform.forward * 1.5f);
+            }
+            // [Test] Autotest=moto : l'invite monte sur la Jonnez (15 s a cote, 22 s au guidon ; [Test] MotoPassager=1 : place
+            // arriere, Seats) ; l'hote le regarde (camera vers l'avatar le plus proche), capture moto-<t> a 35, 45 s ; a 40 s
+            // l'avatar fait le kick (comme la commande Kickstart rejouee), capture a 40,3 s.
+            if (mode == "moto")
+            {
+                string jn = Config.Get("Test", "MotoVoiture", "JONNEZ ES(Clone)");   // ([Test] MotoVoiture : un autre vehicule, camera pres du conducteur)
+                bool other = !jn.StartsWith("JONNEZ");
+                bool rearSeat = Config.GetInt("Test", "MotoPassager", 0) != 0;
+                if (!Net.Session.IsHost)
+                {
+                    if (rearSeat) { if (t > 20f && step == 0) { step = 1; Log.Info("autotest : moto, place " + Config.GetInt("Test", "MotoPlace", 1) + " -> " + Seats.TestSit(jn, Config.GetInt("Test", "MotoPlace", 1))); } }
+                    else
+                    {
+                        if (t > 15f && step == 0) { step = 1; Log.Info("autotest : moto -> " + VehicleSync.TestEnter(jn, false)); }
+                        if (t > 22f && step == 1) { step = 2; Log.Info("autotest : moto, guidon -> " + VehicleSync.TestEnter(jn, true)); }
+                        // ([Test] MotoMoteur=tr/min : moteur tenu en marche (faux regime envoye) -- son chez l'hote, 13/10)
+                        if (t > 25f && step == 2 && Config.GetFloat("Test", "MotoMoteur", 0f) > 0f) { step = 3; VehicleSync.TestEngine(Config.GetFloat("Test", "MotoMoteur", 0f), 0.4f); Log.Info("autotest : moto, moteur tenu a " + Config.GetFloat("Test", "MotoMoteur", 0f) + " tr/min"); }
+                    }
+                }
+                else if (t > 25f)
+                {
+                    // camera d'essai de profil, a 1,6 m ([Test] MotoCam=x,y,z dans le repere de la moto)
+                    Rigidbody mob = other ? VehicleSync.Body(jn.Split('(')[0]) : null;   // (nom avec « / » : pas un chemin)
+                    GameObject mo = mob != null ? mob.gameObject : Game.FindAny(jn);
+                    // (autre vehicule : l'hote vient a 6 m, sinon le jeu ne montre pas l'interieur de la cabine)
+                    if (other && mo != null && !teleported) { teleported = true; Menu.TeleportTo(mo.transform.TransformPoint(new Vector3(4f, -0.8f, 2f)), 0f, "essai"); }
+                    if (mo != null)
+                    {
+                        if (testCam == null) { testCam = new GameObject("MWCoop-CameraEssai").AddComponent<Camera>(); testCam.depth = 100; testCam.nearClipPlane = 0.03f; testCam.fieldOfView = 60; }
+                        string mc = Config.Get("Test", "MotoCam", "-1.6,0.55,0.1"); string[] mp = mc.Split(',');
+                        var ci = System.Globalization.CultureInfo.InvariantCulture;
+                        Vector3 off = new Vector3(float.Parse(mp[0], ci), float.Parse(mp[1], ci), float.Parse(mp[2], ci)), dh;
+                        if (other && Seats.DriverHead(mo.transform, out dh))
+                        {   // (repere : la tete du conducteur ; on vise sa poitrine)
+                            testCam.transform.position = mo.transform.TransformPoint(dh + off);
+                            Vector3 aim = dh + new Vector3(Config.GetFloat("Test", "MotoViseX", 0f), Config.GetFloat("Test", "MotoViseY", -0.45f), 0.1f);   // ([Test] MotoViseX : decale la visee, ex. vers le passager)
+                            testCam.transform.LookAt(mo.transform.TransformPoint(aim));
+                        }
+                        else
+                        {
+                            testCam.transform.position = mo.transform.TransformPoint(off);
+                            testCam.transform.LookAt(mo.transform.TransformPoint(new Vector3(0f, 0.45f, 0f)));
+                        }
+                    }
+                    if (t > 35f && step == 0) { step = 1; CaptureSoon("moto-35", 0.05f); }
+                    if (t > 40f && step == 1)
+                    {
+                        step = 2;
+                        GameObject ks = Game.FindAny(jn + "/LOD/Dashboard/Kickstart");
+                        foreach (Avatar a in PlayerSync.Avatars) if (ks != null) a.ReachFor(ks.transform);
+                        CaptureSoon("moto-kick", 0.3f);
+                        Log.Info("autotest : moto, kick " + (ks != null ? "montre" : "kickstart introuvable"));
+                    }
+                    if (t > 45f && step == 2) { step = 3; CaptureSoon("moto-45", 0.05f); }
+                }
+            }
+            if (mode == "regarde" && t > 3f)
+            {
+                // [Test] TestClips=clip@t;clip@t... : a partir de 20 s, un clip toutes les 4 s, capture a +2,5 s.
+                string list = Config.Get("Test", "TestClips", "");
+                if (list.Length > 0 && t > 20f)
+                {
+                    string[] items = list.Split(';');
+                    int k = (int)((t - 20f) / 4f);
+                    if (k < items.Length)
+                    {
+                        string[] ct = items[k].Split('@');
+                        string want = ct[0];
+                        float at = ct.Length > 1 ? float.Parse(ct[1], System.Globalization.CultureInfo.InvariantCulture) : 1f;
+                        if (Avatar.ForceClip != want || Avatar.ForceTime != at)
+                        {
+                            Avatar.ForceClip = want; Avatar.ForceTime = at;
+                            shotAt = Time.realtimeSinceStartup + 2.5f;
+                            seenFlags = -2;
+                            clipShot = want + "@" + at;
+                        }
+                    }
+                    else Avatar.ForceClip = null;
+                }
+                LookAtNearestAvatar();
+                // [Test] CapturePeriode=N : en plus, une capture toutes les N s a partir de 20 s (pose-t<s>.png).
+                int per = Config.GetInt("Test", "CapturePeriode", 0);
+                if (per > 0 && t > 20f && t - lastPeriodic >= per)
+                {
+                    lastPeriodic = t;
+                    string dirp = System.IO.Path.Combine(Log.DataDir, "dumps");
+                    System.IO.Directory.CreateDirectory(dirp);
+                    string pngp = System.IO.Path.Combine(dirp, "pose-t" + ((int)t).ToString("000") + ".png");
+                    Application.CaptureScreenshot(pngp);
+                    Log.Info("autotest : capture " + pngp);
+                }
+                // Capture 2,5 s apres chaque changement de posture de l'avatar regarde : dumps\pose-<drapeaux>.png
+                foreach (Avatar a in PlayerSync.Avatars)
+                {
+                    int fl = a.Player.State.Flags;
+                    if (fl != seenFlags) { seenFlags = fl; shotAt = Time.realtimeSinceStartup + 2.5f; }
+                    break;
+                }
+                if (shotAt > 0 && Time.realtimeSinceStartup >= shotAt)
+                {
+                    shotAt = -1;
+                    string dir = System.IO.Path.Combine(Log.DataDir, "dumps");
+                    System.IO.Directory.CreateDirectory(dir);
+                    string png = System.IO.Path.Combine(dir, Avatar.ForceClip != null && clipShot != null ? "clip-" + clipShot.Replace("@", "-") + ".png" : "pose-" + seenFlags + ".png");
+                    Application.CaptureScreenshot(png);
+                    Log.Info("autotest : capture " + png);
+                }
+            }
+            if (mode == "accroupi")
+            {
+                // Comme la touche du jeu : niveau 1 a 22 s, niveau 2 a 34 s, debout a 46 s (automate Crouch).
+                PlayMakerFSM cf = Game.FindFsm("PLAYER", "Crouch");
+                if (cf != null && t > 22f && step == 0) { step = 1; Game.SetState(cf, "Move down 1"); Log.Info("autotest : accroupi 1"); }
+                if (cf != null && t > 34f && step == 1) { step = 2; Game.SetState(cf, "Move down 2"); Log.Info("autotest : accroupi 2"); }
+                if (cf != null && t > 46f && step == 2) { step = 3; Game.SetState(cf, "Move up"); Log.Info("autotest : debout"); }
+            }
+            if (mode == "conduite")
+            {
+                // Au volant de [Test] TestVoiture a 15 s, puis le vehicule est pousse en avant (8 m/s) 12 s.
+                string car = Config.Get("Test", "TestVoiture", "KEKMET(350-400psi)");
+                float enterAt = Config.GetFloat("Test", "EntreeA", 15f);
+                if (t > enterAt && step == 0) { step = 1; Log.Info("autotest : " + VehicleSync.TestEnter(car, false)); }
+                if (t > enterAt + 7f && step == 1) { step = 2; Log.Info("autotest : volant -> " + VehicleSync.TestEnter(car, true)); }
+                Rigidbody b = VehicleSync.Body(car);
+                float push0 = Config.GetFloat("Test", "PousseDebut", 25f), push1 = Config.GetFloat("Test", "PousseFin", 37f);
+                VehicleSync.TestEngine(t > push0 && t < push1 ? 2000f : -1f, 0.6f);
+                if (t > 24f && step == 2) { step = 3; Log.Info("autotest : moteur " + VehicleSync.TestSounds(car, true)); }
+                if (t > 23f && Time.frameCount % 120 == 0 && t < 30f) Log.Info("autotest : yeux " + Seats.DriverEyes(car.Split('(')[0]));
+                if (t > 55f && step == 3 && Config.GetInt("Test", "TestSortie", 0) != 0) { step = 4; Log.Info("autotest : sortie -> " + VehicleSync.TestExit(car)); }
+                if (t > 56f && step == 4) { step = 5; Log.Info("autotest : apres sortie -> " + VehicleSync.TestExit(car)); }
+                if (b != null && t > push0 && t < push1) { Vector3 f = b.transform.forward; f.y = 0; float turn = Config.GetFloat("Test", "PousseVirage", 0f); if (turn != 0f) b.angularVelocity = new Vector3(b.angularVelocity.x, turn, b.angularVelocity.z); b.velocity = f.normalized * Config.GetFloat("Test", "PousseVitesse", 8f) + Vector3.up * Mathf.Min(b.velocity.y, 0f); }
+                if (b != null && t > 20f && Time.frameCount % 150 == 0) Log.Info("autotest : " + car + " en " + b.position.ToString("F1") + " rot " + b.rotation.eulerAngles.ToString("F0") + ", cinematique " + b.isKinematic);
+                if (b != null && t > 20f && !b.isKinematic)
+                {
+                    // Envol ? vitesse verticale et rotation maximales de la voiture conduite.
+                    if (b.angularVelocity.magnitude > maxRot) { maxRot = b.angularVelocity.magnitude; if (maxRot > 1f) Log.Info("autotest : rotation max " + maxRot.ToString("F2") + " rad/s"); }
+                    if (b.velocity.y > maxUp) { maxUp = b.velocity.y; Log.Info("autotest : vitesse verticale max " + maxUp.ToString("F2") + " m/s, rotation " + b.angularVelocity.magnitude.ToString("F2") + " rad/s en " + b.position.ToString("F1")); }
+                }
+            }
+            // [Test] Autotest=graphismes : etat des reglages a 25 s (journal).
+            if (mode == "graphismes" && t > 25f && step == 0) { step = 1; Log.Info("autotest : graphismes " + Gfx.Describe()); }
+            if (mode == "graphismes" && t > 28f && step == 1) { step = 2; Gfx.ApplyPreset(Config.GetInt("Test", "TestPrereglage", 3)); }
+            if (mode == "graphismes" && t > 32f && step == 2) { step = 3; Log.Info("autotest : graphismes apres prereglage " + Gfx.Describe()); }
+            // [Test] Autotest=sondelumieres : toutes les lumieres de la scene (inactives comprises) et les objets qui ressemblent
+            // a des lampadaires, dans dumps\lumieres.txt.
+            if (mode == "sondelumieres" && t > 20f && !done)
+            {
+                done = true;
+                var sb = new System.Text.StringBuilder();
+                int n = 0;
+                foreach (Object o in Resources.FindObjectsOfTypeAll(typeof(Light)))
+                {
+                    var l = (Light)o;
+                    if (l.hideFlags != HideFlags.None || l.gameObject.hideFlags != HideFlags.None) continue;
+                    n++;
+                    sb.Append(l.type).Append('\t').Append(l.gameObject.activeInHierarchy ? "actif" : "inactif").Append(l.enabled ? "" : " (coupee)")
+                      .Append('\t').Append(l.shadows).Append('\t').Append(l.range.ToString("F0")).Append('\t').Append(l.intensity.ToString("F2")).Append('\t').Append(l.spotAngle.ToString("F0"))
+                      .Append('\t').Append(l.color).Append('\t').Append(l.renderMode).Append('\t').Append(l.cullingMask).Append('\t').Append(Recon.Path(l.transform)).Append('\n');
+                }
+                sb.Append("\n---- objets nommes comme des lampes\n");
+                var seen = new System.Collections.Generic.Dictionary<string, int>();
+                foreach (Object o in Resources.FindObjectsOfTypeAll(typeof(Transform)))
+                {
+                    var tr = (Transform)o;
+                    if (tr.hideFlags != HideFlags.None || tr.gameObject.hideFlags != HideFlags.None) continue;
+                    string nm = tr.name.ToLowerInvariant();
+                    if (!(nm.Contains("lamp") || nm.Contains("streetl") || nm.Contains("valo") || nm.Contains("pylv") || nm.Contains("pole") || nm.Contains("bulb") || nm.Contains("light"))) continue;
+                    string key = tr.name + " <- " + (tr.parent != null ? tr.parent.name : "-");
+                    int c; seen.TryGetValue(key, out c); seen[key] = c + 1;
+                }
+                foreach (var kv in seen) sb.Append(kv.Value).Append('\t').Append(kv.Key).Append('\n');
+                string dir = System.IO.Path.Combine(Log.DataDir, "dumps");
+                System.IO.Directory.CreateDirectory(dir);
+                System.IO.File.WriteAllText(System.IO.Path.Combine(dir, "lumieres.txt"), sb.ToString());
+                Log.Info("autotest : lumieres : " + n + " lumieres, " + seen.Count + " noms de lampes, dumps\\lumieres.txt ; qualite " + QualitySettings.GetQualityLevel() + ", ombres " + QualitySettings.shadowDistance);
+            }
+            // [Test] Autotest=lumieres : nuit (TestHeure, 23 h) a 15 s ; a 22 s, devant la SORBET phares allumes ([Test]
+            // LumieresLieu=voiture) ou pres des lampadaires (rue) ; etat a 30 s et 40 s (captures : Captures=...).
+            if (mode == "lumieres")
+            {
+                if (t > 15f && step == 0)
+                {
+                    step = 1;
+                    PlayMakerFSM c = Game.FindFsm("MAP/Sun/PivotSun/SUN", "Color");
+                    if (c != null) { c.FsmVariables.GetFsmInt("Time").Value = Config.GetInt("Test", "TestHeure", 23); c.SendEvent("TIMESKIP"); }
+                    Log.Info("autotest : lumieres : nuit");
+                }
+                if (t > 22f && step == 1)
+                {
+                    step = 2;
+                    GameObject pl = GameObject.Find("PLAYER");
+                    Vector3 at = Vector3.zero, toward = Vector3.zero;
+                    if (Config.Get("Test", "LumieresLieu", "voiture") == "rue")
+                    {
+                        GameObject sl = Game.FindAny("MAP/StreetLights/1");
+                        if (sl != null) { toward = sl.transform.position; at = toward + new Vector3(18f, 1f, 6f); }
+                    }
+                    else
+                    {
+                        Rigidbody car = VehicleSync.Body(Config.Get("Test", "TestVoiture", "SORBET(190-200psi)"));
+                        if (car != null)
+                        {
+                            foreach (Light li in car.GetComponentsInChildren<Light>(true))
+                                if (li.type == LightType.Spot && li.name.Contains("Short"))
+                                    for (Transform p = li.transform; p != null && p != car.transform; p = p.parent) p.gameObject.SetActive(true);
+                            toward = car.position;
+                            at = car.transform.TransformPoint(new Vector3(1.5f, 0.5f, 9f));
+                        }
+                    }
+                    if (pl != null && at != Vector3.zero)
+                    {
+                        var cc = pl.GetComponent<CharacterController>();
+                        if (cc != null) cc.enabled = false;
+                        pl.transform.position = at;
+                        Vector3 d = toward - at; d.y = 0;
+                        pl.transform.rotation = Quaternion.LookRotation(d);
+                        if (cc != null) cc.enabled = true;
+                    }
+                    Log.Info("autotest : lumieres : joueur en " + at.ToString("F0") + " vers " + toward.ToString("F0"));
+                }
+                // (phares de la voiture : rallumes a chaque image, contact coupe le jeu les eteint)
+                if (step >= 2 && Config.Get("Test", "LumieresLieu", "voiture") != "rue")
+                {
+                    Rigidbody car = VehicleSync.Body(Config.Get("Test", "TestVoiture", "SORBET(190-200psi)"));
+                    if (car != null)
+                        foreach (Light li in car.GetComponentsInChildren<Light>(true))
+                            if (li.type == LightType.Spot && li.name.Contains("Short"))
+                            {
+                                li.enabled = true;
+                                for (Transform p = li.transform; p != null && p != car.transform; p = p.parent) if (!p.gameObject.activeSelf) p.gameObject.SetActive(true);
+                            }
+                }
+                if ((t > 30f && step == 2) || (t > 40f && step == 3)) { step++; Log.Info("autotest : lumieres " + Lights.Describe()); }
+            }
+            // [Test] Autotest=racines : a 40 s, racines de la scene (actives ou non) et les corps a CarDynamics (actifs ou non).
+            if (mode == "racines" && t > 40f && !done)
+            {
+                done = true;
+                var sb = new System.Text.StringBuilder("autotest : racines :");
+                foreach (GameObject r in Recon.SceneRoots()) sb.Append(' ').Append(r.activeSelf ? "" : "[off]").Append(r.name);
+                sb.Append(" ; voitures :");
+                foreach (Object o in Resources.FindObjectsOfTypeAll(typeof(Rigidbody)))
+                {
+                    var rb = (Rigidbody)o;
+                    if (rb.hideFlags != HideFlags.None || rb.GetComponent("CarDynamics") == null) continue;
+                    sb.Append(' ').Append(Recon.Path(rb.transform)).Append(rb.gameObject.activeInHierarchy ? "" : "[off]").Append(rb.GetComponent<AxisCarController>() != null ? "(axis)" : "");
+                }
+                Log.Info(sb.ToString());
+            }
+            // [Test] Autotest=evenements : l'hote passe a un jour de match (GlobalDay 3) a 20 h (fete chez Jokke) a 20 s ;
+            // a 45 s et 60 s, les deux notent l'evenement et la fete (a comparer).
+            if (mode == "evenements")
+            {
+                if (Net.Session.IsHost && t > 20f && step == 0)
+                {
+                    step = 1;
+                    FsmInt day = FsmVariables.GlobalVariables.FindFsmInt("GlobalDay");
+                    if (day != null) day.Value = Config.GetInt("Test", "TestJour", 3);
+                    PlayMakerFSM c = Game.FindFsm("MAP/Sun/PivotSun/SUN", "Color");
+                    if (c != null) { c.FsmVariables.GetFsmInt("Time").Value = Config.GetInt("Test", "TestHeure", 20); c.SendEvent("TIMESKIP"); }
+                    Log.Info("autotest : evenements : jour " + (day != null ? day.Value : -1) + ", " + Config.GetInt("Test", "TestHeure", 20) + " h");
+                }
+                if ((t > 45f && step <= 1 && !Net.Session.IsHost) || (t > 45f && step == 1 && Net.Session.IsHost) || (t > 60f && step == 2))
+                {
+                    step = step <= 1 ? 2 : 3;
+                    GameObject party = Game.FindAny("JOBS/JOKKEHOME/HouseDrunkNew/LOD1/DrunkParty");
+                    Log.Info("autotest : evenements " + Events.Describe("JOKKEHOME") + " ; fete " + (party != null ? party.activeSelf.ToString() : "?") + ", heure " + FsmVariables.GlobalVariables.FindFsmInt("GlobalHour").Value + ", jour " + FsmVariables.GlobalVariables.FindFsmInt("GlobalDay").Value);
+                }
+            }
+            // [Test] Autotest=rivett (retour d'un joueur, 08/10 : sur la Rivett, coffre qui tombe, voiture en orbite en claquant
+            // une portiere, contact du joueur qui la casse, moteur coupe chez l'autre). Sauvegarde avec la CORRIS montee.
+            // TestScenario : hote (l'hote conduit, l'invite manie), invite (l'inverse), garee (personne au volant, l'invite
+            // manie). Conducteur : au volant a 15-22 s, moteur (1800 tr/min, sons, annonce en marche) de 24 a 90 s.
+            // L'autre, par les automates 'Use' du jeu (comme ses clics) : portiere gauche ouverte 36 s, lachee 37, claquee
+            // 40 ; droite 44 / 45 / 48 ; coffre ouvert 52, rabattu ("Drop") 60 ; capot 66 / 74 ; colle contre la portiere
+            // gauche et pousse de 78 a 82 s ; court dans l'avant a 84-86 s. Les deux : chaque seconde, la voiture (vitesse,
+            // rotation) et chaque ouvrant (angle, etat, attaches, tombe ou non).
+            if (mode == "rivett")
+            {
+                string car = Config.Get("Test", "TestVoiture", "CORRIS");
+                string scen = Config.Get("Test", "TestScenario", "hote");
+                bool host = Net.Session.IsHost;
+                bool driver = scen == "hote" ? host : scen == "invite" ? !host : false;
+                bool actor = scen == "garee" ? !host : !driver;
+                Rigidbody b = VehicleSync.Body(car);
+                if (b != null && rivParts == null)
+                {
+                    rivParts = new System.Collections.Generic.List<Rigidbody>();
+                    foreach (Rigidbody rb in b.GetComponentsInChildren<Rigidbody>(true))
+                    {
+                        string n = rb.name.ToLowerInvariant();
+                        if (rb != b && (n.Contains("door") || n.Contains("bootlid") || n.Contains("hood"))) rivParts.Add(rb);
+                    }
+                    Log.Info("autotest : rivett (" + scen + ", " + (driver ? "conducteur" : actor ? "manie" : "regarde") + ") : " + rivParts.Count + " ouvrants ; suivis : " + CarDoors.ListFor(car) + " ; SORBET : " + CarDoors.ListFor("SORBET"));
+                }
+                if (driver)
+                {
+                    if (t > 15f && step == 0) { step = 1; Log.Info("autotest : " + VehicleSync.TestEnter(car, false)); }
+                    if (t > 22f && step == 1) { step = 2; Log.Info("autotest : volant -> " + VehicleSync.TestEnter(car, true)); }
+                    if (t > 24f && step == 2) { step = 3; Log.Info("autotest : moteur " + VehicleSync.TestSounds(car, true)); }
+                    VehicleSync.TestEngine(t > 24f && t < 90f ? 1800f : -1f, 0.3f);
+               }
+                if (actor)
+                {
+                    if (scen != "garee" && t > 30f && step == 0) { step = 1; Log.Info("autotest : rivett : moteur entendu " + VehicleSync.AudioState(car) + " ; " + VehicleSync.StarterState(car)); }
+                    while (rivStep < RivAt.Length && t > RivAt[rivStep])
+                    {
+                        Log.Info("autotest : rivett : " + RivSet(car, RivPart[rivStep], RivState[rivStep]));
+                        rivStep++;
+                    }
+                    GameObject pl = GameObject.Find("PLAYER");
+                    var cc = pl != null ? pl.GetComponent<CharacterController>() : null;
+                    if (cc != null && b != null && t > 78f && t < 82f)
+                    {
+                        if (rivPush == 0) { rivPush = 1; cc.enabled = false; pl.transform.position = b.transform.TransformPoint(new Vector3(-1.6f, 0.2f, 0f)); cc.enabled = true; Log.Info("autotest : rivett : contre la portiere gauche"); }
+                        cc.Move(b.transform.right * 2.5f * Time.deltaTime);
+                    }
+                    if (cc != null && b != null && t > 84f && t < 86f)
+                    {
+                        if (rivPush == 1) { rivPush = 2; cc.enabled = false; pl.transform.position = b.transform.TransformPoint(new Vector3(0f, 0.2f, 5f)); cc.enabled = true; Log.Info("autotest : rivett : court dans l'avant"); }
+                        cc.Move(-b.transform.forward * 6f * Time.deltaTime);
+                    }
+                }
+                if (b != null && t > 20f && Time.realtimeSinceStartup >= rivLog)
+                {
+                    rivLog = Time.realtimeSinceStartup + 1f;
+                    var sb = new System.Text.StringBuilder("autotest : rivett " + (b.isKinematic ? "copie" : "locale") + " v " + b.velocity.magnitude.ToString("F1") + " rot " + b.angularVelocity.magnitude.ToString("F2") + " en " + b.position.ToString("F1") + " ;");
+                    if (rivParts != null)
+                        foreach (Rigidbody rb in rivParts)
+                        {
+                            if (rb == null) { sb.Append(" (detruite);"); continue; }
+                            bool under = rb.transform.IsChildOf(b.transform);
+                            string pn = rb.transform.parent != null ? rb.transform.parent.name.Replace("VINP_", "") : rb.name;
+                            PlayMakerFSM use = null;
+                            foreach (PlayMakerFSM f in rb.GetComponents<PlayMakerFSM>()) if (f.FsmName == "Use") use = f;
+                            sb.Append(' ').Append(pn).Append(under ? "" : " TOMBEE " + (rb.position - b.position).magnitude.ToString("F1") + "m")
+                              .Append(' ').Append(Quaternion.Angle(rb.transform.localRotation, Quaternion.identity).ToString("F0")).Append("deg")
+                              .Append(use != null ? " [" + use.ActiveStateName + "]" : "").Append(" j").Append(rb.GetComponents<Joint>().Length)
+                              .Append(rb.isKinematic ? " cin" : "").Append(rb.velocity.magnitude > 2f ? " v" + rb.velocity.magnitude.ToString("F0") : "").Append(';');
+                        }
+                    Log.Info(sb.ToString());
+                }
+            }
+            // [Test] Autotest=klaxon : objets "horn" de la scene (chemin, automates et leurs etats, sources audio).
+            if (mode == "klaxon" && t > 25f && !done)
+            {
+                done = true;
+                var sb = new System.Text.StringBuilder("autotest : klaxons :");
+                foreach (Object o in Resources.FindObjectsOfTypeAll(typeof(Transform)))
+                {
+                    var tr = (Transform)o;
+                    if (tr.hideFlags != HideFlags.None || tr.name.ToLowerInvariant().IndexOf("horn") < 0) continue;
+                    sb.Append("\n  ").Append(Recon.Path(tr)).Append(tr.gameObject.activeInHierarchy ? "" : " [off]");
+                    foreach (PlayMakerFSM f in tr.GetComponents<PlayMakerFSM>())
+                    {
+                        sb.Append("\n    FSM ").Append(f.FsmName).Append(" etat=").Append(f.ActiveStateName).Append(" :");
+                        try { foreach (HutongGames.PlayMaker.FsmState st in f.FsmStates)
+                        {
+                            sb.Append(" [").Append(st.Name);
+                            foreach (HutongGames.PlayMaker.FsmTransition x in st.Transitions) sb.Append(' ').Append(x.EventName).Append("->").Append(x.ToState);
+                            sb.Append(" |");
+                            foreach (HutongGames.PlayMaker.FsmStateAction ac in st.Actions) sb.Append(' ').Append(ac.GetType().Name);
+                            sb.Append(']');
+                        } } catch (System.Exception) { sb.Append(' ').Append('?'); }
+                    }
+                    foreach (AudioSource au in tr.GetComponents<AudioSource>()) sb.Append("\n    audio ").Append(au.clip != null ? au.clip.name : "-").Append(au.loop ? " boucle" : "").Append(" 3D ").Append(au.spatialBlend.ToString("F1"));
+                }
+                Log.Info(sb.ToString());
+            }
+            // [Test] Autotest=banquette : banquette rabattable de la SORBET suivie pareil chez les deux (CarDoors), l'invite la
+            // rabat a 30 s et la releve a 45 s ; chacun note son etat a 25, 40 et 55 s.
+            if (mode == "banquette")
+            {
+                string car = Config.Get("Test", "TestVoiture", "SORBET(190-200psi)");
+                if (t > 25f && step == 0) { step = 1; Log.Info("autotest : banquette, suivis : " + CarDoors.ListFor(car) + " ; " + CarDoors.StateOf(car, "RearSeat")); }
+                if (!Net.Session.IsHost && t > 30f && step == 1) { step = 2; Log.Info("autotest : banquette, rabat " + CarDoors.TestOpen(car, true, "RearSeat")); }
+                if (t > 40f && step <= 2 && !done) { done = true; Log.Info("autotest : banquette a 40 s : " + CarDoors.StateOf(car, "RearSeat")); }
+                if (!Net.Session.IsHost && t > 45f && step == 2) { step = 3; Log.Info("autotest : banquette, releve " + CarDoors.TestGrab(car, "RearSeat")); }
+                if (t > 55f && !watchLogged) { watchLogged = true; Log.Info("autotest : banquette a 55 s : " + CarDoors.StateOf(car, "RearSeat")); }
+            }
+            // [Test] Autotest=pousse : l'invite, contre la SORBET, la pousse (main forcee, 1,2 m/s vers l'avant) de 30 a 36 s ;
+            // chacun note la position de la voiture chaque seconde de 25 a 50 s (attendu : la meme, sans retour en arriere).
+            // [Test] Autotest=poussevolant : l'hote au volant de TestVoiture (SORBET) a 20 s ; l'invite derriere, tourne vers elle,
+            // pousse (geste du jeu) de 32 a 42 s. Chacun note la voiture chaque seconde de 25 a 50 s. Attendu : elle avance
+            // chez l'hote (la poussee lui est envoyee), et chez l'invite (copie).
+            if (mode == "poussevolant")
+            {
+                string car = Config.Get("Test", "TestVoiture", "SORBET(190-200psi)");
+                Rigidbody b = VehicleSync.Body(car);
+                if (Net.Session.IsHost)
+                {
+                    if (t > 18f && step == 0) { step = 1; Log.Info("autotest : poussevolant " + VehicleSync.TestEnter(car, false)); }
+                    if (t > 22f && step == 1) { step = 2; Log.Info("autotest : poussevolant volant -> " + VehicleSync.TestEnter(car, true)); }
+                }
+                else if (b != null)
+                {
+                    if (t > 30f && step == 0)
+                    {
+                        step = 1;
+                        GameObject pl = GameObject.Find("PLAYER");
+                        var cc = pl != null ? pl.GetComponent<CharacterController>() : null;
+                        if (cc != null)
+                        {
+                            cc.enabled = false;
+                            pl.transform.position = b.transform.TransformPoint(new Vector3(0f, 0f, -2.6f));
+                            Vector3 f = b.position - pl.transform.position; f.y = 0;
+                            pl.transform.rotation = Quaternion.LookRotation(f);
+                            cc.enabled = true;
+                        }
+                        Log.Info("autotest : poussevolant, derriere la voiture");
+                    }
+                    Gestures.TestPush = t > 32f && t < 42f;
+                }
+                if (b != null && t > 25f && t < 50f && Time.realtimeSinceStartup >= rivLog)
+                {
+                    rivLog = Time.realtimeSinceStartup + 1f;
+                    Log.Info("autotest : poussevolant, voiture " + (b.isKinematic ? "copie" : "locale") + " en " + b.position.ToString("F2") + " v " + b.velocity.magnitude.ToString("F2"));
+                }
+            }
+            if (mode == "pousse")
+            {
+                string car = Config.Get("Test", "TestVoiture", "SORBET(190-200psi)");
+                Rigidbody b = VehicleSync.Body(car);
+                if (!Net.Session.IsHost && b != null)
+                {
+                    if (t > 28f && step == 0)
+                    {
+                        step = 1;
+                        GameObject pl = GameObject.Find("PLAYER");
+                        var cc = pl != null ? pl.GetComponent<CharacterController>() : null;
+                        if (cc != null) { cc.enabled = false; pl.transform.position = b.transform.TransformPoint(new Vector3(0f, 0f, -3.2f)); cc.enabled = true; }
+                        Log.Info("autotest : pousse, derriere la voiture");
+                    }
+                    Gestures.TestPush = t > 30f && t < 36f;
+                    if (t > 30f && t < 36f && !b.isKinematic) { Vector3 f = b.transform.forward; f.y = 0; b.velocity = f.normalized * 1.2f + Vector3.up * Mathf.Min(b.velocity.y, 0f); }
+                }
+                if (b != null && t > 25f && t < 50f && Time.realtimeSinceStartup >= rivLog)
+                {
+                    rivLog = Time.realtimeSinceStartup + 1f;
+                    Log.Info("autotest : pousse, voiture " + (b.isKinematic ? "copie" : "locale") + " en " + b.position.ToString("F2") + " v " + b.velocity.magnitude.ToString("F2"));
+                }
+            }
+            // [Test] Autotest=sondevolant : champs du volant (SteeringWheel) et du controleur de la voiture TestVoiture.
+            if (mode == "sondevolant" && t > 25f && !done)
+            {
+                done = true;
+                Rigidbody b = VehicleSync.Body(Config.Get("Test", "TestVoiture", "SORBET(190-200psi)"));
+                var sb = new System.Text.StringBuilder("autotest : sonde volant :");
+                if (b != null)
+                    foreach (MonoBehaviour m in b.GetComponentsInChildren<MonoBehaviour>(true))
+                    {
+                        if (m == null) continue;
+                        string tn = m.GetType().Name;
+                        if (tn != "SteeringWheel" && tn != "AxisCarController" && tn != "CarController") continue;
+                        sb.Append("\n  ").Append(tn).Append(" sur ").Append(Recon.Path(m.transform)).Append(" :");
+                        for (System.Type ty = m.GetType(); ty != null && ty != typeof(MonoBehaviour); ty = ty.BaseType)
+                            foreach (System.Reflection.FieldInfo fi in ty.GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.DeclaredOnly))
+                            {
+                                object v = null; try { v = fi.GetValue(m); } catch { }
+                                sb.Append(' ').Append(ty.Name).Append('.').Append(fi.Name).Append('=').Append(v is float ? ((float)v).ToString("F2") : v is UnityEngine.Object ? ((UnityEngine.Object)v).name : v != null ? v.ToString() : "null");
+                            }
+                    }
+                Log.Info(sb.ToString());
+            }
+            // [Test] Autotest=attelage : l'hote au volant du KEKMET (15-22 s), la FLATBED posee 4,5 m derriere et reliee par
+            // un joint fixe a 25 s (comme un attelage), le tracteur avance a 3 m/s de 28 a 40 s ; chacun note chaque seconde
+            // de 24 a 60 s la remorque (position, distance au tracteur, copie ou locale).
+            if (mode == "attelage")
+            {
+                if (t < 1f) { attTry = 0f; attExitAt = 1e9f; attVoisin = 0; attAir = 0; }
+                Rigidbody k = VehicleSync.Body("KEKMET"), fb = VehicleSync.Body("FLATBED");
+                if (Net.Session.IsHost && k != null && fb != null)
+                {
+                    if (t > 15f && step == 0) { step = 1; Log.Info("autotest : " + VehicleSync.TestEnter("KEKMET", false)); }
+                    if (t > 22f && step == 1) { step = 2; Log.Info("autotest : volant -> " + VehicleSync.TestEnter("KEKMET", true)); }
+                    if (t > 25f && step == 2)
+                    {
+                        step = 3;
+                        fb.transform.position = k.transform.TransformPoint(new Vector3(0f, 0.3f, Config.GetInt("Test", "AttelageVoisin", 0) != 0 ? -6.5f : -4.5f));
+                        fb.transform.rotation = k.transform.rotation;
+                        fb.velocity = Vector3.zero; fb.angularVelocity = Vector3.zero;
+                        var fj = fb.gameObject.AddComponent<FixedJoint>();
+                        fj.connectedBody = k;
+                        Log.Info("autotest : attelage, FLATBED reliee au KEKMET");
+                    }
+                    if (t > 28f && t < (Config.GetInt("Test", "AttelageVoisin", 0) != 0 ? 58f : 40f)) { Vector3 f = k.transform.forward; f.y = 0; k.velocity = f.normalized * 3f + Vector3.up * Mathf.Min(k.velocity.y, 0f); }
+                    // [Test] AttelageSortie=1 : moteur tenu en marche, l'hote descend a 42 s (moteur laisse tournant) : la remorque
+                    // doit lui rester (pas « rendue ») et suivre chez l'invite.
+                    if (Config.GetInt("Test", "AttelageSortie", 0) != 0)
+                    {
+                        // (le jeu ne laisse pas descendre moteur force en marche : sortie moteur arrete, puis la main reprise
+                        // comme un moteur laisse tournant, de 45 a 58 s)
+                        if (step == 9 && t < attExitAt + 12f) { VehicleSync.TestKeepRunning("KEKMET"); VehicleSync.TestOwn("KEKMET"); }
+                        if (step == 9 && t >= attExitAt + 12f) { step = 10; Log.Info("autotest : attelage, moteur relache"); }
+                        if (t > 42f && step >= 3 && step < 9 && t > attTry)
+                        {
+                            attTry = t + 1f;
+                            string st = VehicleSync.TestExit("KEKMET");
+                            if (st != "Player in car") { step = 9; attExitAt = t + 1f; Log.Info("autotest : attelage, sorti du tracteur -> " + st); }
+                        }
+                    }
+                }
+                // [Test] AttelageVoisin=1 : l'invite se pose a pied a 1,2 m de la remorque a 26 s (elle bouge a cote de lui des
+                // 28 s : il ne doit pas la prendre). A 32 s l'hote, au volant du KEKMET, « appuie » sur Range pour la boite de la
+                // GIFU (comme la touche) : rien ne doit partir ; l'invite note la pression d'air de la GIFU a 15 et 45 s (ses temps).
+                if (Config.GetInt("Test", "AttelageVoisin", 0) != 0)
+                {
+                    if (!Net.Session.IsHost && fb != null && t > 26f && attVoisin == 0)
+                    {
+                        attVoisin = 1;
+                        GameObject pl = GameObject.Find("PLAYER");
+                        var cc = pl != null ? pl.GetComponent<CharacterController>() : null;
+                        if (cc != null) cc.enabled = false;
+                        if (pl != null) pl.transform.position = fb.position + fb.transform.right * 1.8f + Vector3.up * 0.5f;
+                        if (cc != null) cc.enabled = true;
+                        if (fb.GetComponent<FixedJoint>() == null && k != null) fb.gameObject.AddComponent<FixedJoint>().connectedBody = k;   // (l'attelage du jeu est rejoue ici aussi)
+                        Log.Info("autotest : attelage, invite a pied a cote de la remorque");
+                    }
+                    Rigidbody gifu = VehicleSync.Body("GIFU(750/450psi)");
+                    if (Net.Session.IsHost && gifu != null && t > 32f && attVoisin == 0)
+                    {
+                        attVoisin = 1;
+                        Transform tr = gifu.transform.Find("Simulation/Transmission");
+                        PlayMakerFSM ch = tr != null ? Game.FsmOn(tr.gameObject, "Change") : null;
+                        if (ch != null) { Game.SetState(ch, "Button"); ch.SendEvent("GEAR"); }
+                        Log.Info("autotest : attelage, Range de la GIFU appuye ici -> " + (ch != null ? ch.ActiveStateName : "?"));
+                    }
+                    if (!Net.Session.IsHost && gifu != null && (t > 15f && attAir == 0 || t > 45f && attAir == 1))
+                    {
+                        attAir++;
+                        Transform ab = gifu.transform.Find("Simulation/Airbrakes");
+                        PlayMakerFSM ap = ab != null ? Game.FsmOn(ab.gameObject, "Air Pressure") : null;
+                        HutongGames.PlayMaker.FsmFloat pr = ap != null ? ap.FsmVariables.FindFsmFloat("Pressure") : null;
+                        Log.Info("autotest : attelage, air de la GIFU ici " + (pr != null ? pr.Value.ToString("F1") : "?"));
+                    }
+                }
+                if (k != null && fb != null && t > 24f && t < 60f && Time.realtimeSinceStartup >= rivLog)
+                {
+                    rivLog = Time.realtimeSinceStartup + 1f;
+                    Log.Info("autotest : attelage, remorque " + (fb.isKinematic ? "copie" : "locale") + " en " + fb.position.ToString("F1") + ", a " + (fb.position - k.position).magnitude.ToString("F1") + " m du tracteur " + (k.isKinematic ? "(copie)" : "(local)") + " en " + k.position.ToString("F1"));
+                }
+            }
+            // [Test] Autotest=fendeuse (retour d'un joueur, 10/10 : « attelee par un invite, la fendeuse s'envole ») : l'invite
+            // au volant du KEKMET (15-22 s) ; a 25 s chacun pose la fendeuse (Cutter) 2,6 m derriere le tracteur et l'y relie
+            // (joint fixe, comme le relevage) ; l'invite roule a 4 m/s de 28 a 40 s ; chacun note toutes les 0,5 s la pose de
+            // la fendeuse dans le repere du tracteur, et son etendue.
+            if (mode == "fendeuse")
+            {
+                Rigidbody k = VehicleSync.Body("KEKMET");
+                GameObject cg = Game.FindAny("Cutter");
+                Rigidbody cb = cg != null ? (cg.GetComponent<Rigidbody>() ?? cg.GetComponentInChildren<Rigidbody>()) : null;
+                if (!Net.Session.IsHost && k != null)
+                {
+                    if (t > 15f && step == 0) { step = 1; Log.Info("autotest : " + VehicleSync.TestEnter("KEKMET", false)); }
+                    if (t > 22f && step == 1) { step = 2; Log.Info("autotest : volant -> " + VehicleSync.TestEnter("KEKMET", true)); }
+                    if (t > 28f && t < 40f) { Vector3 f = k.transform.forward; f.y = 0; k.velocity = f.normalized * 4f + Vector3.up * Mathf.Min(k.velocity.y, 0f); }
+                }
+                if (k != null && cb != null && t > 25f && !teleported)
+                {
+                    teleported = true;
+                    cb.transform.position = k.transform.TransformPoint(new Vector3(0f, 0.6f, -2.6f));
+                    cb.transform.rotation = k.transform.rotation;
+                    cb.velocity = Vector3.zero; cb.angularVelocity = Vector3.zero;
+                    var fj = cb.gameObject.AddComponent<FixedJoint>();
+                    fj.connectedBody = k;
+                    Log.Info("autotest : fendeuse " + cb.name + " reliee au KEKMET");
+                }
+                if (k != null && cb != null && teleported && t < 50f && Time.realtimeSinceStartup >= rivLog)
+                {
+                    rivLog = Time.realtimeSinceStartup + 0.5f;
+                    Vector3 lp = k.transform.InverseTransformPoint(cb.position);
+                    if (!cabAv) { cabAv = true; cabMin = cabMax = lp; } else { cabMin = Vector3.Min(cabMin, lp); cabMax = Vector3.Max(cabMax, lp); }
+                    Log.Info("autotest : fendeuse dans le repere du tracteur " + lp.ToString("F2") + " (" + (cb.isKinematic ? "cinematique" : "physique") + "), tracteur " + (k.isKinematic ? "copie" : "local") + " a " + k.velocity.magnitude.ToString("F1") + " m/s ; etendue " + (cabMax - cabMin).ToString("F2"));
+                }
+            }
+            // [Test] Autotest=taxiclient : taxi active des deux cotes (8 s) ; l'invite au volant (15-22 s) ; l'hote lance une
+            // course (NEWJOB a 26 s, l'appel decroche : SUCCESS des que Logic est sur 'Call'). L'invite amene le taxi a
+            // 2,5 m de SON client quand celui-ci attend (Distance 1/2), puis roule a 5 m/s de 75 a 85 s. Chacun note toutes
+            // les 2 s de 26 a 100 s : etat de Logic, lieu de prise en charge, client (marcheur, corps, dans le repere de
+            // sa copie du taxi), bagages actifs et le suivi du PNJ (Npcs).
+            if (mode == "taxiclient")
+            {
+                bool host = Net.Session.IsHost;
+                if (tcWalker == null) { tcWalker = Game.FindAny("JOBS/TAXIJOB/Customer1/TaxiWalker"); tcCust = Game.FindAny("JOBS/TAXIJOB/Customer1"); }
+                GameObject walker = tcWalker;
+                PlayMakerFSM logic = walker != null ? Game.FsmOn(walker, "Logic") : null;
+                Rigidbody tx = VehicleSync.Body("MACHTWAGEN");
+                if (t > 8f && step == 0)
+                {
+                    step = 1;
+                    GameObject taxi = Game.FindAny("JOBS/TAXIJOB/MACHTWAGEN");
+                    if (taxi != null && !taxi.activeSelf) taxi.SetActive(true);
+                    Log.Info("autotest : taxiclient, taxi " + (taxi == null ? "introuvable" : "actif") + ", client " + (logic == null ? "sans Logic" : logic.ActiveStateName));
+                }
+                if (t > 24f && !tcOn && walker != null)
+                {
+                    tcOn = true;
+                    for (Transform x = walker.transform; x != null && x.name != "JOBS"; x = x.parent) x.gameObject.SetActive(true);
+                    Log.Info("autotest : taxiclient, client active, Logic " + (logic != null ? logic.ActiveStateName : "?"));
+                }
+                if (!host && t > 15f && step == 1) { step = 2; Log.Info("autotest : taxiclient " + VehicleSync.TestEnter("MACHTWAGEN", false)); }
+                if (!host && t > 22f && step == 2) { step = 3; Log.Info("autotest : taxiclient volant -> " + VehicleSync.TestEnter("MACHTWAGEN", true)); }
+                if (host && t > 70f && step == 1 && logic != null) { step = 2; logic.SendEvent("NEWJOB"); Log.Info("autotest : taxiclient NEWJOB -> " + logic.ActiveStateName); }
+                if (host && step == 2 && logic != null && logic.ActiveStateName == "Call") { step = 3; logic.SendEvent("SUCCESS"); Log.Info("autotest : taxiclient appel decroche -> " + logic.ActiveStateName); }
+                if (!host && step == 3 && t > 30f && logic != null && tx != null && (logic.ActiveStateName == "Distance 1" || logic.ActiveStateName == "Distance 2"))
+                {
+                    step = 4;
+                    Vector3 side = walker.transform.right; side.y = 0;
+                    tx.transform.position = walker.transform.position + side.normalized * 2.5f + Vector3.up * 0.6f;
+                    tx.transform.rotation = Quaternion.LookRotation(Vector3.Cross(side.normalized, Vector3.up));
+                    tx.velocity = Vector3.zero; tx.angularVelocity = Vector3.zero;
+                    tcAt = t;
+                    Log.Info("autotest : taxiclient, taxi amene pres du client en " + tx.position.ToString("F1"));
+                }
+                if (!host && tx != null && step == 4 && t < tcAt + 3f) { tx.velocity = Vector3.zero; tx.angularVelocity = Vector3.zero; }
+                if (!host && step == 4 && logic != null && (logic.ActiveStateName == "Randomize anim" || logic.ActiveStateName == "State 6" || logic.ActiveStateName == "State 7" || t > tcAt + 70f))
+                { step = 5; tcAt = t; Log.Info("autotest : taxiclient, depart (client " + logic.ActiveStateName + ")"); }
+                if (!host && tx != null && step == 5 && t < tcAt + 10f) { Vector3 f = tx.transform.forward; f.y = 0; tx.velocity = f.normalized * 5f + Vector3.up * Mathf.Min(tx.velocity.y, 0f); }
+                if (t > 26f && Time.realtimeSinceStartup >= rivLog && logic != null)
+                {
+                    rivLog = Time.realtimeSinceStartup + 2f;
+                    PlayMakerFSM suit = Game.FsmOn(walker, "Suitcases");
+                    var sb = new System.Text.StringBuilder("autotest : taxiclient Logic=" + logic.ActiveStateName + " Suitcases=" + (suit != null ? suit.ActiveStateName : "?"));
+                    GameObject pp = logic.FsmVariables.GetFsmGameObject("PickupPoint").Value;
+                    sb.Append(", prise ").Append(pp != null ? pp.name : "null").Append(", ID ").Append(logic.FsmVariables.GetFsmString("ID").Value);
+                    sb.Append(", marcheur en ").Append(walker.transform.position.ToString("F1")).Append(" sous ").Append(walker.transform.parent != null ? walker.transform.parent.name : "-");
+                    Transform ch = walker.transform.Find("Char");
+                    if (ch != null && tx != null) sb.Append(", corps dans le taxi ").Append(tx.transform.InverseTransformPoint(ch.position).ToString("F2")).Append(tx.isKinematic ? " (copie)" : " (local)");
+                    sb.Append(", bagages");
+                    if (tcLug == null && tcCust != null)
+                    {
+                        tcLug = new System.Collections.Generic.List<Transform>();
+                        foreach (Transform x in tcCust.GetComponentsInChildren<Transform>(true)) if (x.name.EndsWith("(lugga)")) tcLug.Add(x);
+                    }
+                    if (tcLug != null)
+                        foreach (Transform x in tcLug)
+                            if (x != null && x.gameObject.activeInHierarchy)
+                                sb.Append(' ').Append(x.name).Append('@').Append(x.parent != null ? x.parent.name : "-").Append(tx != null ? tx.transform.InverseTransformPoint(x.position).ToString("F1") : "");
+                    Log.Info(sb.ToString());
+                    Log.Info("autotest : taxiclient PNJ " + Npcs.State("TAXIJOB/Customer1/"));
+                }
+            }
+            if (mode == "sondegfx" && t > 20f && !done)
+            {
+                done = true;
+                var sb = new System.Text.StringBuilder("autotest : graphismes : qualite " + QualitySettings.GetQualityLevel() + "/" + string.Join(",", QualitySettings.names));
+                sb.Append(", ombres ").Append(QualitySettings.shadowDistance).Append(" m cascades ").Append(QualitySettings.shadowCascades).Append(" projection ").Append(QualitySettings.shadowProjection);
+                sb.Append(", lodBias ").Append(QualitySettings.lodBias).Append(" maxLOD ").Append(QualitySettings.maximumLODLevel).Append(", textures ").Append(QualitySettings.masterTextureLimit);
+                sb.Append(", aniso ").Append(QualitySettings.anisotropicFiltering).Append(", lumieres ").Append(QualitySettings.pixelLightCount).Append(", msaa ").Append(QualitySettings.antiAliasing);
+                sb.Append(", vsync ").Append(QualitySettings.vSyncCount).Append(", images max ").Append(Application.targetFrameRate).Append(", particules douces ").Append(QualitySettings.softVegetation);
+                Camera c = Camera.main;
+                if (c != null) sb.Append(", camera ").Append(c.name).Append(" ").Append(c.renderingPath).Append(" hdr ").Append(c.hdr).Append(" loin ").Append(c.farClipPlane).Append(" fov ").Append(c.fieldOfView);
+                Terrain[] ts = Object.FindObjectsOfType<Terrain>();
+                sb.Append(", terrains ").Append(ts.Length);
+                foreach (Terrain tr in ts) sb.Append(" [").Append(tr.name).Append(" herbe ").Append(tr.detailObjectDistance).Append("/").Append(tr.detailObjectDensity).Append(" arbres ").Append(tr.treeDistance).Append(" erreur ").Append(tr.heightmapPixelError).Append("]");
+                foreach (Light l in Object.FindObjectsOfType<Light>()) if (l.type == LightType.Directional) sb.Append(", lumiere ").Append(l.name).Append(" ombres ").Append(l.shadows).Append(" force ").Append(l.shadowStrength);
+                Log.Info(sb.ToString());
+            }
+            if (mode == "cabine")
+            {
+                // Hote : au volant de [Test] TestVoiture (SORBET) a 15 s, ceinture bouclee a 24 s (variable du jeu), roule
+                // de 27 a 40 s ; starter tire (1,8) a 30 s, frein a main relache (0) a 32 s. Invite : a 36 s et 44 s, ce qu'il
+                // voit (valeurs des commandes tenues, ceinture du conducteur, mains au volant, portieres figees).
+                string car = Config.Get("Test", "TestVoiture", "SORBET(190-200psi)");
+                t -= Config.GetInt("Test", "CabineDecalage", 0);   // (voiture d'un mod : apparait plus tard)
+                if (Net.Session.IsHost)
+                {
+                    if (t > 15f && step == 0) { step = 1; Log.Info("autotest : " + VehicleSync.TestEnter(car, false)); }
+                    // (vehicule loin : son declencheur s'allume apres la 1re pose -- reposee a 19 s pour y entrer)
+                    if (t > 19f && step == 1 && !cabRetp) { cabRetp = true; Log.Info("autotest : " + VehicleSync.TestEnter(car, false)); }
+                    if (t > 22f && step == 1) { step = 2; Log.Info("autotest : volant -> " + VehicleSync.TestEnter(car, true)); }
+                    if (t > 24f && step == 2) { step = 3; Game.SetGlobalBool("PlayerSeatbeltsOn", true); Log.Info("autotest : ceinture bouclee (variable)"); }
+                    Rigidbody b = VehicleSync.Body(car);
+                    VehicleSync.TestEngine(t > 26f && t < 41f ? 1800f : -1f, 0.4f);
+                    if (b != null && t > 27f && t < 40f) { Vector3 f = b.transform.forward; f.y = 0; b.velocity = f.normalized * Config.GetFloat("Test", "CabineVitesse", 6f) + Vector3.up * Mathf.Min(b.velocity.y, 0f); }
+                    // [Test] CabineTourne=deg/s : le vehicule tourne sur lui-meme pendant ce temps (siege qui glisse selon le cap ?)
+                    float turn = Config.GetFloat("Test", "CabineTourne", 0f);
+                    if (b != null && turn != 0f && t > 27f && t < 40f) b.transform.rotation = Quaternion.Euler(0f, turn * Time.deltaTime, 0f) * b.transform.rotation;
+                    if (t > 30f && step == 3) { step = 4; Log.Info("autotest : starter " + Knobs.TestHold("Choke", 1.8f)); }
+                    if (t > 32f && step == 4) { step = 5; Log.Info("autotest : frein a main " + Knobs.TestHold("HandBrake", 0f)); }
+                    if (t > 36f && step == 5) { step = 6; Log.Info("autotest : commandes " + Knobs.Describe()); }
+                    VehicleSync.TestHorn(t > 45f && t < 52f);
+                    VehicleSync.TestSteer(t > 30f && t < 38f ? 0.6f : float.NaN);   // (braquage annonce : l'invite le voit vers 15-23 s)
+                    if (t > 40f && step == 6) { step = 7; Log.Info("autotest : " + VehicleSync.TestGear(car, 2)); }
+                    if (t > 42f && step == 7) { step = 8; Log.Info("autotest : " + VehicleSync.TestGear(car, 3)); }   // (klaxon annonce de 45 a 52 s : l'invite, ~15 s de retard, le voit de 30 a 37 s)
+                }
+                else
+                {
+                    // [Test] CabinePassager=1 : l'invite s'assoit a l'avant a 20 s ; de 28 a 40 s (voiture qui roule), ecart
+                    // maximal entre la pose physique de la copie et sa pose affichee (camera du passager) -- 0 attendu
+                    // depuis 0.54 (copie deplacee a chaque image), jusqu'a vitesse x 20 ms avant.
+                    if (Config.GetInt("Test", "CabinePassager", 0) != 0)
+                    {
+                        Rigidbody b = VehicleSync.Body(car);
+                        if (t > 20f && !teleported) { teleported = true; Log.Info("autotest : passager " + Seats.TestSit(car, 0)); }
+                        if (b != null && t > 28f && t < 40f) cabGap = Mathf.Max(cabGap, (b.position - b.transform.position).magnitude);
+                        // Avatar du conducteur dans le repere de la voiture : etendue de ses positions en roulant (sauts).
+                        if (b != null && t > 12f && t < 26f)
+                            foreach (Avatar a in PlayerSync.Avatars)
+                                if (a.Root != null)
+                                {
+                                    Vector3 lp = b.transform.InverseTransformPoint(a.Root.transform.position);
+                                    if (!cabAv) { cabAv = true; cabMin = cabMax = lp; } else { cabMin = Vector3.Min(cabMin, lp); cabMax = Vector3.Max(cabMax, lp); }
+                                    if (Time.realtimeSinceStartup >= cabLogAt) { cabLogAt = Time.realtimeSinceStartup + 0.5f; Log.Info("autotest : passager, avatar " + lp.ToString("F2") + ", voiture v " + VehicleSync.RemoteSpeed(a.Player.Id).ToString("F1")); }
+                                }
+                        if (t > 17f && t < 26f && Time.realtimeSinceStartup >= cabWheelAt)
+                        {
+                            cabWheelAt = Time.realtimeSinceStartup + 1f;
+                            string hands = ""; foreach (Avatar a in PlayerSync.Avatars) hands = a.HandsState();
+                            Log.Info("autotest : passager, " + VehicleSync.WheelState(car) + " ; " + hands);
+                        }
+                        if (t > 24f && t < 30f && Time.realtimeSinceStartup >= cabGearAt)
+                        {
+                            cabGearAt = Time.realtimeSinceStartup + 0.1f;
+                            string hands = ""; foreach (Avatar a in PlayerSync.Avatars) hands = a.HandsState();
+                            Log.Info("autotest : passager, " + VehicleSync.GearState(car) + " ; " + hands);
+                        }
+                        if (t > 26f && !cabAvLogged) { cabAvLogged = true; Log.Info("autotest : passager, avatar du conducteur dans la voiture (en roulant) : etendue " + (cabMax - cabMin).ToString("F3") + " m, de " + cabMin.ToString("F2") + " a " + cabMax.ToString("F2")); }
+                        if (t > 34f && !sleepWatch) { sleepWatch = true; Log.Info("autotest : passager, " + VehicleSync.HornState(car)); }
+                        if (t > 41f && !foodMade) { foodMade = true; Log.Info("autotest : passager, apres : " + VehicleSync.HornState(car)); }
+                        if (t > 40f && !watchLogged) { watchLogged = true; Log.Info("autotest : passager, ecart pose physique / affichee max " + (cabGap * 100f).ToString("F1") + " cm, assis " + Seats.Seated + ", voiture " + (b != null ? (b.isKinematic ? "copie " : "locale ") + b.interpolation : "?")); }
+                    }
+                }
+                if (!Net.Session.IsHost && ((t > 36f && step == 0) || (t > 44f && step == 1)))
+                {
+                    step++;
+                    Log.Info("autotest : commandes " + Knobs.Describe());
+                    Log.Info("autotest : ceintures " + Seats.BeltState());
+                    foreach (Avatar a in PlayerSync.Avatars) Log.Info("autotest : mains " + a.HandsState());
+                    Log.Info("autotest : hayon " + CarDoors.StateOf(car, "Hatch"));
+                }
+            }
+            // [Test] Autotest=detacher (retour d'un joueur, 08/10 : « driver cant unbuckle seatbelt ») : l'hote au volant de
+            // [Test] TestVoiture a 15/22 s, boucle par l'automate du jeu a 26 s, etat toutes les 2 s, detache a 40 s.
+            // [Test] DetacherPassager=1 : l'invite s'assoit a l'avant a 20 s.
+            if (mode == "detacher")
+            {
+                string car = Config.Get("Test", "TestVoiture", "SORBET(190-200psi)");
+                // ([Test] DetacherConducteur=invite : l'invite au volant, l'hote passager)
+                if (Net.Session.IsHost != (Config.Get("Test", "DetacherConducteur", "hote") == "invite"))
+                {
+                    if (t > 15f && step == 0) { step = 1; Log.Info("autotest : " + VehicleSync.TestEnter(car, false)); }
+                    if (t > 18f && step == 1) { step = 10; Log.Info("autotest : debout " + Seats.TestDriverBelt(car, 0)); }
+                    if (t > 22f && step == 10) { step = 2; Log.Info("autotest : volant -> " + VehicleSync.TestEnter(car, true)); }
+                    if (t > 24f && step == 2) { step = 11; Log.Info("autotest : assis " + Seats.TestDriverBelt(car, 0)); }
+                    if (t > 26f && step == 11) { step = 3; Log.Info("autotest : " + Seats.TestDriverBelt(car, 1)); cabLogAt = Time.realtimeSinceStartup + 1f; }
+                    if (step == 3 && t < 40f && Time.realtimeSinceStartup >= cabLogAt) { cabLogAt = Time.realtimeSinceStartup + 2f; Log.Info("autotest : " + Seats.TestDriverBelt(car, 0)); }
+                    // ([Test] DetacherCasser=1 : boucle eteinte puis rallumee a 30 s, comme recopiee d'un autre ; detacher par le clic)
+                    if (Config.GetInt("Test", "DetacherCasser", 0) != 0 && t > 30f && step == 3 && !brokeLock) { brokeLock = true; Log.Info("autotest : " + Seats.TestBreakLock(car)); }
+                    if (t > 40f && step == 3) { step = 4; Log.Info("autotest : " + Seats.TestDriverBelt(car, 2)); }
+                    if (t > 43f && step == 4) { step = 5; Log.Info("autotest : apres " + Seats.TestDriverBelt(car, 0)); }
+                }
+                else
+                {
+                    if (Config.GetInt("Test", "DetacherPassager", 0) != 0 && t > 20f && step == 0) { step = 1; Log.Info("autotest : passager " + Seats.TestSit(car, 0)); }
+                    // ([Test] DetacherCeinture=s : le passager s'attache a s secondes)
+                    float dc = Config.GetFloat("Test", "DetacherCeinture", 0f);
+                    if (dc > 0f && t > dc && step == 1) { step = 6; Log.Info("autotest : passager " + Seats.TestBelt()); }
+                    if (step == 6 && t > 34f) step = 1;
+                    if (t > 34f && step < 2) { step = 2; Log.Info("autotest : ceintures " + Seats.BeltState()); }
+                }
+            }
+            // [Test] Autotest=axes : commandes des voitures garees (pedale de frein qui bouge quand un joueur recule a pied, retour
+            // de witefold, 11/10).
+            if (mode == "axes" && ((t > 30f && step == 0) || (t > 60f && step == 1))) { step++; Log.Info("autotest : axes " + VehicleSync.AxesState()); }
+            if (mode == "audit" && t > 70f && step == 0) { step = 1; Log.Info("autotest : clic " + Audit.TestAct()); }
+            if (mode == "audit" && t > 75f && step == 1) { step = 2; Log.Info("autotest : " + Audit.State()); }
+            // Captures : Regarder=1, la camera vise l'avatar le plus proche ; Regarder=2, le milieu du groupe d'avatars
+            // (photos a 3-4 joueurs) ; RegarderPos=x,y,z (sans Regarder) : le joueur se tourne vers ce point (pose).
+            // [Test] CameraAvatar=dx,dy,dz : une camera d'essai (par-dessus celle du joueur) a ce decalage (m, repere du monde)
+            // de l'avatar distant le plus proche, qui le vise : captures d'un avatar ou qu'il soit (lit, voiture...).
+            string ca = Config.Get("Test", "CameraAvatar", "");
+            if (ca.Length > 0)
+            {
+                string[] c = ca.Split(',');
+                var ci = System.Globalization.CultureInfo.InvariantCulture;
+                float dx = 0, dy = 0, dz = 0;
+                if (c.Length >= 3) { float.TryParse(c[0], System.Globalization.NumberStyles.Float, ci, out dx); float.TryParse(c[1], System.Globalization.NumberStyles.Float, ci, out dy); float.TryParse(c[2], System.Globalization.NumberStyles.Float, ci, out dz); }
+                Avatar near = null;
+                foreach (Avatar a in PlayerSync.Avatars) if (a.Root != null) { near = a; break; }
+                if (near != null)
+                {
+                    if (testCam == null)
+                    {
+                        testCam = new GameObject("MWCoop-CameraEssai").AddComponent<Camera>();
+                        testCam.depth = 100;
+                        testCam.nearClipPlane = 0.05f;
+                        testCam.fieldOfView = 60;
+                    }
+                    float hh = float.Parse(Config.Get("Test", "CameraHauteur", "0.3"), System.Globalization.CultureInfo.InvariantCulture);
+                    bool local = Config.GetInt("Test", "CameraLocale", 0) != 0;   // (decalage dans le repere de l'avatar : en voiture, celui de la voiture)
+                    Transform ar = near.Root.transform;
+                    Vector3 target = local ? ar.TransformPoint(new Vector3(0f, hh, 0f)) : ar.position + Vector3.up * hh;
+                    testCam.transform.position = local ? ar.TransformPoint(new Vector3(dx, dy, dz)) : ar.position + new Vector3(dx, dy, dz);
+                    testCam.transform.LookAt(target);
+                }
+            }
+            // [Test] CameraVoiture=x,y,z,vx,vy,vz : camera d'essai dans le repere de [Test] TestVoiture, tournee vers (vx,vy,vz).
+            string cv = Config.Get("Test", "CameraVoiture", "");
+            if (cv.Length > 0)
+            {
+                string[] c = cv.Split(',');
+                Rigidbody vb = VehicleSync.Body(Config.Get("Test", "TestVoiture", "SORBET"));
+                if (c.Length >= 6 && vb != null)
+                {
+                    var ci = System.Globalization.CultureInfo.InvariantCulture;
+                    System.Func<int, float> F = i => float.Parse(c[i], ci);
+                    if (testCam == null) { testCam = new GameObject("MWCoop-CameraEssai").AddComponent<Camera>(); testCam.depth = 100; testCam.nearClipPlane = 0.03f; testCam.fieldOfView = 70; }
+                    testCam.transform.position = vb.transform.TransformPoint(new Vector3(F(0), F(1), F(2)));
+                    testCam.transform.LookAt(vb.transform.TransformPoint(new Vector3(F(3), F(4), F(5))), vb.transform.up);
+                }
+            }
+            int look = Config.GetInt("Test", "Regarder", 0);
+            if (look == 2) LookAtGroup();
+            else if (look != 0) LookAtNearestAvatar();
+            else if (Config.Get("Test", "RegarderPos", "").Length > 0 && t > 9f) FacePoint(Config.Get("Test", "RegarderPos", ""));
+            if (mode == "cd") TestCd(t);
+            if (mode == "prise") TestPlug(t);
+            if (mode == "paie") TestPay(t);
+            if (mode == "teletexte") TestTeletext(t);
+            if (mode == "nuages" && !MWCoop.Net.Session.IsHost && t > 30f && step == 0)
+            {
+                // Invite : nuages inverses ici ; le message suivant de l'hote doit les remettre comme chez lui.
+                step = 1;
+                GameObject co = GameObject.Find("MAP/WEATHER/Clouds");
+                Transform o = co != null ? co.transform.Find("CloudObjects") : null;
+                if (o != null) { o.gameObject.SetActive(!o.gameObject.activeSelf); Log.Info("autotest : nuages inverses ici -> " + o.gameObject.activeSelf); }
+            }
+            if (mode == "nuages" && t > 28f && t < 40f && t >= cdLog)
+            {
+                cdLog = t + 2f;
+                GameObject co = GameObject.Find("MAP/WEATHER/Clouds");
+                Transform o = co != null ? co.transform.Find("CloudObjects") : null;
+                Log.Info("autotest : nuages " + (o != null ? o.gameObject.activeSelf.ToString() : "?"));
+            }
+            if (mode == "fluide")
+            {
+                // Invite : vitesse apparente de la copie de TestVoiture image par image (a-coups = grand ecart-type).
+                Rigidbody b = VehicleSync.Body(Config.Get("Test", "TestVoiture", "SORBET(190-200psi)"));
+                if (b != null && Time.deltaTime > 0f)
+                {
+                    Vector3 pos = b.transform.position;
+                    if (fluLast != Vector3.zero) { float v = (pos - fluLast).magnitude / Time.deltaTime; fluN++; fluSum += v; fluSq += v * v; if (v < 0.05f) fluStill++; }
+                    fluLast = pos;
+                    // Pieces de la voiture qui bougent PAR RAPPORT a elle (banquette, coffre qui tremblent chez le passager) :
+                    // deplacement moyen par image de chaque corps et de chaque objet a rendu nomme, dans le repere de la voiture.
+                    foreach (Transform c in b.GetComponentsInChildren<Transform>())
+                    {
+                        if (c == b.transform || (c.GetComponent<Rigidbody>() == null && c.GetComponent<Renderer>() == null)) continue;
+                        string cn = c.name.ToLowerInvariant();
+                        if (cn.Contains("tire") || cn.Contains("rim") || cn.Contains("wheel") || cn.Contains("hubcap") || cn.Contains("needle")) continue;   // (tournent normalement)
+                        Vector3 lp = b.transform.InverseTransformPoint(c.position);
+                        Quaternion lr = Quaternion.Inverse(b.rotation) * c.rotation;
+                        float[] acc;
+                        if (!fluParts.TryGetValue(c, out acc)) { fluParts[c] = new float[] { lp.x, lp.y, lp.z, 0, 0, 0, lr.x, lr.y, lr.z, lr.w }; continue; }
+                        var plp = new Vector3(acc[0], acc[1], acc[2]);
+                        var plr = new Quaternion(acc[6], acc[7], acc[8], acc[9]);
+                        acc[3] += (lp - plp).magnitude; acc[4] += Quaternion.Angle(lr, plr); acc[5] += 1;
+                        acc[0] = lp.x; acc[1] = lp.y; acc[2] = lp.z; acc[6] = lr.x; acc[7] = lr.y; acc[8] = lr.z; acc[9] = lr.w;
+                    }
+                    if (t >= fluLog) { fluLog = t + 2f; if (fluN > 0) { float m = fluSum / fluN; Log.Info("autotest : fluide, vitesse " + m.ToString("F2") + " m/s, ecart-type " + Mathf.Sqrt(Mathf.Max(0f, fluSq / fluN - m * m)).ToString("F2") + ", images immobiles " + fluStill + "/" + fluN); } fluN = 0; fluSum = fluSq = 0f; fluStill = 0;
+                        var worst = new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<float, string>>();
+                        foreach (var kv in fluParts)
+                            if (kv.Key != null && kv.Value[5] > 0)
+                            {
+                                float mm = kv.Value[3] / kv.Value[5] * 1000f, deg = kv.Value[4] / kv.Value[5];
+                                if (mm > 0.5f || deg > 0.05f) worst.Add(new System.Collections.Generic.KeyValuePair<float, string>(mm + deg * 10f, VehicleSync.RelPath(b.transform, kv.Key) + (kv.Key.GetComponent<Rigidbody>() != null ? "[corps " + (kv.Key.GetComponent<Rigidbody>().isKinematic ? "cin" : "dyn") + "]" : "") + " " + mm.ToString("F1") + " mm " + deg.ToString("F2") + " deg"));
+                                kv.Value[3] = kv.Value[4] = kv.Value[5] = 0;
+                            }
+                        worst.Sort((x, y) => y.Key.CompareTo(x.Key));
+                        var sbw = new System.Text.StringBuilder("autotest : fluide, pieces qui bougent dans la voiture (par image) :");
+                        for (int i = 0; i < worst.Count && i < 8; i++) sbw.Append(' ').Append(worst[i].Value).Append(';');
+                        Log.Info(worst.Count == 0 ? "autotest : fluide, aucune piece ne bouge dans la voiture" : sbw.ToString());
+                    }
+                }
+            }
+            if (mode == "mort")
+            {
+                // [Test] TestCause (booleen de Systems/Death) a 30 s ; TestReapparition=1/2 choisit 3 s apres. MortVolant=1 : au
+                // volant de TestVoiture des 22 s (mort au volant : commandes coupees, puis rendues).
+                if (Config.GetInt("Test", "MortVolant", 0) != 0 && t > 22f && step == 0 && step2 == 0) { step2 = 1; Log.Info("autotest : mort au volant, " + VehicleSync.TestEnter(Config.Get("Test", "TestVoiture", "SORBET(190-200psi)"), true)); }
+                if (t > 30f && step == 0) { step = 1; Log.Info("autotest : " + Respawn.TestDie(Config.Get("Test", "TestCause", "Hunger"))); }
+                if (t > 31f && Time.frameCount % 90 == 0 && t < 45f) Log.Info("autotest : " + Respawn.State() + " ; " + Respawn.FxDiff());
+                if (t > 38f && step == 1)
+                {
+                    step = 2;
+                    string png = System.IO.Path.Combine(System.IO.Path.Combine(Log.DataDir, "dumps"), "reapparition-" + Config.GetInt("Test", "TestReapparition", 1) + ".png");
+                    Application.CaptureScreenshot(png);
+                    Log.Info("autotest : capture " + png);
+                }
+                // ([Test] SangRetour=1 : a 50 s, l'automate Death de la camera relance hors de toute mort -- le sang revient ;
+                // attendu : eteint par la surveillance)
+                if (Config.GetInt("Test", "SangRetour", 0) != 0 && t > 50f && step == 2) { step = 3; Log.Info("autotest : sang relance, " + Respawn.TestStrayBlood()); }
+                if (step == 3 && t > 50.5f && t < 56f && Time.frameCount % 60 == 0) Log.Info("autotest : apres le sang relance : " + Respawn.State());
+            }
+            // [Test] Autotest=peinture : chacun fait apparaitre la meme piece neuve (distributeur [Test] PeintureDistributeur,
+            // Prefab VIN405 : pare-chocs) a 40 s ; sa peinture a 50 et 90 s (l'invite doit avoir celle de l'hote).
+            if (mode == "peinture")
+            {
+                string pf = Config.Get("Test", "PeintureDistributeur", "VIN405");
+                if (t > 40f && step == 0)
+                {
+                    step = 1;
+                    foreach (Object o in Game.AllFsms())
+                    {
+                        PlayMakerFSM f = o as PlayMakerFSM;
+                        FsmGameObject pv = f != null && f.FsmName == "Spawn" ? f.FsmVariables.FindFsmGameObject("Prefab") : null;
+                        if (Config.GetInt("Test", "PeintureRetirer", 0) != 0 && f != null && f.FsmName == "Paint" && f.FsmVariables.FindFsmString("ID") != null && f.FsmVariables.FindFsmString("ID").Value == pf + "C1") { Game.SetState(f, "Random type"); Log.Info("autotest : peinture, " + pf + "C1 retiree au hasard ici"); break; }
+                        if (pv == null || pv.Value == null || pv.Value.name != pf) continue;
+                        Log.Info("autotest : peinture, distributeur " + Recon.Path(f.transform) + " [" + f.ActiveStateName + "] allume " + f.enabled + " actif " + f.gameObject.activeInHierarchy);
+                        f.SendEvent("SPAWNITEM");   // (comme un colis : numero suivant, peinture tiree)
+                        Log.Info("autotest : peinture, " + pf + " demande -> [" + f.ActiveStateName + "]");
+                        break;
+                    }
+                }
+                if ((t > 50f && step2 == 0) || (t > 90f && step2 == 1)) { step2++; Log.Info("autotest : peinture " + pf + "C1 : " + Paint.State(pf + "C1")); }
+            }
+            // [Test] Autotest=vin : table de la plaque VIN a 30 s et 70 s (chacun).
+            if (mode == "vin" && ((t > 30f && step == 0) || (t > 70f && step == 1))) { step++; Log.Info("autotest : " + Vin.Describe()); }
+            if (mode == "parebrise")
+            {
+                // Hote : casse le pare-brise de [Test] TestVoiture (CORRIS) a 30 s ; chacun note son etat a 25 et 70 s.
+                string car = Config.Get("Test", "TestVoiture", "CORRIS");
+                if (Net.Session.IsHost && t > 30f && step == 0) { step = 1; Log.Info("autotest : " + Windshields.TestBreak(car)); }
+                if ((t > 25f && step2 == 0) || (t > 70f && step2 == 1)) { step2++; Log.Info("autotest : t=" + t.ToString("F0") + " " + Windshields.State(car)); }
+            }
+            if (mode == "couchette")
+            {
+                // Invite assis sur la couchette de la GIFU (place [Test] TestPlace, 2 : milieu) a 20 s ; l'hote le filme
+                // (camera d'essai devant la couchette) a 40 s.
+                if (!Net.Session.IsHost && t > 20f && step == 0) { step = 1; Log.Info("autotest : couchette " + Seats.TestSit("GIFU", Config.GetInt("Test", "TestPlace", 2))); }
+                if (Net.Session.IsHost && t > 30f)
+                {
+                    Transform car; Vector3 head; string cn;
+                    for (int id = 1; id < 8; id++)
+                        if (Seats.RemoteSeat(id, out car, out head, out cn) && car != null)
+                        {
+                            if (testCam == null) { testCam = new GameObject("MWCoop-CameraEssai").AddComponent<Camera>(); testCam.depth = 100; testCam.nearClipPlane = 0.03f; testCam.fieldOfView = 70; }
+                            testCam.transform.position = car.TransformPoint(head + (Config.Get("Test", "CouchetteVue", "") == "cote" ? new Vector3(0.95f, -0.05f, 0.35f) : new Vector3(0.55f, -0.1f, 1.1f)));
+                            testCam.transform.LookAt(car.TransformPoint(head + new Vector3(0f, -0.35f, 0f)), car.up);
+                            if (step == 0 && t > 70f) { step = 1; CaptureSoon("couchette", 0.1f); }
+                            break;
+                        }
+                }
+            }
+            if (mode == "souleve")
+            {
+                // Hote : a cote de la mobylette a 30 s, la deplace a la main (1 m/s, 4 s), monte dessus a 45 s ; chacun note sa
+                // position (l'invite la voit-elle bouger ? revient-elle a sa place quand on monte ?).
+                string car = Config.Get("Test", "TestVoiture", "JONNEZ ES(Clone)");
+                Rigidbody b = VehicleSync.Body(car);
+                if (Net.Session.IsHost)
+                {
+                    if (t > 30f && step == 0) { step = 1; Log.Info("autotest : souleve " + VehicleSync.TestEnter(car, false) + (b != null ? ", " + car + " en " + b.position.ToString("F2") : ", introuvable")); }
+                    if (b != null && t > 33f && t < 37f) { Vector3 f = b.transform.forward; f.y = 0; b.velocity = f.normalized * 1f + Vector3.up * Mathf.Min(b.velocity.y, 0f); }
+                    if (t > 40f && step == 1) { step = 2; Log.Info("autotest : souleve, deplacee en " + (b != null ? b.position.ToString("F2") : "?")); }
+                    if (t > 45f && step == 2) { step = 3; Log.Info("autotest : souleve, monte -> " + VehicleSync.TestEnter(car, true)); }
+                    if (t > 52f && step == 3) { step = 4; Log.Info("autotest : souleve, apres montee en " + (b != null ? b.position.ToString("F2") : "?")); }
+                }
+                else if (b != null && Time.frameCount % 300 == 0 && t > 20f) Log.Info("autotest : souleve, vue ici en " + b.position.ToString("F2") + (b.isKinematic ? " (copie)" : ""));
+            }
+            if (mode == "accident")
+            {
+                // Au volant (mode conduite), la tete du conducteur se detache a 30 s, en roulant.
+                string car = Config.Get("Test", "TestVoiture", "SORBET(190-200psi)");
+                if (t > 15f && step == 0) { step = 1; Log.Info("autotest : " + VehicleSync.TestEnter(car, false)); }
+                if (t > 22f && step == 1) { step = 2; Log.Info("autotest : volant -> " + VehicleSync.TestEnter(car, true)); }
+                Rigidbody b = VehicleSync.Body(car);
+                float choc = Config.GetInt("Test", "TestChoc", 30);   // (passager a bord : plus tard)
+                if (b != null && t > choc - 5f && t < choc + 1f) { Vector3 f = b.transform.forward; f.y = 0; b.velocity = f.normalized * 8f + Vector3.up * Mathf.Min(b.velocity.y, 0f); }
+                if (t > choc && step == 2) { step = 3; Log.Info("autotest : choc " + Respawn.TestCrash(car)); }
+                if (t > 30.5f && Time.frameCount % 90 == 0 && t < 46f) Log.Info("autotest : " + Respawn.State());
+                if (t > 46f && step == 3) { step = 4; Log.Info("autotest : remonte " + VehicleSync.TestEnter(car, false)); }
+                if (t > 52f && step == 4) { step = 5; Log.Info("autotest : volant -> " + VehicleSync.TestEnter(car, true)); }
+                if (t > 54f && step == 5 && Time.frameCount % 120 == 0 && t < 60f) Log.Info("autotest : yeux " + Seats.DriverEyes(car.Split('(')[0]));
+            }
+            if (mode == "coffre")
+            {
+                // Invite : ouvre [Test] TestPorte de TestVoiture des que la voiture (conduite par l'autre) roule,
+                // la lache, puis la referme 3 s plus tard (bouton tenu jusqu'au claquement).
+                string vc = Config.Get("Test", "TestVoiture", "SORBET(190-200psi)"), vp = Config.Get("Test", "TestPorte", "Hatch");
+                Rigidbody b = VehicleSync.Body(vc);
+                float now = Time.realtimeSinceStartup;
+                if (b != null && t > 12f && !coffreStartSet) { coffreStartSet = true; coffreStart = b.position; }
+                if (b != null && coffreStartSet && step == 0 && (b.position - coffreStart).magnitude > 3f) { step = 1; coffreT = now; Log.Info("autotest : la voiture roule, ouvre " + CarDoors.TestOpen(vc, true, vp)); }
+                if (step == 1 && now - coffreT > 0.6f) { step = 2; coffreT = now; Log.Info("autotest : lache " + CarDoors.TestState(vc, "Mouse off", vp)); }
+                if (step == 2 && now - coffreT > 3f) { step = 3; Log.Info("autotest : referme " + CarDoors.TestGrab(vc, vp)); }
+                if (b != null && step >= 1 && Time.frameCount % 60 == 0) Log.Info("autotest : " + CarDoors.StateOf(vc, vp) + ", voiture en " + b.position.ToString("F1"));
+            }
+            if (mode == "peindre")
+            {
+                // [Test] TestPiece peinte en rouge a 30 s ; etat a 40 s.
+                string id = Config.Get("Test", "TestPiece", "VIN4111");
+                if (t > 30f && step == 0) { step = 1; Log.Info("autotest : " + Paint.TestSpray(id, new Color(0.8f, 0.1f, 0.1f, 1f))); }
+                if (t > 40f && step == 1) { step = 2; Log.Info("autotest : peinture " + id + " : " + Paint.State(id)); }
+            }
+            if (mode == "etatpeinture" && t > 36f && !done) { done = true; string id = Config.Get("Test", "TestPiece", "VIN4111"); Log.Info("autotest : peinture " + id + " : " + Paint.State(id)); }
+            if (mode == "reglage" && t > 30f && !done) { done = true; Log.Info("autotest : reglage " + Settings.TestNearest()); }
+            if (mode == "quete")
+            {
+                // [Test] TestQuete=partie de cle, TestEvenement=evenement envoye a 30 s ; etat a 40 s.
+                string part = Config.Get("Test", "TestQuete", "WoodJob1Point");
+                if (t > 30f && step == 0)
+                {
+                    step = 1;
+                    Log.Info("autotest : quete " + Jobs.TestEvent(part, Config.Get("Test", "TestEvenement", "ORDER")));
+                    if (Config.GetInt("Test", "TestPaie", 0) != 0) Log.Info("autotest : le boulot paie, " + Wallet.Test(300));
+                }
+                if (t > 40f && step == 1) { step = 2; Log.Info("autotest : quete " + Jobs.StateOf(part)); }
+            }
+            if (mode == "etatquete")
+            {
+                string part = Config.Get("Test", "TestQuete", "WoodJob1Point");
+                string st = Jobs.StateOf(part);
+                // Le boulot rejoue ici paie lui aussi (simule) : ne doit pas etre compte deux fois.
+                if (Config.GetInt("Test", "TestPaie", 0) != 0 && step == 0 && st.EndsWith("Activate order")) { step = 1; Log.Info("autotest : le boulot rejoue paie, " + Wallet.Test(300)); }
+                if (t > 45f && !done) { done = true; Log.Info("autotest : quete " + st + ", " + Wallet.State()); }
+            }
+            if (mode == "desynchro" && t > 6f && !done) { done = true; Log.Info("autotest : porte locale seulement " + Interactions.TestLocalDoor(GameObject.Find("PLAYER").transform.position)); }
+            // [Test] Autotest2=etat : apres l'essai principal, l'hote met TestQuete dans TestEtat a 45 s.
+            if (Config.Get("Test", "Autotest2", "") == "etat" && MWCoop.Net.Session.IsHost && t > 45f && step2 == 0)
+            { step2 = 1; Log.Info("autotest : " + WorldFsms.TestState(Config.Get("Test", "TestQuete", "TVPrograms::Schedule"), Config.Get("Test", "TestEtat", "News"))); }
+            if (mode == "phares" && t > 20f && !done) { done = true; Log.Info("autotest : " + Interactions.TestNamed(Config.Get("Test", "TestObjet", "KEKMET(350-400psi)/LOD/Dashboard/ButtonLightModes"))); }
+            if (mode == "porte" && t > 15f && !done)
+            {
+                done = true;
+                GameObject pl = GameObject.Find("PLAYER");
+                Log.Info("autotest : porte " + Interactions.TestNearestDoor(pl.transform.position));
+            }
+            if (mode == "monter")
+            {
+                // [Test] TestPiece monte a 30 s, demontee a 45 s (comme les clics du jeu).
+                string id = Config.Get("Test", "TestPiece", "VIN413C1");
+                if (t > 30f && step == 0) { step = 1; Log.Info("autotest : " + Parts.TestToggle(id)); }
+                if (Config.GetInt("Test", "TestVis", 0) != 0)
+                {
+                    // Vis : 3 crans serres (36-38 s), 1 desserre (40 s), etat a 44 s ; pas de demontage.
+                    if (t > 35f + step && step >= 1 && step <= 3) { step++; Log.Info("autotest : vis " + Parts.TestBolt(id, true)); }
+                    if (t > 40f && step == 4) { step = 5; Log.Info("autotest : vis " + Parts.TestBolt(id, false)); }
+                    if (t > 44f && step == 5) { step = 6; Log.Info("autotest : vis " + Parts.BoltState(id)); }
+                }
+                else if (t > 45f && step == 1) { step = 2; Log.Info("autotest : " + Parts.TestToggle(id)); }
+            }
+            // [Test] SuivrePiece=~gasoline : position de cet objet a 46 s (l'autre joueur le promene).
+            string watchKey = Config.Get("Test", "SuivrePiece", "");
+            if (watchKey.Length > 0 && t > Config.GetInt("Test", "SuivreDelai", 46) && !watchLogged)
+            {
+                watchLogged = true;
+                string k = watchKey.StartsWith("~") ? Props.FindKey(watchKey.Substring(1)) : watchKey;
+                Log.Info("autotest : " + k + " est en " + Props.Where(k));
+            }
+            // [Test] Autotest=tenir (TestPiece, ~sandbag(item1) par defaut) : l'hote tient l'objet devant lui en marchant en
+            // rond de 40 a 70 s ; l'invite note 2 fois/s sa position dans le repere de l'avatar de l'hote (pieds, cap) et,
+            // a 85 s, l'ecart type de cette position : un objet colle a l'avatar ne bouge pas dans son repere.
+            if (mode == "tenir")
+            {
+                string id = Config.Get("Test", "TestPiece", "~sandbag(item1)");
+                if (id.StartsWith("~")) id = Props.FindKey(id.Substring(1)) ?? id;
+                if (Net.Session.IsHost == (Config.Get("Test", "Teneur", "hote") != "invite"))   // ([Test] Teneur=invite : l'invite tient, l'hote note)
+                {
+                    Transform cam = PlayerSync.LocalCamera;
+                    if (t > 40f && t < 70f && cam != null)
+                    {
+                        GameObject pl = GameObject.Find("PLAYER");
+                        var cc = pl != null ? pl.GetComponent<CharacterController>() : null;
+                        if (cc != null) { pl.transform.Rotate(0, 30f * Time.deltaTime, 0); cc.SimpleMove(pl.transform.forward * 1.8f); }
+                        Rigidbody hb = Props.TestHold(id, cam);
+                        if (step == 0) { step = 1; Log.Info("autotest : tenir " + id + (hb != null ? "" : " (absent)")); }
+                    }
+                    if (t > 70f && step == 1) { step = 2; Props.TestHold(id, null); Log.Info("autotest : tenir, lache"); }
+                }
+                else
+                {
+                    Avatar av = null;
+                    foreach (Avatar a in PlayerSync.Avatars) if (a.Root != null) { av = a; break; }
+                    Rigidbody b = Props.BodyOf(id);
+                    if (av != null && b != null && b.isKinematic && (av.Player.State.Flags & PlayerSync.F_Carry) != 0 && t >= holdLog && t < 120f)
+                    {
+                        holdLog = t + 0.5f;
+                        Vector3 lp = av.Root.transform.InverseTransformPoint(b.position);
+                        holdN++; holdSum += lp; holdSq += Vector3.Scale(lp, lp);
+                        if (holdN % 6 == 1) Log.Info("autotest : tenir, objet dans le repere de l'avatar " + lp.ToString("F2"));
+                    }
+                    if (t > 125f && holdN > 0 && !done)
+                    {
+                        done = true;
+                        Vector3 m = holdSum / holdN, v = holdSq / holdN - Vector3.Scale(m, m);
+                        Log.Info("autotest : tenir, " + holdN + " mesures, moyenne " + m.ToString("F2") + ", ecart type " + new Vector3(Mathf.Sqrt(Mathf.Max(v.x, 0)), Mathf.Sqrt(Mathf.Max(v.y, 0)), Mathf.Sqrt(Mathf.Max(v.z, 0))).ToString("F3"));
+                    }
+                }
+            }
+            // [Test] Autotest=ranger (TestPiece, ~sandbag(item1)) : comme un mod d'inventaire (YAIM). L'hote tient l'objet de
+            // 40 a 50 s, l'eteint en main a 50 s (range), le rallume pose 1,5 m devant lui a 70 s (sorti au sol). L'invite note
+            // toutes les 2 s s'il le voit (actif) et ou. Attendu : cache chez l'invite apres 50 s (horloge de l'hote), revu
+            // pose devant l'hote apres 70 s.
+            // [Test] Rangeur=invite : l'invite range ; RessortirMain=1 : comme l'outil du jeu (grattoir, F puis F) -- l'objet
+            // reste dans la main eteint, puis rallume dans la main a 70 s, tenu jusqu'a 76 s et lache. Le rangeur note aussi.
+            // [Test] Autotest=tracts : l'hote lance le boulot des tracts (JOBS/ADs :: Data -> "New job") a 30 s, tient le paquet
+            // de tracts de 45 a 55 s (Props.TestHold) ; chacun note toutes les 3 s de 28 a 70 s le paquet (actif, pose, parent,
+            // cle de Props) et l'etat de l'automate.
+            if (mode == "tracts")
+            {
+                GameObject ads = Game.FindAny("JOBS/ADs");
+                PlayMakerFSM data = ads != null ? Game.FsmOn(ads, "Data") : null;
+                // (vrai depart : l'appel aux pubs de Calls, Autotest=appel ; tenu ensuite de 65 a 75 s)
+                if (Config.GetInt("Test", "TractsForce", 0) == 0) Calls.Test("appel", t);
+                // ([Test] TractsForce=1 : "New job" pose chez CHACUN a 30 s, comme le jour du boulot venu ; l'invite tient le paquet
+                // de 80 a 88 s)
+                else if (t > 30f && step == 0 && data != null) { step = 1; Game.SetState(data, "New job"); Log.Info("autotest : tracts, New job ici -> " + data.ActiveStateName); }
+                if (!Net.Session.IsHost && Config.GetInt("Test", "TractsForce", 0) != 0 && t > 80f && t < 88f && PlayerSync.LocalCamera != null) { Rigidbody gh = Props.TestHold(Props.FindKey("advert pile"), PlayerSync.LocalCamera); if (step == 1) { step = 2; Log.Info("autotest : tracts, l'invite tient le paquet (" + (gh != null ? "ok" : "absent") + ")"); } }
+                if (!Net.Session.IsHost && t > 88f && step == 2) { step = 3; Props.TestHold(Props.FindKey("advert pile"), null); }
+                float h0 = 65f;
+                if (step == 0 && t > 32f && data != null && data.ActiveStateName != "Wait call") step = 1;
+                string pk = Props.FindKey("advert pile");
+                if (Net.Session.IsHost && t > h0 && t < h0 + 10f && PlayerSync.LocalCamera != null) { Rigidbody hb = Props.TestHold(pk, PlayerSync.LocalCamera); if (step == 1) { step = 2; Log.Info("autotest : tracts, paquet tenu (" + pk + ", " + (hb != null ? "ok" : "absent") + ")"); } }
+                if (Net.Session.IsHost && t > h0 + 10f && step == 2) { step = 3; Props.TestHold(pk, null); Log.Info("autotest : tracts, paquet lache"); }
+                if (t > 40f && t < 95f && t >= holdLog)
+                {
+                    holdLog = t + 3f;
+                    GameObject pile = null;
+                    foreach (Rigidbody rb in Resources.FindObjectsOfTypeAll(typeof(Rigidbody))) if (rb.name == "advert pile(itemx)" && rb.hideFlags == HideFlags.None) pile = rb.gameObject;
+                    Log.Info("autotest : tracts, automate " + (data != null ? data.ActiveStateName : "?") + ", paquet " + (pile == null ? "introuvable" : (pile.activeInHierarchy ? "actif" : "inactif") + " en " + pile.transform.position.ToString("F1") + " sous " + (pile.transform.parent != null ? Recon.Path(pile.transform.parent) : "racine")) + ", cle " + pk);
+                }
+            }
+            // [Test] Autotest=boulotloin : l'invite va a l'usine a 40 s (l'hote reste chez lui) ; a 60 et 75 s, chacun note la
+            // distance mesuree par l'usine (JOBS/FACTORY :: Database, Distance -- l'usine ferme au-dela de 200 m) et si son
+            // site est allume (OpeningTimes/LOD1). Attendu chez l'hote : distance de l'invite, site allume.
+            if (mode == "boulotloin")
+            {
+                if (!Net.Session.IsHost && t > 40f && step == 0)
+                {
+                    step = 1;
+                    GameObject pallet = Game.FindAny("JOBS/FACTORY/OpeningTimes/LOD1/JOB/NPClookPallet");
+                    GameObject pl = GameObject.Find("PLAYER");
+                    if (pallet != null && pl != null)
+                    {
+                        var cc = pl.GetComponent<CharacterController>(); if (cc != null) cc.enabled = false;
+                        pl.transform.position = pallet.transform.position + Vector3.up * 1f; if (cc != null) cc.enabled = true;
+                        Log.Info("autotest : boulotloin, invite pose a l'usine en " + pl.transform.position.ToString("F0"));
+                    }
+                    else Log.Info("autotest : boulotloin, usine introuvable");
+                }
+                if ((t > 60f && step <= 1 && holdLog < 60f) || (t > 75f && holdLog < 75f))
+                {
+                    holdLog = t;
+                    GameObject fac = Game.FindAny("JOBS/FACTORY"), lod = Game.FindAny("JOBS/FACTORY/OpeningTimes/LOD1");
+                    PlayMakerFSM db = fac != null ? Game.FsmOn(fac, "Database") : null;
+                    HutongGames.PlayMaker.FsmFloat dist = db != null ? db.FsmVariables.FindFsmFloat("Distance") : null;
+                    Log.Info("autotest : boulotloin, usine : distance " + (dist != null ? dist.Value.ToString("F0") : "?") + " (etat " + (db != null ? db.ActiveStateName : "?") + "), site " + (lod != null ? (lod.activeInHierarchy ? "allume" : "eteint") : "?") + ", joueur vise : " + NearDoors.Describe("JOBS/FACTORY"));
+                }
+            }
+            // [Test] Autotest=radioautre : l'hote allume la radio du BACHGLOTZ ([Test] RadioBouton) a 40 s (bouton de volume, comme un clic : "Check
+            // tune", volume 0,6), l'eteint a 58 s ; chacun note toutes les 3 s ou est son vrai jeu de canaux et les copies.
+            // Attendu chez l'invite : une copie dans le BACHGLOTZ de 40 a 58 s, son vrai jeu de canaux pas deplace.
+            if (mode == "radioflux" && !Net.Session.IsHost) Radio.TestStream(t);
+            // (l'hote fait apparaitre a 40 s ; chacun compte ensuite les buches et sacs de Cheatbox++ a 55 s)
+            // [Test] Autotest=fendattel : l'hote attelle la fendeuse au KEKMET a 40 s, la detelle a 55 s ; chacun note son etat
+            // toutes les 3 s de 35 a 70 s. Attendu : meme etat des deux cotes quelques dixiemes apres chaque geste.
+            if (mode == "fendattel")
+            {
+                if (Net.Session.IsHost && t > 40f && step == 0) { step = 1; Log.Info("autotest : " + CutterHitch.TestSet(1)); }
+                if (Net.Session.IsHost && t > 55f && step == 1) { step = 2; Log.Info("autotest : " + CutterHitch.TestSet(0)); }
+                if (t > 35f && t < 70f && t >= holdLog) { holdLog = t + 3f; Log.Info("autotest : fendattel, " + CutterHitch.State()); }
+            }
+            if (mode == "cbxextra" && Net.Session.IsHost && t > 40f && step == 0) { step = 1; Log.Info("autotest : cbxextra " + ModCheatbox.TestExtra()); }
+            if (mode == "cbxextra" && t > 55f && step2 == 0) { step2 = 1; Log.Info("autotest : cbxextra, ici " + ModCheatbox.TestCount()); }
+            if (mode == "jonne" && Net.Session.IsHost && t > 45f && step == 0) { step = 1; Log.Info("autotest : jonne, " + ModJonne.Test(0)); }
+            if (mode == "jonne" && Net.Session.IsHost && t > 58f && step == 1) { step = 2; Log.Info("autotest : jonne, " + ModJonne.Test(1)); }
+            if (mode == "jonne" && !Net.Session.IsHost && t > 50f && step == 0) { step = 1; Log.Info("autotest : jonne, " + ModJonne.Test(2)); }
+            ModTowCart.Test(mode, t);
+            ModJackStands.Test(mode, t);
+            if (mode == "jonne2" && Net.Session.IsHost && t > 45f && step == 0) { step = 1; Log.Info("autotest : jonne, " + ModJonne.Test(5)); }
+            if (mode == "jonne2" && t > 60f && step2 == 0) { step2 = 1; Log.Info("autotest : jonne, objets " + Props.Ids("w:jfs:") + " ; " + ModJonne.Test(3)); }
+            if (mode == "jonne" && Net.Session.IsHost && t > 64f && step == 2) { step = 3; Log.Info("autotest : jonne, " + ModJonne.Test(4)); }
+            if (mode == "jonne" && t > 70f && step2 == 0) { step2 = 1; Log.Info("autotest : jonne, " + ModJonne.Test(3)); }
+            if (mode == "vendeur" && Net.Session.IsHost && t > 40f && step == 0) { step = 1; Log.Info("autotest : " + ModCheatbox.TestSeller(0, 0)); }
+            if (mode == "vendeur" && Net.Session.IsHost && t > 46f && step == 1) { step = 2; Log.Info("autotest : " + ModCheatbox.TestSeller(1, Config.GetInt("Test", "VendeurPiece", 0))); }
+            if (mode == "vendeur" && Net.Session.IsHost && t > 52f && step == 2) { step = 3; Log.Info("autotest : " + ModCheatbox.TestSeller(1, Config.GetInt("Test", "VendeurPiece2", 3))); }
+            // [Test] Autotest=valise (mod Suitcase installe des deux cotes) : chacun note la valise toutes les 2 s de 30 a 85 s ;
+            // l'hote la tient devant lui de 40 a 50 s ; l'invite la fait reapparaitre devant lui a 62 s comme le mod (ancienne
+            // detruite, nouvelle a sa place). Attendu : memes poses des deux cotes apres chaque geste.
+            if (mode == "valise")
+            {
+                GameObject sc = GameObject.Find("Suitcase");
+                if (t > 30f && t < 85f && t >= holdLog) { holdLog = t + 2f; Log.Info("autotest : valise " + (sc != null ? sc.transform.position.ToString("F2") : "absente") + " | " + Props.Ids("w:mod:")); }
+                if (Net.Session.IsHost && t > 40f && t < 50f && PlayerSync.LocalCamera != null) { Props.TestHold(Props.FindKey("valise"), PlayerSync.LocalCamera); if (step == 0) { step = 1; Log.Info("autotest : valise tenue par l'hote"); } }
+                if (Net.Session.IsHost && t > 50f && step == 1) { step = 2; Props.TestHold(Props.FindKey("valise"), null); Log.Info("autotest : valise lachee par l'hote"); }
+                if (!Net.Session.IsHost && t > 62f && step == 0 && sc != null && PlayerSync.LocalCamera != null)
+                {
+                    step = 1;
+                    Transform cam = PlayerSync.LocalCamera;
+                    Vector3 f = cam.forward; f.y = 0f; f.Normalize();
+                    GameObject nc = (GameObject)Object.Instantiate(sc, cam.position + f * 1.5f - Vector3.up * 0.9f, Quaternion.LookRotation(-f, Vector3.up));
+                    nc.name = "Suitcase";
+                    Object.Destroy(sc);
+                    Log.Info("autotest : valise reapparue devant l'invite en " + nc.transform.position.ToString("F2"));
+                }
+            }
+            if (mode == "radioautre")
+            {
+                string part = Config.Get("Test", "RadioBouton", "BACHGLOTZ(1905kg)/RadioPivot/Radio/ButtonsRadio/RadioVolume::Knob");
+                if (Net.Session.IsHost && t > 40f && step == 0)
+                {
+                    step = 1;
+                    GameObject vb = Game.FindAny(part.Substring(0, part.IndexOf("::")));
+                    PlayMakerFSM kf = vb != null ? Game.FsmOn(vb, "Knob") : null;
+                    if (kf != null) { HutongGames.PlayMaker.FsmFloat vf = kf.FsmVariables.FindFsmFloat("Volume"); if (vf != null) vf.Value = 0.6f; }
+                    Log.Info("autotest : radioautre, " + Jobs.TestSend(part, "Mouse off 2", "ON", "Check tune"));
+                }
+                if (Net.Session.IsHost && t > 50f && step == 1 && Config.GetInt("Test", "RadioCoupe", 0) != 0) { step = 2; Log.Info("autotest : radioautre, " + Radio.TestCut()); }
+                if (Net.Session.IsHost && t > 58f && step == 1) { step = 2; Log.Info("autotest : radioautre, " + Jobs.TestSend(part, "Decrease", "OFF", "Off")); }
+                if (!Net.Session.IsHost && Config.GetInt("Test", "RadioFlux", 0) != 0 && t > 30f && step == 0) { step = 1; Log.Info("autotest : radioautre, " + Radio.TestFolkSong()); }
+                // ([Test] RadioLocale=s : l'invite allume ici la radio du KEKMET a s secondes, volume 0,3 -- ses reglages doivent rester les siens)
+                float rl = Config.GetFloat("Test", "RadioLocale", 0f);
+                if (!Net.Session.IsHost && rl > 0f && t > rl && step2 == 0)
+                {
+                    step2 = 1;
+                    GameObject kv = Game.FindAny("KEKMET(350-400psi)/RadioPivot/Radio/ButtonsRadio/RadioVolume");
+                    PlayMakerFSM kk = kv != null ? Game.FsmOn(kv, "Knob") : null;
+                    if (kk != null) { HutongGames.PlayMaker.FsmFloat vf = kk.FsmVariables.FindFsmFloat("Volume"); if (vf != null) vf.Value = 0.3f; Game.SetState(kk, "Check tune"); }
+                    Log.Info("autotest : radioautre, radio du KEKMET allumee ici " + (kk != null));
+                }
+                if (t > 35f && t < 72f && t >= holdLog) { holdLog = t + 3f; Log.Info("autotest : radioautre, " + Radio.GhostState()); }
+            }
+            // [Test] Autotest=tenirvoiture (TestPiece, ~sandbag(item1) ; TestVoiture, SORBET) : l'hote « tient » l'objet de 40 a
+            // 55 s au milieu de l'habitacle de la voiture (comme une piece amenee a son support) ; chacun note toutes les
+            // secondes la pose de la voiture. Attendu : la voiture ne bouge pas chez l'invite (copie de l'objet tenu).
+            if (mode == "tenirvoiture")
+            {
+                string id = Config.Get("Test", "TestPiece", "~sandbag(item1)");
+                if (id.StartsWith("~")) id = Props.FindKey(id.Substring(1)) ?? id;
+                Rigidbody car = VehicleSync.Body(Config.Get("Test", "TestVoiture", "SORBET(190-200psi)"));
+                if (Net.Session.IsHost && car != null)
+                {
+                    if (t > 40f && t < 55f)
+                    {
+                        if (holdCam == null) holdCam = new GameObject("MWCoop-EssaiMain").transform;
+                        holdCam.rotation = car.rotation;
+                        holdCam.position = car.worldCenterOfMass + car.transform.up * 0.45f - car.transform.forward * 0.7f;   // (objet pose 0,7 m devant, 0,25 m sous : au centre)
+                        Rigidbody hb = Props.TestHold(id, holdCam);
+                        if (hb != null) hb.detectCollisions = false;   // (ici l'objet de l'essai est cinematique, pas tenu par la main du jeu : il pousserait la voiture de l'hote)
+                        if (step == 0) { step = 1; Log.Info("autotest : tenirvoiture, tient " + id + " dans " + car.name); }
+                    }
+                    if (t > 55f && step == 1) { step = 2; Rigidbody hb = Props.TestHold(id, null); if (hb != null) hb.detectCollisions = true; Log.Info("autotest : tenirvoiture, lache"); }
+                }
+                if (car != null && t > 35f && t < 70f && t >= holdLog) { holdLog = t + 1f; Log.Info("autotest : tenirvoiture, " + car.name + " en " + car.position.ToString("F2") + " rot " + car.rotation.eulerAngles.ToString("F0") + " v " + car.velocity.magnitude.ToString("F2")); }
+            }
+            if (mode == "ranger")
+            {
+                string id = Config.Get("Test", "TestPiece", "~sandbag(item1)");
+                if (id.StartsWith("~")) id = Props.FindKey(id.Substring(1)) ?? id;
+                bool storer = Net.Session.IsHost == (Config.Get("Test", "Rangeur", "hote") != "invite");
+                bool inHand = Config.GetInt("Test", "RessortirMain", 0) != 0;
+                if (storer)
+                {
+                    Transform cam = PlayerSync.LocalCamera;
+                    if (t > 40f && t < 50f && cam != null) { Props.TestHold(id, cam); if (step == 0) { step = 1; Log.Info("autotest : ranger, tient " + id); } }
+                    if (t > 50f && step == 1) { step = 2; Rigidbody rb = Props.BodyOf(id); if (rb != null) { rangeGo = rb.gameObject; rangeGo.SetActive(false); } Log.Info("autotest : ranger, eteint en main"); }
+                    if (t > 52f && step == 2 && !inHand) { step = 3; Props.TestHold(id, null); }
+                    if (inHand && t > 70f && step == 2 && rangeGo != null && cam != null) { step = 5; rangeGo.SetActive(true); Log.Info("autotest : ranger, rallume dans la main"); }
+                    if (inHand && step == 5 && t < 76f && cam != null) Props.TestHold(id, cam);
+                    if (inHand && step == 5 && t >= 76f) { step = 6; Props.TestHold(id, null); Log.Info("autotest : ranger, lache"); }
+                    if (t >= holdLog && t > 44f && t < 100f) { holdLog = t + 2f; Rigidbody rb2 = Props.BodyOf(id); Log.Info("autotest : ranger, chez le rangeur " + (rb2 == null ? "sans corps" : (rb2.gameObject.activeInHierarchy ? "visible en " + rb2.position.ToString("F1") : "cache"))); }
+                    if (t > 70f && step == 3 && rangeGo != null && cam != null)
+                    {
+                        step = 4;
+                        Vector3 f = cam.forward; f.y = 0;
+                        rangeGo.transform.position = cam.position + f.normalized * 1.5f;
+                        rangeGo.SetActive(true);
+                        Rigidbody rb = rangeGo.GetComponent<Rigidbody>(); if (rb != null) rb.isKinematic = false;
+                        Log.Info("autotest : ranger, ressorti en " + rangeGo.transform.position.ToString("F1"));
+                    }
+                }
+                else if (t >= holdLog && t < 140f)
+                {
+                    holdLog = t + 2f;
+
+                    Rigidbody rb = Props.BodyOf(id);
+                    Log.Info("autotest : ranger, objet " + (rb == null ? "sans corps ici" : (rb.gameObject.activeInHierarchy ? "visible en " + rb.position.ToString("F1") : "cache")));
+                }
+            }
+            // [Test] Autotest=poro (instances avec le mod Okkelmo Poro) : l'hote monte sur la motoneige a 60 s comme le mod
+            // (joueur range sous PORO, PlayerCurrentVehicle "Poro"), la pousse a 4 m/s de 65 a 80 s, descend a 90 s.
+            // Chacun note toutes les 2 s la position de PORO et si c'est une copie.
+            if (mode == "poro")
+            {
+                GameObject poro = GameObject.Find("PORO");
+                Rigidbody pb = poro != null ? poro.GetComponent<Rigidbody>() : null;
+                if (Net.Session.IsHost && pb != null)
+                {
+                    Transform pl = Game.PlayerT;
+                    if (t > 60f && step == 0 && pl != null)
+                    {
+                        step = 1;
+                        var cc = pl.GetComponent<CharacterController>(); if (cc != null) cc.enabled = false;
+                        pl.position = poro.transform.TransformPoint(new Vector3(0f, 0.9f, -0.3f));
+                        pl.parent = poro.transform;
+                        Game.SetGlobal("PlayerCurrentVehicle", "Poro");
+                        Log.Info("autotest : poro, monte ; moteur " + VehicleSync.ModEngine("PORO", true));
+                    }
+                    if (t > 65f && t < 80f) { Vector3 f = poro.transform.forward; f.y = 0; pb.velocity = f.normalized * 4f + Vector3.up * Mathf.Min(pb.velocity.y, 0f); }
+                    if (t > 90f && step == 1 && pl != null)
+                    {
+                        step = 2;
+                        pl.parent = null;
+                        pl.position += Vector3.up * 0.3f + poro.transform.right * 1.2f;
+                        var cc = pl.GetComponent<CharacterController>(); if (cc != null) cc.enabled = true;
+                        Game.SetGlobal("PlayerCurrentVehicle", "");
+                        Log.Info("autotest : poro, descendu");
+                    }
+                }
+                if (pb != null && t > 20f && t < 160f && Time.realtimeSinceStartup >= rivLog)
+                {
+                    rivLog = Time.realtimeSinceStartup + 2f;
+                    Log.Info("autotest : poro en " + pb.position.ToString("F1") + (pb.isKinematic ? " (copie)" : " (locale)") + " v " + pb.velocity.magnitude.ToString("F1") + ", " + VehicleSync.ModEngine("PORO", false));
+                }
+                if (pb == null && t > 20f && step == 0) { step = 9; Log.Info("autotest : poro, pas de PORO ici"); }
+            }
+            // [Test] Autotest=rivettvente (TestPos pres de JOBS/HouseWood1) : l'achat de la Rivett, par le vrai chemin. A 40 s
+            // l'hote appelle Reijo (CALLED sur CARPARTS/PARTSYSTEM/PhoneNumbers/08609553::Data -> SELLCAR -> WoodJob1Point
+            // "State 1" : flechette Wood1Car, vendeur) ; a 60 s de SA montre l'acheteur ([Test] Acheteur=invite|hote, invite par
+            // defaut) paie ("Pay for car" de PayMoney::Use, comme le clic : -500 mk, PAID -> Give keys -> ORDERTAKEN ->
+            // WoodJob1Point "Activate order" : flechette eteinte). Chacun note toutes les 3 s flechettes, vendeur, PayMoney,
+            // WoodJob1Point (Car, Order), etape du numero.
+            if (mode == "rivettvente")
+            {
+                GameObject dart = Game.FindAny("YARD/Building/MAP/Darts/Wood1Car"), dartW = Game.FindAny("YARD/Building/MAP/Darts/Wood1");
+                GameObject seller = Game.FindAny("JOBS/HouseWood1/LOD/CarPos/NPCWood/WoodCaller1"), job = Game.FindAny("JOBS/HouseWood1/WoodJob1Point");
+                GameObject payGo = Game.FindAny(PayPath);
+                PlayMakerFSM anim = seller != null ? Game.FsmOn(seller, "Animations") : null, logic = job != null ? Game.FsmOn(job, "Logic") : null;
+                PlayMakerFSM pay = payGo != null ? Game.FsmOn(payGo, "Use") : null;
+                bool buyer = Config.Get("Test", "Acheteur", "invite") == (Net.Session.IsHost ? "hote" : "invite");
+                if (Net.Session.IsHost && t > 40f && step == 0)
+                {
+                    step = 1;
+                    PlayMakerFSM num = null;
+                    foreach (Object o in Game.AllFsms())
+                    {
+                        var f = (PlayMakerFSM)o;
+                        if (f != null && f.FsmName == "Data" && f.transform.parent != null && f.transform.parent.name == "PhoneNumbers" && (f.gameObject.name == "08609553" || f.gameObject.name == "numberdisabled"))
+                        {
+                            FsmString nb = f.FsmVariables.FindFsmString("Number");
+                            if (nb != null && nb.Value == "08609553") num = f;
+                        }
+                    }
+                    if (num != null) num.SendEvent("CALLED");
+                    Log.Info("autotest : rivettvente, appel de Reijo -> " + (num != null ? num.gameObject.name + " " + num.ActiveStateName : "numero introuvable"));
+                }
+                // [Test] VentePres=x,y,z : l'acheteur y va a 52 s (pres du vendeur ; TestPos a plus de 50 m de lui : le jeu ne
+                // l'allume qu'a un joueur parti a plus de 50 m, de 8 a 20 h). VenteForcer=0 : vendeur pas allume de force.
+                // [Test] VenteTemoin=x,y,z : l'autre joueur y va aussi (a quelques metres : voit la scene sans la declencher).
+                string near = Config.Get("Test", buyer ? "VentePres" : "VenteTemoin", "");
+                if (near.Length > 0 && t > 52f && !rivNear)
+                {
+                    rivNear = true;
+                    string[] c = near.Split(',');
+                    var ci = System.Globalization.CultureInfo.InvariantCulture;
+                    GameObject pl = GameObject.Find("PLAYER");
+                    var cc = pl.GetComponent<CharacterController>();
+                    cc.enabled = false; pl.transform.position = new Vector3(float.Parse(c[0], ci), float.Parse(c[1], ci), float.Parse(c[2], ci)); cc.enabled = true;
+                    Log.Info("autotest : rivettvente, " + (buyer ? "acheteur" : "temoin") + " pres du vendeur (" + near + ")");
+                }
+                if (buyer && t > Config.GetFloat("Test", "VentePaie", 60f) && (step == 0 || step == 1))
+                {
+                    step = 2;
+                    if (Config.GetInt("Test", "VenteForcer", 1) != 0)
+                        for (Transform x = seller != null ? seller.transform : null; x != null; x = x.parent) if (!x.gameObject.activeSelf) { Log.Info("autotest : rivettvente, allume " + x.name); x.gameObject.SetActive(true); }
+                    if (payGo != null && !payGo.activeSelf) payGo.SetActive(true);
+                    if (pay != null) Game.SetState(pay, "Pay for car");
+                    Log.Info("autotest : rivettvente, paie le vendeur -> PayMoney " + (pay != null ? pay.ActiveStateName : "introuvable") + ", vendeur " + (anim != null ? anim.ActiveStateName : "?"));
+                }
+                if (t > 30f && t < 300f && Time.realtimeSinceStartup >= rivLog)
+                {
+                    rivLog = Time.realtimeSinceStartup + 3f;
+                    FsmBool car = logic != null ? logic.FsmVariables.FindFsmBool("Car") : null, order = logic != null ? logic.FsmVariables.FindFsmBool("Order") : null;
+                    Log.Info("autotest : rivettvente, flechette voiture " + (dart == null ? "?" : dart.activeSelf ? "ALLUMEE" : "eteinte") + ", bois " + (dartW == null ? "?" : dartW.activeSelf ? "allumee" : "eteinte")
+                             + ", vendeur " + (anim != null ? anim.ActiveStateName + (anim.enabled ? "" : " (coupe)") + (anim.gameObject.activeInHierarchy ? "" : " (eteint)") : "?")
+                             + ", PayMoney " + (pay != null ? pay.ActiveStateName + (payGo.activeInHierarchy ? "" : " (eteint)") : "?")
+                             + ", WoodJob1Point " + (logic != null ? logic.ActiveStateName : "?") + " Car " + (car != null && car.Value) + " Order " + (order != null && order.Value));
+                }
+            }
+            // [Test] Autotest=teleinvite ([Test] TeleQui=invite|hote) : ce joueur allume la tele du salon a 30 s ; chacun note
+            // toutes les 3 s de 28 a 80 s la grille (TVPrograms :: Schedule, ADs : etat, actif) et l'ecran (enfants actifs).
+            if (mode == "teleinvite")
+            {
+                bool me = Net.Session.IsHost == (Config.Get("Test", "TeleQui", "invite") == "hote");
+                if (me && t > 30f && step == 0)
+                {
+                    step = 1;
+                    GameObject sw = Game.FindAny("YARD/Building/LIVINGROOM/TV/TVSwitch");
+                    PlayMakerFSM u = sw != null ? Game.FsmOn(sw, "Use") : null;
+                    if (u != null) { Game.SetState(u, "Switch"); Log.Info("autotest : tele allumee ici -> " + u.ActiveStateName); }
+                }
+                // (photos de l'ecran : camera d'essai a 1,2 m de TVScreen, sur ses 4 cotes, a 45-48 s)
+                for (int k = 0; k < 4; k++)
+                    if (t > 45f + k && step3 == k)
+                    {
+                        step3 = k + 1;
+                        GameObject scr = null, tvr = Game.FindAny("YARD/Building/LIVINGROOM/TV");
+                        if (tvr != null) foreach (Transform c in tvr.GetComponentsInChildren<Transform>(true)) if (c.name == "TVScreen") { scr = c.gameObject; break; }
+                        if (scr == null) { Log.Info("autotest : tele, TVScreen introuvable"); break; }
+                        if (testCam == null) { testCam = new GameObject("MWCoop-CameraEssai").AddComponent<Camera>(); testCam.depth = 100; testCam.nearClipPlane = 0.02f; testCam.fieldOfView = 50f; }
+                        Transform st = scr.transform;
+                        Vector3 n = k == 0 ? st.forward : k == 1 ? -st.forward : k == 2 ? st.right : -st.right;
+                        testCam.transform.position = st.position + n * 1.2f;
+                        testCam.transform.rotation = Quaternion.LookRotation(st.position - testCam.transform.position, Vector3.up);
+                        CaptureSoon("tele-" + k, 0.4f);
+                        Log.Info("autotest : tele, photo " + k + " (" + Recon.Path(st) + ")");
+                    }
+                if (t > 40f && step2 == 0)
+                {
+                    step2 = 1;
+                    foreach (Object o in Game.AllFsms())
+                    {
+                        var f = (PlayMakerFSM)o;
+                        if (f == null || f.hideFlags != HideFlags.None || f.gameObject.name != "TVPrograms" || f.FsmName != "Schedule") continue;
+                        var names = new System.Text.StringBuilder();
+                        foreach (HutongGames.PlayMaker.FsmState st in f.FsmStates) names.Append(st.Name).Append(", ");
+                        Log.Info("autotest : grille, etats : " + names);
+                        foreach (string st in new[] { f.ActiveStateName, "State 1", "Start", "Check time", "Time" }) Log.Info("autotest : grille, " + Jobs.DumpActions(f, st));
+                        break;
+                    }
+                }
+                if (t > 28f && t < 80f && t >= ttLog2)
+                {
+                    ttLog2 = t + 3f;
+                    var sb = new System.Text.StringBuilder("autotest : tele");
+                    foreach (Object o in Game.AllFsms())
+                    {
+                        var f = (PlayMakerFSM)o;
+                        if (f == null || f.hideFlags != HideFlags.None || f.gameObject.name != "TVPrograms") continue;
+                        sb.Append(" | ").Append(Recon.Path(f.transform)).Append("::").Append(f.FsmName).Append(" [").Append(f.ActiveStateName).Append("]").Append(f.enabled ? "" : " COUPE").Append(f.gameObject.activeInHierarchy ? "" : " eteint");
+                    }
+                    GameObject tv = Game.FindAny("YARD/Building/LIVINGROOM/TV");
+                    if (tv != null) foreach (Transform c in tv.GetComponentsInChildren<Transform>(false)) if (c.name.ToLowerInvariant().Contains("screen") || c.name.ToLowerInvariant().Contains("noise") || c.name.ToLowerInvariant().Contains("static")) sb.Append(" | ").Append(c.name).Append(" on");
+                    Log.Info(sb.ToString());
+                }
+            }
+            // [Test] Autotest=particules : de 30 a 90 s, toutes les secondes, le plus grand nombre de particules vivantes de
+            // chaque emetteur actif (ParticleSystem et ParticleEmitter) ; a 92 s, ceux qui ont emis, et le nombre d'emetteurs
+            // actifs muets. A comparer chez l'hote et l'invite (retour de JD, 14/10 : fumee, poussiere du trafic absentes chez l'invite).
+            if (mode == "particules")
+            {
+                if (t > 30f && t < 150f && t >= partNext)
+                {
+                    partNext = t + 1f;
+                    foreach (ParticleSystem ps in Object.FindObjectsOfType<ParticleSystem>())
+                    {
+                        string k = Recon.Path(ps.transform) + " [S]";
+                        int c; partMax.TryGetValue(k, out c); partMax[k] = Mathf.Max(c, ps.particleCount);
+                    }
+                    foreach (ParticleEmitter pe in Object.FindObjectsOfType<ParticleEmitter>())
+                    {
+                        string k = Recon.Path(pe.transform) + " [E" + (pe.emit ? "+" : "-") + "]";
+                        int c; partMax.TryGetValue(k, out c); partMax[k] = Mathf.Max(c, pe.particleCount);
+                    }
+                }
+                if (t > 36f && step3 == 0 && Net.Session.IsHost)
+                {
+                    step3 = 1;
+                    GameObject hp = Game.FindAny("TRAFFIC/VehiclesDirtRoad/Rally/HEPPA");
+                    PlayMakerFSM th = hp != null ? Game.FsmOn(hp, "Throttle") : null;
+                    if (th != null) foreach (string st in new[] { "Accelerate", "Cruise", "Cruise 2", "Other", "State 1", "State 2", "State 3" }) Log.Info("autotest : particules, Throttle " + Jobs.DumpActions(th, st));
+                    PlayMakerFSM sh = hp != null ? Game.FsmOn(hp, "Shifting") : null;
+                    if (sh != null) foreach (string st in new[] { "State 2", "State 3" }) Log.Info("autotest : particules, Shifting " + Jobs.DumpActions(sh, st));
+                }
+                if (t > 35f && step2 == 99)
+                {
+                    // qui commande ces emetteurs : automates (de la meme racine) dont une action vise l'emetteur ou son parent
+                    step2 = 1;
+                    var sb2 = new System.Text.StringBuilder("autotest : particules, commandes :");
+                    var targets = new System.Collections.Generic.List<GameObject>();
+                    foreach (ParticleEmitter pe in Resources.FindObjectsOfTypeAll(typeof(ParticleEmitter)))
+                        if (pe != null && pe.hideFlags == HideFlags.None && (pe.name == "RoosterTail" || pe.name.StartsWith("SnowCloud") || pe.name == "ExhaustParticle" || pe.name.StartsWith("SmokeHomeKiuas") || pe.transform.parent != null && pe.transform.parent.name == "Kiuas")) targets.Add(pe.gameObject);
+                    var seen = new System.Collections.Generic.HashSet<string>();
+                    foreach (GameObject tg in targets)
+                    {
+                        Transform root = tg.transform;
+                        for (int up = 0; up < 3 && root.parent != null; up++) root = root.parent;   // (pas toute la racine : YARD figeait le jeu)
+                        foreach (PlayMakerFSM f in root.GetComponentsInChildren<PlayMakerFSM>(true))
+                        {
+                            HutongGames.PlayMaker.FsmState[] sts;
+                            try { sts = f.FsmStates; } catch { continue; }
+                            foreach (HutongGames.PlayMaker.FsmState st in sts)
+                            {
+                                HutongGames.PlayMaker.FsmStateAction[] acts;
+                                try { acts = st.Actions; } catch { continue; }
+                                foreach (HutongGames.PlayMaker.FsmStateAction ac in acts ?? new HutongGames.PlayMaker.FsmStateAction[0])
+                                {
+                                    if (ac == null) continue;
+                                    bool hit = false;
+                                    foreach (System.Reflection.FieldInfo fi in ac.GetType().GetFields())
+                                    {
+                                        object v = null; try { v = fi.GetValue(ac); } catch { }
+                                        GameObject go = null;
+                                        var od = v as HutongGames.PlayMaker.FsmOwnerDefault; if (od != null) go = od.OwnerOption == HutongGames.PlayMaker.OwnerDefaultOption.UseOwner ? f.gameObject : od.GameObject != null ? od.GameObject.Value : null;
+                                        var fg = v as HutongGames.PlayMaker.FsmGameObject; if (fg != null) go = fg.Value;
+                                        var fp = v as HutongGames.PlayMaker.FsmProperty; if (fp != null && fp.TargetObject != null) { Component cp = fp.TargetObject.Value as Component; go = cp != null ? cp.gameObject : fp.TargetObject.Value as GameObject; }
+                                        if (go != null && (go == tg || tg.transform.IsChildOf(go.transform))) hit = true;
+                                    }
+                                    if (!hit) continue;
+                                    string k = Recon.Path(f.transform) + "::" + f.FsmName + " / " + st.Name + " : " + ac.GetType().Name + " -> " + tg.name;
+                                    if (seen.Add(k)) sb2.Append(" | ").Append(k).Append(f.enabled ? "" : " (COUPE)").Append(" [").Append(f.ActiveStateName).Append("]");
+                                }
+                            }
+                        }
+                    }
+                    Log.Info(sb2.ToString());
+                }
+                if (t > 152f && step == 0)
+                {
+                    step = 1;
+                    var sb = new System.Text.StringBuilder("autotest : particules, emetteurs actifs " + partMax.Count + " ; ont emis :");
+                    var keys = new System.Collections.Generic.List<string>(partMax.Keys); keys.Sort();
+                    foreach (string k in keys) if (partMax[k] > 0) sb.Append(" | ").Append(k).Append(" = ").Append(partMax[k]);
+                    sb.Append(" || muets :");
+                    foreach (string k in keys) if (partMax[k] == 0) sb.Append(" | ").Append(k);
+                    Log.Info(sb.ToString());
+                }
+            }
+            if (mode == "sangsonde" && t > 25f && !done) { done = true; Log.Info("autotest : " + Respawn.ProbeBlood()); }
+            if (mode == "porter")
+            {
+                // [Test] TestPiece promenee de 30 a 36 s (comme tenue en main), position a 45 s.
+                string id = Config.Get("Test", "TestPiece", "VIN2121");
+                if (id.StartsWith("~")) id = Props.FindKey(id.Substring(1));
+                if (t > 30f && t < 36f) { string w = Props.TestCarry(id, t); if (Time.frameCount % 60 == 0) Log.Info("autotest : " + w); }
+                if (t > 45f && !done) { done = true; Log.Info("autotest : " + id + " finit en " + Props.Where(id)); }
+            }
+            // [Test] TestPos=x,y,z : le joueur y est teleporte a 8 s (recos, scenes a cote d'un lieu).
+            string tp = Config.Get("Test", "TestPos", "");
+            if (tp.Length > 0 && t > 8f && !teleported)
+            {
+                teleported = true;
+                string[] c = tp.Split(',');
+                GameObject pl = GameObject.Find("PLAYER");
+                var cc = pl.GetComponent<CharacterController>();
+                cc.enabled = false;
+                pl.transform.position = new Vector3(float.Parse(c[0], System.Globalization.CultureInfo.InvariantCulture),
+                    float.Parse(c[1], System.Globalization.CultureInfo.InvariantCulture), float.Parse(c[2], System.Globalization.CultureInfo.InvariantCulture));
+                cc.enabled = true;
+                Log.Info("autotest : teleporte en " + tp);
+            }
+            if (mode == "courses" && t > 30f && !done)
+            {
+                done = true;
+                Log.Info("autotest : " + Shop.TestBuy(Config.Get("Test", "TestProduit", "Beer"), 2));
+            }
+            if (mode == "poses")
+            {
+                // Une posture toutes les 8 s a partir de 20 s : accroupi, assis, porte, boit, fume, salue, debout.
+                int[] seq = { PlayerSync.F_Crouch, PlayerSync.F_Seated, PlayerSync.F_Carry, PlayerSync.F_Drink,
+                              PlayerSync.F_Smoke, PlayerSync.F_Hello, 0 };
+                int i = t < 20f ? -1 : (int)((t - 20f) / 8f);
+                int fl = i >= 0 && i < seq.Length ? seq[i] : 0;
+                if (fl != PoseFlags) { PoseFlags = fl; Log.Info("autotest : posture " + fl); }
+            }
+            if (mode == "courses")
+            {
+                // Apres l'achat (30 s) : le sac est promene de 36 a 42 s (comme porte), objets a 50 s.
+                if (t > 36f && t < 42f)
+                {
+                    if (bagId == null) { bagId = Props.NearestId("shoppingbag", GameObject.Find("PLAYER").transform.position); Log.Info("autotest : sac " + bagId); }
+                    if (bagId != null) Props.TestCarry(bagId, t);
+                }
+            }
+            if ((mode == "courses" || mode == "") && t > 50f && step == 0 && Config.Get("Test", "TestPos", "").Length > 0)
+            {
+                step = 1;
+                Log.Info("autotest : objets autour : " + Props.Near(GameObject.Find("PLAYER").transform.position, 8f));
+            }
+            if (mode == "argent")
+            {
+                // Paie de 500 a 25 s (partagee), achat de 120 a 30 s (local), etat a 40 s.
+                if (t > 25f && step == 0) { step = 1; Log.Info("autotest : paie, " + Wallet.Test(500)); }
+                if (t > 30f && step == 1) { step = 2; Log.Info("autotest : achat, " + Wallet.Test(-120)); }
+                if (t > 40f && step == 2) { step = 3; Log.Info("autotest : " + Wallet.State()); }
+            }
+            if (mode == "etatargent" && t > 35f && !done) { done = true; Log.Info("autotest : " + Wallet.State()); }
+            if (mode == "ou" && t > 40f && !done) { done = true; string id = Config.Get("Test", "TestPiece", "VIN2121"); Log.Info("autotest : " + id + " finit en " + Props.Where(id)); }
+            if (mode == "etatvis" && t > 40f && !done) { done = true; Log.Info("autotest : vis " + Parts.BoltState(Config.Get("Test", "TestPiece", ""))); }
+            if (mode == "sauver" && (t > 55f && step == 0 || t > 75f && step == 1 || t > 95f && step == 2 && Config.Get("Test", "Autotest2", "") == "porte"))
+            {
+                // Etat des automates Use (articles) avant et apres SAVEGAME : le jeu ne sauve qu'en quittant.
+                step++;
+                var sb = new System.Text.StringBuilder("autotest : automates Use " + (step == 1 ? "avant" : "apres") + " SAVEGAME :");
+                foreach (PlayMakerFSM f in Object.FindObjectsOfType<PlayMakerFSM>())
+                    if (f.FsmName == "Use" || f.FsmName == "Data" && f.gameObject.name.Contains("(itemx)"))
+                        sb.Append(' ').Append(f.gameObject.name).Append('=').Append(f.ActiveStateName).Append(';');
+                Log.Info(sb.ToString());
+            }
+            if (mode == "sauver" && t > 60f && !done)
+            {
+                // Sauvegarde complete comme le jeu (1482 automates ecoutent SAVEGAME).
+                done = true;
+                Game.SaveInPlace();
+                Log.Info("autotest : SAVEGAME envoye");
+            }
+            if (mode == "tchat" && t > 12f && !done)
+            {
+                done = true;
+                Chat.Send("Salut, c'est " + Net.Session.Me.Name + " !");
+            }
+            // [Test] TestNourriture=Sausages : le jeu cree ce produit a 25 s (meme compteur, meme ID des deux cotes).
+            string food = Config.Get("Test", "TestNourriture", "");
+            if (food.Length > 0 && t > 25f && !foodMade)
+            {
+                foodMade = true;
+                foreach (PlayMakerFSM f in Object.FindObjectsOfType<PlayMakerFSM>())
+                    if (f.FsmName == food && f.gameObject.name == "CreateItems")
+                    {
+                        f.SendEvent("SPAWNITEM");
+                        GameObject made = f.FsmVariables.GetFsmGameObject("New").Value;
+                        Log.Info("autotest : produit cree " + (made != null ? made.name + " " + Props.ItemId(made) : "?"));
+                    }
+            }
+            if (mode == "monde_send" && t > 35f && !done)
+            {
+                // [Test] TestEnvoi=partie|etat avant|evenement|etat apres
+                done = true;
+                string[] ps = Config.Get("Test", "TestEnvoi", "OpenMailBox|State 2|CLICK|Open").Split('|');
+                Log.Info("autotest : " + WorldFsms.TestSend(ps[0], ps[1], ps[2], ps[3]));
+            }
+            if (mode == "telephone" && MWCoop.Net.Session.IsHost)
+            {
+                // L'hote fait sonner le telephone (etat [Test] TestEtat), puis decroche.
+                string logic = Config.Get("Test", "TestQuete", "PhoneLogicNEW::Ring");
+                if (t > 35f && step == 0) { step = 1; Log.Info("autotest : " + WorldFsms.TestState(logic, Config.Get("Test", "TestEtat", "Joke"))); }
+                if (t > 50f && step == 1) { step = 2; Log.Info("autotest : " + WorldFsms.Var(logic, "Wait") + " ; " + WorldFsms.TestState(logic, "Ring")); }
+                if (t > 56f && step == 2 && Config.Get("Test", "VidageSonnerie", "").Length > 0) { Log.Info("autotest : vidage " + Recon.DumpTargets(Config.Get("Test", "VidageSonnerie", ""))); step = 21; }
+                if (t > 62f && (step == 2 || step == 21)) { step = 3; Log.Info("autotest : " + WorldFsms.TestEvent(Config.Get("Test", "TestSonnerie", "RingingNEW::Ring"), "ANSWER")); }
+            }
+            if (mode == "colis")
+            {
+                // Commande AMIS (hote), commande prete des deux cotes, guichet de la poste actif, puis
+                // l'hote paie au guichet : le colis doit apparaitre chez les deux.
+                bool host = MWCoop.Net.Session.IsHost;
+                if (host && t > 35f && step == 0) { step = 1; Log.Info("autotest : " + WorldFsms.TestEvent("OrdersSpawnerAMIS", "SPAWNITEM")); }
+                if (!host && t > 35f && step == 0) { step = 1; if (Config.GetInt("Test", "ColisOuvrir", 0) != 0) Log.Info("autotest : " + WorldFsms.TestEvent("OrdersSpawnerAMIS", "SPAWNITEM")); }   // (ouverture : la meme commande chez l'invite)
+                if (t > 50f && step == 1)
+                {
+                    step = 2;
+                    GameObject pile = Game.FindAny("PERAPORTTI/ActiveFunctions/Store/PostOffice/NotificationsPile");
+                    if (pile != null) pile.SetActive(true);
+                    string orders = "";
+                    foreach (Object o in Resources.FindObjectsOfTypeAll(typeof(GameObject)))
+                    {
+                        var g = (GameObject)o;
+                        if (g.hideFlags == HideFlags.None && g.name.StartsWith("OrderAMIS") && g.name != "OrderAMIS" && g.transform.root.gameObject.activeInHierarchy)
+                        { orders += Recon.Path(g.transform) + (g.activeInHierarchy ? "" : " (inactif)") + " "; if (orders.Length < 300) Log.Info("autotest : " + WorldFsms.TestState(Recon.Path(g.transform) + "::Data", "Idle")); }
+                    }
+                    Log.Info("autotest : guichet " + (pile != null) + (pile != null ? " actif " + pile.activeInHierarchy : "") + " ; commandes " + orders);
+                }
+                if (host && t > 62f && step == 2)
+                {
+                    step = 3;
+                    GameObject pile = Game.FindAny("PERAPORTTI/ActiveFunctions/Store/PostOffice/NotificationsPile");
+                    PlayMakerFSM pf = pile != null ? Game.FsmOn(pile, "Use") : null;
+                    if (pf != null)
+                    {
+                        Log.Info("autotest : guichet enabled " + pf.enabled + ", demarre " + pf.Fsm.Started + ", fini " + pf.Fsm.Finished + ", etat '" + pf.ActiveStateName + "'");
+                        pf.enabled = true;
+                    }
+                    Log.Info("autotest : " + WorldFsms.TestState("NotificationsPile::Use", "Wait button") + " ; " + WorldFsms.TestEvent("NotificationsPile::Use", "PAY"));
+                }
+            }
+            if (mode == "colis")
+            {
+                // ... puis l'hote l'ouvre a 85 s (comme un clic) : il doit s'ouvrir chez les deux ([Test] ColisOuvrir=1).
+                if (Config.GetInt("Test", "ColisDistributeurs", 0) != 0 && t > 40f && step2 == 0) { step2 = 9; Packages.DumpSpawners(); }
+                if (Config.GetInt("Test", "ColisOuvrir", 0) != 0)
+                {
+                    if (t > 70f && step2 == 0) { step2 = 1; Log.Info("autotest : colis cree " + WorldFsms.TestState("OrderAMIS1::Data", "Spawn package")); }
+                    if (MWCoop.Net.Session.IsHost && t > 85f && step2 == 1) { step2 = 2; Log.Info("autotest : " + Packages.TestOpen()); }
+                    if (t > 80f && Time.frameCount % 300 == 0 && t < 130f) Log.Info("autotest : " + Packages.State());
+                }
+            }
+            if (mode == "monde_evt" && t > 35f && !done)
+            {
+                done = true;
+                Log.Info("autotest : " + WorldFsms.TestEvent(Config.Get("Test", "TestQuete", "ElectricityBills1"), Config.Get("Test", "TestEvenement", "GLOBALEVENT")));
+            }
+            string countWatch = Config.Get("Test", "CompterObjets", "");
+            if (countWatch.Length > 0 && Time.frameCount % 600 == 0 && t > 20f)
+            {
+                int cnt = 0; string names = "";
+                foreach (Object o in Resources.FindObjectsOfTypeAll(typeof(GameObject)))
+                {
+                    var g = (GameObject)o;
+                    if (g.hideFlags == HideFlags.None && g.name.StartsWith(countWatch) && g.transform.root.gameObject.activeInHierarchy) { cnt++; if (names.Length < 200) names += g.name + " "; }
+                }
+                Log.Info("autotest : " + cnt + " objets " + countWatch + "* : " + names);
+            }
+            if (mode == "sac" && MWCoop.Net.Session.IsHost && t > 30f && step == 0) { step = 1; Log.Info("autotest : " + Shop.TestBuy(Config.Get("Test", "TestProduit", "Sausages"), 2)); }
+            if (mode == "sac" && MWCoop.Net.Session.IsHost && t > 42f && step == 1 && Config.Get("Test", "VidageSac", "").Length > 0) { step = 11; Log.Info("autotest : vidage " + Recon.DumpTargets(Config.Get("Test", "VidageSac", ""))); }
+            if (mode == "sac" && MWCoop.Net.Session.IsHost && t > 48f && (step == 1 || step == 11) && Config.GetInt("Test", "SacOuvrir", 1) != 0) { step = 2; Log.Info("autotest : " + Consume.TestOpenBag()); }
+            if (mode == "fume")
+            {
+                // Cigarette : en main 20-30 s, tire 30-37 s, souffle 37-41 s, en main, tire 46-50, souffle 50-53.
+                int fl = t < 20f ? 0 : t < 30f ? PlayerSync.F_Smoke : t < 37f ? PlayerSync.F_Smoke | PlayerSync.F_Inhale : t < 41f ? PlayerSync.F_Smoke | PlayerSync.F_Exhale
+                         : t < 46f ? PlayerSync.F_Smoke : t < 50f ? PlayerSync.F_Smoke | PlayerSync.F_Inhale : t < 53f ? PlayerSync.F_Smoke | PlayerSync.F_Exhale : 0;
+                if (fl != PoseFlags) { PoseFlags = fl; Log.Info("autotest : cigarette " + fl); }
+            }
+            if (mode == "magasin" && MWCoop.Net.Session.IsHost && t > 32f && step == 0) { step = 1; Log.Info("autotest : panier " + Stock.TestCarry(Config.Get("Test", "TestProduit", "Sausages"), 3)); }
+            if (mode == "magasin" && MWCoop.Net.Session.IsHost && t > 48f && step == 1) { step = 2; Log.Info("autotest : repose " + Stock.TestCarry(Config.Get("Test", "TestProduit", "Sausages"), -3)); }
+            // (invite : il prend 2 articles a 40 s ; attendu chez l'hote : « pris » +2 et les numeros du haut caches)
+            if (mode == "magasin" && !MWCoop.Net.Session.IsHost && MWCoop.Net.Session.Active && t > 40f && step == 0) { step = 1; Log.Info("autotest : panier invite " + Stock.TestCarry(Config.Get("Test", "TestProduit", "Sausages"), 2)); }
+            string npcWatch = Config.Get("Test", "SuivrePNJ", "");
+            if (npcWatch.Length > 0 && Time.frameCount % 300 == 0 && t > 20f) Log.Info("autotest : pnj " + Npcs.State(npcWatch) + " | garees " + Parked.State());
+            string stockWatch = Config.Get("Test", "SuivreStock", "");
+            if (stockWatch.Length > 0 && Time.frameCount % 300 == 0 && t > 20f) Log.Info("autotest : rayon " + Stock.State(stockWatch));
+            // [Test] SuivreEtat=chemin::automate : etat courant d'un automate quelconque.
+            string stateWatch = Config.Get("Test", "SuivreEtat", "");
+            if (stateWatch.Length > 0 && Time.frameCount % 120 == 0 && t > 20f)
+            {
+                string[] pf = stateWatch.Split(new[] { "::" }, System.StringSplitOptions.None);
+                GameObject g = Game.FindAny(pf[0]);
+                PlayMakerFSM sf = g != null && pf.Length > 1 ? Game.FsmOn(g, pf[1]) : null;
+                Log.Info("autotest : etat " + stateWatch + " = " + (sf != null ? sf.ActiveStateName : "?"));
+            }
+            if (Config.GetInt("Test", "MesureCamera", 0) != 0) MeasureCam(t);
+            string nanWatch = Config.Get("Test", "SuivreNaN", "");
+            if (nanWatch.Length > 0 && t > 20f && Time.realtimeSinceStartup >= nanNext) { nanNext = Time.realtimeSinceStartup + 1f; Log.Info("autotest : " + VehicleSync.TestNan(nanWatch)); }
+            if (mode == "passager" && Time.frameCount % 120 == 0 && t > 28f) Log.Info("autotest : place " + Seats.PlaceDans(Config.Get("Test", "TestVoiture", "SORBET")));
+            string soundWatch = Config.Get("Test", "SuivreSons", "");
+            if (soundWatch.Length > 0 && Time.frameCount % 90 == 0 && t > 20f) Log.Info("autotest : sons " + VehicleSync.AudioState(soundWatch));
+            if (soundWatch.Length > 0 && Time.frameCount % 900 == 0 && t > 20f) Log.Info("autotest : " + VehicleSync.DtState(soundWatch));
+            string activeWatch = Config.Get("Test", "SuivreActif", "");
+            if (activeWatch.Length > 0 && Time.frameCount % 300 == 0 && t > 20f)
+            {
+                GameObject g = Game.FindAny(activeWatch);
+                Log.Info("autotest : " + activeWatch + (g == null ? " introuvable" : g.activeSelf ? " actif" : " inactif"));
+            }
+            string worldWatch = Config.Get("Test", "SuivreMonde", "");
+            if (worldWatch.Length > 0 && Time.frameCount % 300 == 0 && t > 20f)
+            {
+                string[] pv = worldWatch.Split(':');
+                Log.Info("autotest : " + WorldFsms.Var(pv[0], pv.Length > 1 ? pv[1] : "Cutoff"));
+            }
+            if (mode == "molette" && t > 30f && step < 3 && t > 30f + step * 2f)
+            {
+                step++;
+                Log.Info("autotest : " + Jobs.TestSend(Config.Get("Test", "TestQuete", "ButtonHeaterTemp"), "Get scroll", "INCREASE", "Decrease"));
+            }
+            string varWatch = Config.Get("Test", "SuivreVar", "");
+            if (varWatch.Length > 0 && Time.frameCount % 300 == 0 && t > 20f)
+            {
+                string[] pv = varWatch.Split(':');
+                Log.Info("autotest : " + Jobs.Var(pv[0], pv.Length > 1 ? pv[1] : "Angle"));
+            }
+            if (mode == "habitacle")
+            {
+                string vc = Config.Get("Test", "TestVoiture", "SORBET");
+                if (t > 25f && step == 0) { step = 1; Log.Info("autotest : " + Seats.TestStandIn(vc, Config.GetInt("Test", "TestPlace", 0))); }
+                if (t > 26f && step >= 1 && step < 6 && t > 26f + step) { step++; Log.Info("autotest : habitacle " + Seats.PlaceDans(vc)); }
+            }
+            if (mode == "passager2" && t > 27f && step == 0) { step = 1; Log.Info("autotest : " + Seats.TestStandIn(Config.Get("Test", "TestVoiture", "SORBET"), Config.GetInt("Test", "TestPlace", 0))); }
+            if (mode == "passager2" && t > 31f && step == 1) { step = 2; Log.Info("autotest : entree " + Seats.TestEnter()); }
+            if (mode == "passager2" && t > 50f && step == 2) { step = 3; Log.Info("autotest : " + Seats.TestLeave()); }
+            if (mode == "passager2" && Time.frameCount % 120 == 0 && t > 26f) Log.Info("autotest : place " + Seats.PlaceDans(Config.Get("Test", "TestVoiture", "SORBET")));
+            if (mode == "sondeplaces" && t > 30f && !done) { done = true; Log.Info("autotest : places" + Seats.ProbeSeats(Config.Get("Test", "TestVoiture", "GIFU"))); Log.Info("autotest : coupe" + Seats.ProbeGrid(Config.Get("Test", "TestVoiture", "GIFU"))); }
+            if (mode == "passager" && t > 30f && step == 0) { step = 1; Log.Info("autotest : " + Seats.TestSit(Config.Get("Test", "TestVoiture", "SORBET"), Config.GetInt("Test", "TestPlace", 0))); }
+            // [Test] Autotest=ceinture : l'invite s'assoit a l'avant de [Test] TestVoiture, attache sa ceinture a 36 s ;
+            // l'hote le regarde (CameraAvatar) et voit la ceinture bouclee (journal + captures).
+            if (mode == "ceinture" && !Net.Session.IsHost && t > 30f && step == 0) { step = 1; Log.Info("autotest : " + Seats.TestSit(Config.Get("Test", "TestVoiture", "SORBET"), Config.GetInt("Test", "CeinturePlace", 0))); }
+            // [Test] CeintureVisee=1 : avant d'attacher, le regard vers la ceinture rangee (37-41 s) puis la boucle (42-46 s),
+            // ce que voit la visee note chaque seconde, et captures (ecran-ceinture-*).
+            if (mode == "ceinture" && !Net.Session.IsHost && Config.GetInt("Test", "CeintureVisee", 0) != 0 && step >= 1 && step < 9 && t > 37f && t < 47f)
+            {
+                Log.Info("autotest : " + Seats.TestBeltLook(t < 42f ? 0 : 1));
+                if (Time.realtimeSinceStartup >= rivLog) { rivLog = Time.realtimeSinceStartup + 1f; Log.Info("autotest : " + Seats.TestBeltAim()); }
+                if (step == 1 && t > 39f) { step = 3; CaptureSoon("ceinture-rangee", 0.1f); }
+                if (step == 3 && t > 44f) { step = 4; CaptureSoon("ceinture-boucle", 0.1f); }
+            }
+            // [Test] CeintureTenue=1 : ceinture tenue de 36 a 44 s (regard vers la boucle), capture ecran-ceinture-tenue, puis bouclee.
+            if (mode == "ceinture" && !Net.Session.IsHost && Config.GetInt("Test", "CeintureTenue", 0) != 0 && step >= 1 && step < 5 && t > 36f)
+            {
+                if (Config.GetInt("Test", "CeintureRegard", 0) != 0) Seats.TestBeltLook(1);
+                if (t < 44f) { string tenue = Seats.TestPull(true); if (Time.frameCount % 120 == 0) Log.Info("autotest : " + tenue); }
+                if (step == 1 && t > 41f) { step = 3; CaptureSoon("ceinture-tenue", 0.05f); }
+                if (step == 3 && t > 44f) { step = 4; Log.Info("autotest : " + Seats.TestPull(false)); }
+                if (step == 4 && t > 45f) { step = 5; Log.Info("autotest : " + Seats.TestBelt()); }
+                if (step == 4 && t > 47f) { step = 5; CaptureSoon("ceinture-bouclee-invite", 0.05f); }
+            }
+            if (mode == "ceinture" && !Net.Session.IsHost && Config.GetInt("Test", "CeintureVisee", 0) == 0 && Config.GetInt("Test", "CeintureTenue", 0) == 0 && t > 36f && step == 1) { step = 2; Log.Info("autotest : " + Seats.TestBelt()); }
+            // (puis la vue du passager vers sa ceinture bouclee : ecran-ceinture-vue-passager)
+            if (mode == "ceinture" && !Net.Session.IsHost && step >= 2 && step < 4 && t > 38f) { BeltLookLate = Config.GetInt("Test", "CeintureVueRegard", 1); if (step == 2 && t > 41f) { step = 3; CaptureSoon("ceinture-vue-passager", 0.05f); Log.Info("autotest : " + Seats.TestBeltCopy()); } }
+            // [Test] Autotest=apimods : (avec MSCLoader et MWCoopTestMod) l'hote sauvegarde sur place a 20 s : son Mods.txt
+            // (compteur du mod d'essai) partira avec la sauvegarde a la partie suivante.
+            if (mode == "apimods" && Net.Session.IsHost && t > 20f && step == 0) { step = 1; Log.Info("autotest : sauvegarde de l'hote"); Game.SaveInPlace(); }
+            if (mode == "ceinture" && Net.Session.IsHost && t > 30f)
+            {
+                // camera d'essai a la place du conducteur, vers le passager avant
+                Transform car; Vector3 head; string cn;
+                for (int id = 1; id < 8; id++)
+                    if (Seats.RemoteSeat(id, out car, out head, out cn) && car != null)
+                    {
+                        if (testCam == null) { testCam = new GameObject("MWCoop-CameraEssai").AddComponent<Camera>(); testCam.depth = 100; testCam.nearClipPlane = 0.03f; testCam.fieldOfView = 70; }
+                        bool front = Config.Get("Test", "CameraCeinture", "") == "avant";   // (de face, depuis le tableau de bord)
+                        testCam.transform.position = car.TransformPoint(front ? head + new Vector3(Config.GetFloat("Test", "CeintureCamX", -0.12f), Config.GetFloat("Test", "CeintureCamY", 0f), Config.GetFloat("Test", "CeintureCamZ", 0.42f)) : new Vector3(-head.x * 0.7f, head.y + 0.05f, head.z + 0.25f));
+                        testCam.transform.LookAt(car.TransformPoint(head + new Vector3(Config.GetFloat("Test", "CeintureViseX", 0f), Config.GetFloat("Test", "CeintureViseY", -0.3f), 0f)), car.up);
+                        if (step == 0 && t > Config.GetInt("Test", "CeintureCapture", 110)) { step = 1; CaptureSoon("ceinture-hote", 0.1f); }
+                        break;
+                    }
+            }
+            if (mode == "passager" && t > 60f && step == 1 && Config.GetInt("Test", "TestSortie", 1) != 0) { step = 2; Log.Info("autotest : " + Seats.TestLeave()); }
+            if (mode == "tableau" && t > 35f && !done)
+            {
+                done = true;
+                Log.Info("autotest : " + CarVisuals.Test(Config.Get("Test", "TestVoiture", "SORBET(190-200psi)"), Config.Get("Test", "TestElement", "pivot_brake")));
+            }
+            string visWatch = Config.Get("Test", "SuivreElement", "");
+            if (visWatch.Length > 0 && Time.frameCount % 300 == 0 && t > 20f)
+                Log.Info("autotest : " + CarVisuals.State(Config.Get("Test", "TestVoiture", "SORBET(190-200psi)"), visWatch));
+            if (mode == "portiere" && t > 52f && step == 1 && Config.GetInt("Test", "TestPousse", 0) != 0) { step = 2; Log.Info("autotest : refermee en poussant " + CarDoors.TestState(Config.Get("Test", "TestVoiture", "KEKMET(350-400psi)"), "Reset 2")); }
+            if (mode == "portiere" && t > 38f && step == 0) { step = 1; Log.Info("autotest : " + CarDoors.TestPush(Config.Get("Test", "TestVoiture", "KEKMET(350-400psi)"), -35f)); }
+            if (mode == "portiere" && t > 30f && !done)
+            {
+                done = true;
+                Log.Info("autotest : " + CarDoors.TestOpen(Config.Get("Test", "TestVoiture", "KEKMET(350-400psi)"), true));
+            }
+            if (mode == "chemin" || mode == "spam")
+            {
+                // Portiere [Test] TestVoiture / TestPorte. chemin : l'invite debout dans sa course, l'hote l'ouvre
+                // (bouton tenu 0,6 s) ; spam : les deux cliquent au hasard tres vite, puis on compare.
+                string vc = Config.Get("Test", "TestVoiture", "SORBET(190-200psi)"), vp = Config.Get("Test", "TestPorte", "DoorRear(right)");
+                // [Test] Deverrouiller=1 : verrouillage centralise d'un mod (CentralLocking.UnlockDoors) ouvert a 20 s chez chacun.
+                // (Deverrouiller=2 : l'hote seulement -- l'invite doit le recevoir)
+                if (mode == "chemin" && (Config.GetInt("Test", "Deverrouiller", 0) == 1 || Config.GetInt("Test", "Deverrouiller", 0) == 2 && MWCoop.Net.Session.IsHost) && t > 20f && step2 == 0)
+                {
+                    step2 = 1;
+                    GameObject vcar = GameObject.Find(vc);
+                    Component cl = null;
+                    if (vcar != null) foreach (MonoBehaviour m in vcar.GetComponentsInChildren<MonoBehaviour>(true)) if (m != null && m.GetType().Name == "CentralLocking") { cl = m; break; }
+                    var um = cl != null ? cl.GetType().GetMethod("UnlockDoors") : null;
+                    if (um != null) um.Invoke(cl, new object[] { false });
+                    Log.Info("autotest : verrouillage de " + vc + " : " + (cl == null ? "aucun" : "ouvert"));
+                }
+                // [Test] AcheterMW2=1 : l'hote achete la Second Machtwagen a 18 s (poignees et contact rallumes)
+                if (mode == "chemin" && MWCoop.Net.Session.IsHost && Config.GetInt("Test", "AcheterMW2", 0) != 0 && t > 18f && step2 < 5) { step2 = 5; Log.Info("autotest : second machtwagen " + ModSecondMachtwagen.TestBuyNow()); }
+                // [Test] FermeInvite=1 : c'est l'invite qui referme (a 50 s) la portiere ouverte par l'hote.
+                if (mode == "chemin" && !MWCoop.Net.Session.IsHost && Config.GetInt("Test", "FermeInvite", 0) != 0 && t > 40f && step == 1) { step = 3; Log.Info("autotest : invite pousse vers la fermeture " + CarDoors.TestGrab(vc, vp)); }
+                if (mode == "chemin" && !MWCoop.Net.Session.IsHost && t > 15f && step == 0) { step = 1; Log.Info("autotest : " + CarDoors.TestStandInPath(vc, vp)); }
+                if (mode == "chemin" && MWCoop.Net.Session.IsHost && t > 40f && step == 0) { step = 1; Log.Info("autotest : " + CarDoors.TestOpen(vc, true, vp)); }
+                if (mode == "chemin" && MWCoop.Net.Session.IsHost && t > 40.6f && step == 1) { step = 2; Log.Info("autotest : relache " + CarDoors.TestState(vc, "Mouse off", vp)); }
+                // TestRelache=1 : l'hote appuie pour la refermer et relache tout de suite (avant qu'elle soit fermee).
+                if (mode == "chemin" && MWCoop.Net.Session.IsHost && t > 46f && step == 2 && Config.GetInt("Test", "TestRelache", 0) != 0) { step = 30; Log.Info("autotest : appuie pour fermer " + CarDoors.TestGrab(vc, vp)); }
+                if (mode == "chemin" && MWCoop.Net.Session.IsHost && t > 46.12f && step == 30) { step = 31; Log.Info("autotest : relache tout de suite " + CarDoors.TestState(vc, "Check position", vp) + " " + CarDoors.StateOf(vc, vp)); }
+                if (mode == "chemin" && MWCoop.Net.Session.IsHost && t > 45f && step == 2 && Config.GetInt("Test", "TestPousse", 0) != 0) { step = 22; Log.Info("autotest : refermee en poussant " + CarDoors.TestState(vc, "Reset 2", vp)); }
+                if (mode == "chemin" && MWCoop.Net.Session.IsHost && t > 50f && (step == 2 || step == 22) && Config.GetInt("Test", "FermeInvite", 0) == 0) { step = 3; Log.Info("autotest : pousse vers la fermeture " + CarDoors.TestGrab(vc, vp)); }
+                // (fenetre a l'horloge du PC : les deux s'arretent a la meme seconde, en plein echange)
+                int sec = System.DateTime.Now.Second;
+                if (mode == "spam" && t > 25f && sec >= 5 && sec < 45) { string w = CarDoors.TestRace(vc, vp); if (w != null) Log.Info("autotest : " + w); }
+                if (mode == "spam" && t > 25f && (sec == 47 || sec == 51 || sec == 55) && sec != spamLogged) { spamLogged = sec; Log.Info("autotest : portiere a :" + sec + " " + CarDoors.StateOf(vc, vp)); }
+                int mark = mode == "spam" ? 0
+                         : (t > 62f ? 5 : t > 55f ? 4 : t > 48f ? 3 : t > 44f ? 2 : t > 41f ? 1 : 0);
+                if (mark > portiereMark) { portiereMark = mark; Log.Info("autotest : portiere " + mark + " " + CarDoors.StateOf(vc, vp)); }
+            }
+            string doorWatch = Config.Get("Test", "SuivrePortiere", "");
+            if (doorWatch.Length > 0 && Time.frameCount % 300 == 0 && t > 20f) Log.Info("autotest : " + CarDoors.State(doorWatch));
+            if (mode == "voix" && t > 35f && !done)
+            {
+                done = true;
+                Log.Info("autotest : voix " + Voices.Test(Config.Get("Test", "TestVoix", "Teimo")));
+            }
+            if (mode == "manger" && t > 40f && !done)
+            {
+                done = true;
+                Log.Info("autotest : manger " + Consume.TestNearest());
+            }
+            if (mode == "liquide" && t > 40f && !done)
+            {
+                done = true;
+                string bump = Config.Get("Test", "LiquideCle", "");   // ([Test] LiquideCle=gasoline : +10 a cette valeur)
+                Log.Info("autotest : liquide " + (bump.Length > 0 ? Fluids.TestBump(bump, 10f) : Fluids.TestNearest(Config.Get("Test", "TestLiquide", "Fluid"))));
+            }
+            // [Test] SuivreLiquide=gasoline : valeurs suivies dont la cle contient ce texte, a 35 et 60 s.
+            string fluidWatch = Config.Get("Test", "SuivreLiquide", "");
+            if (fluidWatch.Length > 0 && ((t > 35f && step == 0) || (t > 60f && step == 1))) { step++; Log.Info("autotest : liquide t=" + t.ToString("F0") + " " + Fluids.TestState(fluidWatch)); }
+            if (mode == "interactifs" && t > 40f && !done) { done = true; Log.Info("autotest : releve " + Recon.DumpInteractive()); }
+            if (mode == "monde" && t > 45f && !done) { done = true; Log.Info("autotest : releve " + Recon.DumpWorldFsms()); }
+            // [Test] Autotest=corps : etat du corps de l'invite garde d'une session a l'autre. Chacun note faim, soif, ivresse
+            // a 25 et 50 s ; avec [Test] CorpsPoser=1, l'invite pose faim 77, soif 66, ivresse 1,5 a 30 s (gardes a 40 s).
+            if (mode == "corps")
+            {
+                if ((t > 25f && step == 0) || (t > 50f && step == 2))
+                {
+                    step++;
+                    Log.Info("autotest : corps t=" + t.ToString("F0") + " : faim " + Game.GlobalFloat("PlayerHunger").ToString("F1") + ", soif " + Game.GlobalFloat("PlayerThirst").ToString("F1")
+                             + ", ivresse " + Game.GlobalFloat("PlayerDrunk").ToString("F2") + ", fatigue " + Game.GlobalFloat("PlayerFatigue").ToString("F1"));
+                }
+                if (t > 30f && step == 1)
+                {
+                    step = 2;
+                    if (!MWCoop.Net.Session.IsHost && Config.GetInt("Test", "CorpsPoser", 0) != 0)
+                    {
+                        Game.SetGlobalFloat("PlayerHunger", 77f); Game.SetGlobalFloat("PlayerThirst", 66f); Game.SetGlobalFloat("PlayerDrunk", 1.5f);
+                        Log.Info("autotest : corps : faim 77, soif 66, ivresse 1,5 posees ici");
+                    }
+                }
+            }
+            if (mode == "globales" && t > 35f && !done)
+            {
+                done = true;
+                var sb = new System.Text.StringBuilder();
+                FsmVariables g = FsmVariables.GlobalVariables;
+                foreach (FsmFloat x in g.FloatVariables) sb.Append(" f:").Append(x.Name).Append('=').Append(x.Value.ToString("F2"));
+                foreach (FsmInt x in g.IntVariables) sb.Append(" i:").Append(x.Name).Append('=').Append(x.Value);
+                foreach (FsmBool x in g.BoolVariables) sb.Append(" b:").Append(x.Name).Append('=').Append(x.Value);
+                foreach (FsmString x in g.StringVariables) sb.Append(" s:").Append(x.Name).Append('=').Append(x.Value);
+                Log.Info("autotest : globales" + sb);
+            }
+            // [Test] Autotest=releveco : automates dont une variable ou une action parle de monoxyde (Carbon*, CO), et
+            // effets d'image de la camera du joueur (dumps/co.txt, avec parametres).
+            // [Test] Autotest=co : a 30 s, mort par le monoxyde comme dans le jeu (PassoutEyes allume, 'Logic' en "Close eyes 2" :
+            // paupieres fermees, son baisse, puis Systems/Death). Avec [Test] TestReapparition=n, la reapparition est
+            // choisie seule ; a 45 s, etat des paupieres et du son (captures : [Test] Captures=46).
+            if (mode == "co" && t > 30f && step == 0)
+            {
+                step = 1;
+                GameObject pe = Game.FindAny("PLAYER/Pivot/AnimPivot/Camera/FPSCamera/FPSCamera/Carbon/PassoutEyes");
+                if (pe != null)
+                {
+                    pe.SetActive(true);
+                    PlayMakerFSM l = Game.FsmOn(pe, "Logic");
+                    if (l != null) Game.SetState(l, "Close eyes 2");
+                    Log.Info("autotest : co : paupieres qui se ferment (" + (l != null ? l.ActiveStateName : "?") + ")");
+                }
+                else Log.Info("autotest : co : PassoutEyes introuvable");
+            }
+            if (mode == "co" && t > 45f && step == 1)
+            {
+                step = 2;
+                GameObject pe = Game.FindAny("PLAYER/Pivot/AnimPivot/Camera/FPSCamera/FPSCamera/Carbon/PassoutEyes");
+                FsmFloat vol = FsmVariables.GlobalVariables.FindFsmFloat("GameVolume");
+                Log.Info("autotest : co : paupieres " + (pe != null && pe.activeInHierarchy ? "FERMEES (allumees)" : "rouvertes") + ", son " + (vol != null ? vol.Value.ToString("F2") : "?"));
+            }
+            // [Test] Autotest=relevenom, ReleveNom=a;b : vidage (avec parametres) de chaque objet de la scene portant un
+            // automate dont le nom d'objet contient a ou b (dumps/cibles.txt), et la liste dans le journal.
+            // [Test] Autotest=robinet : l'hote ouvre le robinet ([Test] Robinet, defaut la cuisine des parents) a 30 s, le
+            // ferme a 40 s (comme le clic : "Position") ; chacun note toutes les 2 s si l'eau coule (objet [Test] Eau).
+            if (mode == "robinet")
+            {
+                string tap = Config.Get("Test", "Robinet", "KitchenWaterTap/Trigger::Use");
+                GameObject water = Game.FindAny(Config.Get("Test", "Eau", "YARD/Building/KITCHEN/KitchenWaterTap/ParticleDrink"));
+                if (t > 10f && t < 60f && t >= tapLog)
+                {
+                    tapLog = t + 2f;
+                    Log.Info("autotest : robinet t=" + t.ToString("F0") + " : eau " + (water != null && water.activeInHierarchy ? "COULE" : "coupee"));
+                }
+                // RobinetActeur=croise : l'hote ouvre a 30 s, l'invite (parti ~10 s apres) ferme a ses 25 s, 5 s apres.
+                string who = Config.Get("Test", "RobinetActeur", "hote");
+                bool host = MWCoop.Net.Session.IsHost;
+                bool actor = who == "invite" ? !host : who == "croise" ? true : host;
+                bool now2 = who == "croise" ? (host ? t > 30f && step == 0 : t > 25f && step == 0) : (t > 30f && step == 0) || (t > 40f && step == 1);
+                if (actor && now2)
+                {
+                    step++;
+                    // Comme un vrai clic sur le robinet vise : "Wait button" (sa detection de la souris coupee le temps du clic), USE.
+                    PlayMakerFSM tf = null;
+                    int cut = tap.IndexOf("::");
+                    GameObject tg = Game.FindAny(cut > 0 ? tap.Substring(0, cut) : tap);
+                    if (tg != null) tf = Game.FsmOn(tg, "Use");
+                    var off = new System.Collections.Generic.List<FsmStateAction>();
+                    FsmState wb = tf != null ? tf.Fsm.GetState("Wait button") : null;
+                    if (wb != null) foreach (FsmStateAction a2 in wb.Actions) if (a2 is HutongGames.PlayMaker.Actions.MousePickEvent && a2.Enabled) { a2.Enabled = false; off.Add(a2); }
+                    try { WorldFsms.TestClick(tap, "Wait button"); Log.Info("autotest : robinet " + (step == 1 ? "ouvert" : "ferme") + " : " + WorldFsms.TestEvent(tap, "USE")); }
+                    finally { foreach (FsmStateAction a2 in off) a2.Enabled = true; }
+                }
+            }
+            if (mode == "relevenom" && t > 40f && !done)
+            {
+                done = true;
+                string[] keys = Config.Get("Test", "ReleveNom", "").Split(';');
+                bool inactive = Config.GetInt("Test", "ReleveInactifs", 0) != 0;   // (aussi sous une racine inactive)
+                var paths = new System.Collections.Generic.List<string>();
+                foreach (PlayMakerFSM f in Resources.FindObjectsOfTypeAll(typeof(PlayMakerFSM)))
+                {
+                    if (f.hideFlags != HideFlags.None || (!inactive && !f.transform.root.gameObject.activeInHierarchy)) continue;
+                    foreach (string k in keys)
+                        if (k.Length > 0 && f.gameObject.name.IndexOf(k, System.StringComparison.OrdinalIgnoreCase) >= 0)
+                        {
+                            string pth = Recon.Path(f.transform);
+                            if (!paths.Contains(pth)) paths.Add(pth);
+                        }
+                }
+                Log.Info("autotest : relevenom : " + paths.Count + " objets : " + string.Join(" | ", paths.ToArray()) + " ; " + Recon.DumpTargets(string.Join(";", paths.ToArray())));
+            }
+            if (mode == "releveicones" && t > 40f && !done)
+            {
+                done = true;
+                string[] iconVars = Config.Get("Test", "ReleveVar", "GUIpassenger;GUIdrive").Split(';');
+                var sb = new System.Text.StringBuilder();
+                foreach (PlayMakerFSM f in Resources.FindObjectsOfTypeAll(typeof(PlayMakerFSM)))
+                {
+                    if (f.hideFlags != HideFlags.None || !f.transform.root.gameObject.activeInHierarchy) continue;
+                    try
+                    {
+                        if (f.Fsm.States.Length > 0 && !f.Fsm.States[0].IsInitialized) f.Fsm.InitData();
+                        var hit = new System.Collections.Generic.HashSet<string>();
+                        foreach (FsmState st in f.Fsm.States)
+                            foreach (FsmStateAction a2 in st.Actions)
+                            {
+                                if (a2 == null) continue;
+                                foreach (System.Reflection.FieldInfo fi in a2.GetType().GetFields())
+                                {
+                                    var nv = fi.GetValue(a2) as NamedVariable;
+                                    if (nv != null && nv.UseVariable && System.Array.IndexOf(iconVars, nv.Name) >= 0) hit.Add(nv.Name + "@" + st.Name);
+                                }
+                            }
+                        if (hit.Count > 0) sb.Append(" | ").Append(Recon.Path(f.transform)).Append("::").Append(f.FsmName).Append(" ").Append(string.Join(",", new System.Collections.Generic.List<string>(hit).ToArray()));
+                    }
+                    catch { }
+                }
+                Log.Info("autotest : icones :" + sb);
+            }
+            if (mode == "relevebattantes" && t > 40f && !done)
+            {
+                done = true;
+                var sb = new System.Text.StringBuilder();
+                int n = 0;
+                foreach (PlayMakerFSM f in Resources.FindObjectsOfTypeAll(typeof(PlayMakerFSM)))
+                {
+                    if (f.hideFlags != HideFlags.None || !f.transform.root.gameObject.activeInHierarchy) continue;
+                    try
+                    {
+                        if (f.Fsm.States.Length > 0 && !f.Fsm.States[0].IsInitialized) f.Fsm.InitData();
+                        int torque = 0; bool up = false;
+                        foreach (FsmState st in f.Fsm.States)
+                            foreach (FsmStateAction a2 in st.Actions)
+                            {
+                                if (a2 == null) continue;
+                                string tn = a2.GetType().Name;
+                                if (tn == "AddTorque") torque++;
+                                if (tn == "GetMouseButtonUp") up = true;
+                            }
+                        if (torque == 0) continue;
+                        n++;
+                        sb.Append(" | ").Append(Recon.Path(f.transform)).Append("::").Append(f.FsmName).Append(" couples ").Append(torque).Append(up ? " (bouton tenu)" : "").Append(" [").Append(Replay.Owner(f) ?? "libre").Append("]");
+                    }
+                    catch { }
+                }
+                Log.Info("autotest : battantes : " + n + sb);
+            }
+            if (mode == "releveco" && t > 40f && !done)
+            {
+                done = true;
+                var hits = new System.Collections.Generic.List<string>();
+                foreach (PlayMakerFSM f in Resources.FindObjectsOfTypeAll(typeof(PlayMakerFSM)))
+                {
+                    if (f.hideFlags != HideFlags.None) continue;
+                    bool hit = false;
+                    foreach (NamedVariable v in f.FsmVariables.GetAllNamedVariables()) if (v.Name.Contains("Carbon") || v.Name == "CO") hit = true;
+                    if (!hit) foreach (FsmFloat v in FsmVariables.GlobalVariables.FloatVariables) { }
+                    if (hit) hits.Add(Recon.Path(f.transform));
+                }
+                var cam = GameObject.Find("PLAYER/Pivot/AnimPivot/Camera/FPSCamera/FPSCamera");
+                var sb = new System.Text.StringBuilder();
+                if (cam != null) foreach (MonoBehaviour m in cam.GetComponents<MonoBehaviour>()) sb.Append(' ').Append(m.GetType().Name).Append(m.enabled ? "+" : "-");
+                Log.Info("autotest : releveco : " + hits.Count + " automates ; camera :" + sb + " ; " + Recon.DumpTargets(string.Join(";", hits.ToArray())));
+            }
+            if (mode == "releveracine" && t > 45f && !done) { done = true; foreach (string rr in Config.Get("Test", "RacineReleve", "RACES").Split(';')) Log.Info("autotest : releve " + Recon.DumpRoot(rr.Trim())); }   // (plusieurs : a;b;c)
+            if (mode == "releveargent" && t > 45f && !done) { done = true; Log.Info("autotest : releve " + Recon.DumpMoney()); }
+            if (mode == "menu" && t > 70f && !done)
+            {
+                // L'hote revient au menu (puis Continuer=1 le relance) : les invites doivent suivre.
+                done = true;
+                Log.Info("autotest : retour au menu");
+                Application.LoadLevel("MainMenu");
+            }
+            if ((mode == "dormir" || (mode == "dormirseul" && MWCoop.Net.Session.IsHost)) && t > 20f && !done)
+            {
+                // Le joueur se couche dans le lit le plus proche (fatigue montee pour qu'il dorme
+                // plusieurs heures) ; on suit l'heure et la fatigue chaque seconde.
+                done = true;
+                Vector3 me = GameObject.Find("PLAYER").transform.position;
+                PlayMakerFSM bed = null;
+                foreach (PlayMakerFSM f in Object.FindObjectsOfType<PlayMakerFSM>())
+                    if (f.gameObject.name == "SleepTrigger" && f.FsmName == "Activate"
+                        && (bed == null || (f.transform.position - me).sqrMagnitude < (bed.transform.position - me).sqrMagnitude)) bed = f;
+                if (bed == null) { Log.Warn("autotest : aucun lit"); return; }
+                FsmFloat fat = FsmVariables.GlobalVariables.FindFsmFloat("PlayerFatigue");
+                if (fat != null) fat.Value = 60f;
+                Log.Info("autotest : au lit " + Recon.Path(bed.transform) + " a " + (bed.transform.position - me).magnitude.ToString("F0") + " m, releve " + Recon.DumpTargets(Recon.Path(bed.transform)));
+                Game.SetState(bed, "Get positions");
+                sleepWatch = true;
+            }
+            if (sleepWatch && Time.realtimeSinceStartup >= nextSleepLog)
+            {
+                nextSleepLog = Time.realtimeSinceStartup + 1f;
+                FsmFloat fat = FsmVariables.GlobalVariables.FindFsmFloat("PlayerFatigue");
+                PlayMakerFSM c = Game.FindFsm("MAP/Sun/PivotSun/SUN", "Color");
+                bool sl = Game.GlobalBool("PlayerSleeps");
+                Log.Info("autotest : dort " + sl + ", heure " + c.FsmVariables.GetFsmInt("Time").Value
+                         + ", fatigue " + (fat != null ? fat.Value.ToString("F1") : "?")
+                         + ", echelle " + FsmVariables.GlobalVariables.FindFsmFloat("GlobalTimeScale").Value);
+                if (!sl && fat != null && fat.Value < 50f) sleepWatch = false;
+            }
+            if (mode == "heure" && t > 15f && !done)
+            {
+                // L'hote saute a 18 h : les invites doivent suivre (World).
+                done = true;
+                PlayMakerFSM c = Game.FindFsm("MAP/Sun/PivotSun/SUN", "Color");
+                int h = Config.GetInt("Test", "TestHeure", 18);
+                c.FsmVariables.GetFsmInt("Time").Value = h;
+                c.SendEvent("TIMESKIP");
+                Log.Info("autotest : l'hote passe a " + h + " h");
+            }
+        }
+
+        static bool done, teleported, sleepWatch, foodMade, watchLogged;
+        static System.Collections.Generic.List<Rigidbody> rivParts;
+        static bool rivNear; static int attVoisin, attAir; static float rivLog, cabGap, holdLog, attTry, attExitAt = 1e9f;
+        static int holdN;
+        static GameObject rangeGo;
+        static Transform holdCam;
+        static bool cabRetp;
+        static Vector3 holdSum, holdSq;
+        static bool tcOn;
+        static float tcAt;
+        static GameObject tcWalker, tcCust;
+        static System.Collections.Generic.List<Transform> tcLug;
+        static bool cabAv, cabAvLogged;
+        static float cabLogAt, cabWheelAt, cabGearAt;
+        static Vector3 cabMin, cabMax;
+        static int rivStep, rivPush;
+        static readonly float[] RivAt = { 36f, 37f, 40f, 44f, 45f, 48f, 52f, 60f, 66f, 74f };
+        static readonly string[] RivPart = { "DoorLeft", "DoorLeft", "DoorLeft", "DoorRight", "DoorRight", "DoorRight", "Bootlid", "Bootlid", "Hood", "Hood" };
+        static readonly string[] RivState = { "Open door", "Mouse off", "~fermer", "Open door", "Mouse off", "~fermer", "Open hood", "~fermer", "Open hood", "~fermer" };
+
+        // Essais (rivett) : met l'automate 'Use' de l'ouvrant VINP_<point> de 'car' dans 'state' ("~fermer" : son etat
+        // de fermeture, celui du second clic -- "Open door 2"/"Open door 3" des portieres, "Drop" ou "State 2" des capots).
+        static string RivSet(string car, string point, string state)
+        {
+            GameObject g = Game.FindAny(car + "/Assemblies/VINP_" + point);
+            PlayMakerFSM use = null;
+            if (g != null) foreach (PlayMakerFSM f in g.GetComponentsInChildren<PlayMakerFSM>(true)) if (f.FsmName == "Use") { use = f; break; }
+            if (use == null) return point + " : pas d'automate Use";
+            if (state == "~fermer")
+                foreach (string s in new[] { "Open door 2", "Open door 3", "Drop", "State 2" })
+                    if (use.Fsm.GetState(s) != null) { state = s; break; }
+            if (use.Fsm.GetState(state) == null) return point + " : pas d'etat " + state;
+            Game.SetState(use, state);
+            return point + " -> " + state;
+        }
+        static Camera testCam;
+        static float cdLog, fluLog, fluSum, fluSq, tapLog;
+        static int fluN, fluStill;
+        static Vector3 fluLast;
+        static readonly System.Collections.Generic.Dictionary<Transform, float[]> fluParts = new System.Collections.Generic.Dictionary<Transform, float[]>();
+
+        // Boitier de CD et CD : l'hote ouvre le boitier 1 (45 s), en sort le CD (49 s), le pose 1 m plus loin (52 s),
+        // referme le boitier (60 s) ; les deux cotes notent le boitier et le CD toutes les 2 s.
+        // Teletexte ([Test] Autotest=teletexte) : a 30 s l'hote allume le teletexte avec la telecommande (Use : 'Bool
+        // test' -> Open), a 36 s il tape la page 123 (Input : 'Send code', NumberInt) ; les deux notent toutes les 2 s si
+        // Systems/TV/Teletext est allume et sa page (Pages.PageNumber). Attendu chez l'invite : allume, 123.
+        static float ttLog, ttLog2, partNext;
+        static readonly System.Collections.Generic.Dictionary<string, int> partMax = new System.Collections.Generic.Dictionary<string, int>();
+        static void TestTeletext(float t)
+        {
+            if (MWCoop.Net.Session.IsHost && t > 24f && step == 0)
+            {
+                step = 10;   // la tele d'abord (la telecommande ne marche que tele allumee)
+                GameObject sw = Game.FindAny("YARD/Building/LIVINGROOM/TV/TVSwitch");
+                PlayMakerFSM u = sw != null ? Game.FsmOn(sw, "Use") : null;
+                if (u != null) { Game.SetState(u, "Switch"); Log.Info("autotest : tele -> " + u.ActiveStateName); }
+            }
+            // Comme le joueur : il vise la telecommande (Use 'Wait button', le pave Input s'allume), clique (USE :
+            // teletexte allume), puis la vise de nouveau et tape 1, 2, 3 (Input 'Wait key' -KEY-> avec Key).
+            GameObject rc = Game.FindAny("EQUIPMENTS/tv remote control(item1)");
+            PlayMakerFSM use = rc != null ? Game.FsmOn(rc, "Use") : null, inp = rc != null ? Game.FsmOn(rc, "Input") : null;
+            if (MWCoop.Net.Session.IsHost && use != null && inp != null)
+            {
+                if (t > 30f && step == 10) { step = 1; Log.Info("autotest : clic (envoye comme chez le joueur) " + WorldFsms.TestSend("tv remote control(item1)::Use", "Wait button", "USE", "Bool test")); }
+                for (int k = 0; k < 3; k++)
+                    if (t > 36f + k && step == 2 + k)
+                    {
+                        step = 3 + k;
+                        Game.SetState(use, "Wait button");
+                        if (!inp.enabled) inp.enabled = true;
+                        Game.SetState(inp, "Wait key");
+                        inp.FsmVariables.FindFsmString("Key").Value = (k + 1).ToString();
+                        Log.Info("autotest : touche " + (k + 1) + " " + WorldFsms.TestEvent("tv remote control(item1)::Input", "KEY"));
+                    }
+                if (t > 35f && step == 1) step = 2;
+            }
+            if (t > 28f && t < 60f && t >= ttLog)
+            {
+                ttLog = t + 2f;
+                GameObject tt = Game.FindAny("Systems/TV/Teletext");
+                PlayMakerFSM pages = tt != null ? Game.FsmOn(tt, "Pages") : null;
+                FsmInt pn = pages != null ? pages.FsmVariables.FindFsmInt("PageNumber") : null;
+                Log.Info("autotest : teletexte " + (tt == null ? "absent" : tt.activeSelf ? "allume" : "eteint") + ", page " + (pn != null ? pn.Value.ToString() : "?"));
+            }
+        }
+
+        // [Test] Autotest=prise : chacun note toutes les 3 s (16-90 s) les prises du chauffage moteur (cable plug) :
+        // etat de 'Data', corps, position ; a 20 s, vidage de leurs parents et de leur prise de voiture (cibles.txt).
+        static float plugLog;
+        static bool plugDumped;
+        static void TestPlug(float t)
+        {
+            if (t < 16f || t > 90f || t < plugLog) return;
+            plugLog = t + 3f;
+            var sb = new System.Text.StringBuilder();
+            var dump = new System.Collections.Generic.List<string>();
+            foreach (PlayMakerFSM f in Resources.FindObjectsOfTypeAll(typeof(PlayMakerFSM)))
+            {
+                if (f.hideFlags != HideFlags.None || !f.gameObject.name.StartsWith("cable plug")) continue;
+                FsmGameObject sock = f.FsmVariables.FindFsmGameObject("Socket");
+                sb.Append(" | ").Append(Recon.Path(f.transform)).Append("::").Append(f.FsmName).Append(' ').Append(f.ActiveStateName)
+                  .Append(f.gameObject.activeInHierarchy ? "" : " (inactif)").Append(f.GetComponent<Rigidbody>() != null ? " corps" : " sans corps")
+                  .Append(" en ").Append(f.transform.position.ToString("F1"))
+                  .Append(sock != null && sock.Value != null ? " prise " + Recon.Path(sock.Value.transform) : "")
+                  .Append(Replay.Owner(f) != null ? " [" + Replay.Owner(f) + "]" : "");
+                if (!plugDumped)
+                {
+                    dump.Add(Recon.Path(f.transform.parent != null ? f.transform.parent : f.transform));
+                    if (sock != null && sock.Value != null) dump.Add(Recon.Path(sock.Value.transform));
+                }
+            }
+            Log.Info("autotest : prises t=" + t.ToString("F0") + (sb.Length > 0 ? sb.ToString() : " aucune"));
+            if (!plugDumped && t >= 20f && dump.Count > 0 && Config.GetInt("Test", "VidagePrises", 0) != 0) { plugDumped = true; Log.Info("autotest : vidage prises " + Recon.DumpTargets(string.Join(";", dump.ToArray()))); }
+            // Hote : debranche la prise de la maison ([Test] TestPrise, UT de son automate) a 34 s, la rebranche a 55 s.
+            if (!MWCoop.Net.Session.IsHost) return;
+            int want = t >= 34f && plugStep == 0 ? 1 : t >= 55f && plugStep == 1 ? 2 : 0;
+            if (want == 0) return;
+            plugStep = want;
+            string ut = Config.Get("Test", "TestPrise", "HeaterCable1On");
+            foreach (PlayMakerFSM f in Resources.FindObjectsOfTypeAll(typeof(PlayMakerFSM)))
+            {
+                if (f.hideFlags != HideFlags.None || f.FsmName != "Data" || !f.gameObject.name.StartsWith("cable plug")) continue;
+                FsmString u = f.FsmVariables.FindFsmString("UT");
+                if (u == null || u.Value != ut) continue;
+                string before = f.ActiveStateName;
+                Game.SetState(f, want == 1 ? "Heater off" : "Heater on");
+                Log.Info("autotest : prise " + ut + (want == 1 ? " debranchee" : " rebranchee") + " ici (" + before + " -> " + f.ActiveStateName + ")");
+                return;
+            }
+            Log.Info("autotest : prise " + ut + " introuvable");
+        }
+        static int plugStep;
+
+        // [Test] Autotest=paie : enveloppe de paie d'un boulot ([Test] TestEnveloppe, defaut : livraison de bois 1),
+        // allumee chez chacun a 25 s avec Money = 123 (comme le boulot rejoue l'aurait fait) ; a 27 s, vidage de son
+        // automate ; a 36 s l'hote la prend (etat [Test] TestPrendre, defaut 'State 1', comme le clic) ; argent note
+        // a 30, 45 et 60 s. Attendu : +123 chez l'hote, +123 chez l'invite (revenu partage), pas 246.
+        static int payStep;
+        static float payTrace;
+        static GameObject payEnv;
+        static int payPrep;
+        static string payTraceK;
+        static string PayPath { get { return Config.Get("Test", "TestEnveloppe", "JOBS/HouseWood1/LOD/CarPos/NPCWood/WoodCaller1/skeleton/pelvis/spine_middle/spine_upper/collar_right/shoulder_right/arm_right/hand_right/PayMoney"); } }
+        static string Money()
+        {
+            FsmFloat c = FsmVariables.GlobalVariables.FindFsmFloat("PlayerMoney"), b = FsmVariables.GlobalVariables.FindFsmFloat("PlayerBankAccount");
+            return "liquide " + (c != null ? c.Value.ToString("F2") : "?") + ", banque " + (b != null ? b.Value.ToString("F2") : "?");
+        }
+        static void TestPay(float t)
+        {
+            GameObject env = payEnv != null ? payEnv : Game.FindAny(PayPath);
+            // Preparee a 20 s chez tous (montant, sortie de sous le PNJ, nom fixe) mais encore eteinte ; allumee a 25 s.
+            // [Test] PaieRetard=n : chez l'invite, allumee n s plus tard (prise par l'hote avant qu'elle n'apparaisse).
+            if (payPrep == 0 && t >= 20f)
+            {
+                payPrep = 1;
+                if (env == null) { Log.Info("autotest : paie : enveloppe introuvable " + PayPath); payStep = 9; return; }
+                // Montant pose AVANT l'allumage : au demarrage l'automate le compare a 0 et s'eteint s'il est nul.
+                PlayMakerFSM u = Game.FsmOn(env, "Use");
+                FsmFloat m = u != null ? u.FsmVariables.FindFsmFloat("Money") : null;
+                if (m != null) m.Value = 123f;
+                // Sortie de sous le PNJ (le boulot eteint le client tant qu'il n'est pas en cours), meme place chez tous.
+                env.SetActive(false);
+                env.transform.parent = null;
+                env.name = "EssaiPaie";   // (pas "MWCoop..." : racines sautees par WorldFsms)
+                payEnv = env;
+                Log.Info("autotest : paie : " + Wallet.TestEnvelope(u));
+            }
+            if (payStep == 0 && payPrep == 1 && t >= 25f + (MWCoop.Net.Session.IsHost ? 0 : Config.GetInt("Test", "PaieRetard", 0)))
+            {
+                payStep = 1;
+                env.SetActive(true);
+                PlayMakerFSM u = Game.FsmOn(env, "Use");
+                Log.Info("autotest : paie : enveloppe allumee (" + (u != null ? u.ActiveStateName : "pas d'automate") + ") ; " + Money());
+            }
+            if (payStep >= 1 && payStep < 4 && env != null && t >= payTrace)
+            {
+                payTrace = t + 0.5f;
+                Transform off = null;
+                for (Transform p = env.transform; p != null; p = p.parent) if (!p.gameObject.activeSelf) off = p;
+                PlayMakerFSM u = Game.FsmOn(env, "Use");
+                string k = (off != null ? "coupee a " + Recon.Path(off) : "allumee") + ", etat " + (u != null ? u.ActiveStateName : "?");
+                if (k != payTraceK) { payTraceK = k; Log.Info("autotest : paie t=" + t.ToString("F1") + " : enveloppe " + k); }
+            }
+            if (payStep == 1 && t >= 27f) { payStep = 2; if (env != null) Log.Info("autotest : paie : vidage " + Recon.DumpTargets(Recon.Path(env.transform))); }
+            if (payStep == 2 && t >= 30f) { payStep = 3; Log.Info("autotest : paie t=30 : " + Money()); }
+            if (payStep == 3 && t >= 36f)
+            {
+                payStep = 4;
+                if (MWCoop.Net.Session.IsHost && env != null)
+                {
+                    // Comme le clic (Wait button -USE-> State 1) : pas un rejeu.
+                    PlayMakerFSM u = Game.FsmOn(env, "Use");
+                    string before = u != null ? u.ActiveStateName : "?";
+                    if (u != null) Game.SetState(u, Config.Get("Test", "TestPrendre", "State 1"));
+                    Log.Info("autotest : paie : prise (" + before + " -> " + (u != null ? u.ActiveStateName : "?") + ") ; " + Money());
+                }
+            }
+            if (payStep == 4 && t >= 45f) { payStep = 5; Log.Info("autotest : paie t=45 : " + Money() + (env != null ? ", enveloppe " + (env.activeInHierarchy ? "visible" : "cachee") : "")); }
+            if (payStep == 5 && t >= 60f) { payStep = 6; Log.Info("autotest : paie t=60 : " + Money()); }
+        }
+
+        static void TestCd(float t)
+        {
+            GameObject cases = GameObject.Find("Systems/CDs");
+            Transform c1 = cases != null ? cases.transform.Find("cd case(item1)") : null;
+            if (MWCoop.Net.Session.IsHost)
+            {
+                if (step == 0 && t > 45f) { step = 1; Log.Info("autotest : cd, ouvre " + CaseClick()); }
+                if (step == 1 && t > 49f) step = 2;   // le jeu libere le CD 1 s apres l'ouverture (CHECK -> Detach)
+                if (step == 2 && t > 52f)
+                {
+                    step = 3;
+                    GameObject cd = CdObject("CD1");
+                    Rigidbody rb = cd != null ? cd.GetComponent<Rigidbody>() : null;
+                    if (rb != null && c1 != null) { rb.position = c1.position + Vector3.up * 0.3f + c1.right * 1f; rb.velocity = Vector3.zero; Props.SoonScan(); }
+                    Log.Info("autotest : cd, CD1 pose a cote : " + (rb != null ? rb.position.ToString("F2") : "pas de corps"));
+                }
+                if (step == 3 && t > 56f)
+                {
+                    // Remis dans le boitier comme le joueur : le point d'insertion a le CD tenu ({Part}, 'Find correct
+                    // part'), 'Wait for assembly' attend le clic -> ASSEMBLE.
+                    step = 4;
+                    GameObject cd = CdObject("CD1");
+                    Transform trig = c1 != null ? c1.Find("DiscTriggerCase1") : null;
+                    PlayMakerFSM d = trig != null ? Game.FsmOn(trig.gameObject, "Data") : null;
+                    if (d != null && cd != null)
+                    {
+                        d.FsmVariables.FindFsmGameObject("Part").Value = cd;
+                        WorldFsms.TestClick("DiscTriggerCase1::Data", "Wait for assembly");
+                        Log.Info("autotest : cd, remis dans le boitier " + WorldFsms.TestEvent("DiscTriggerCase1::Data", "ASSEMBLE"));
+                    }
+                    else Log.Info("autotest : cd, remise impossible (point " + (d != null) + ", CD " + (cd != null) + ")");
+                }
+                if (step == 4 && t > 62f) { step = 5; Log.Info("autotest : cd, referme " + CaseClick()); }
+            }
+            if (t > 40f && t < 75f && t - cdLog >= 2f)
+            {
+                cdLog = t;
+                PlayMakerFSM use = c1 != null ? Game.FsmOn(c1.gameObject, "Use") : null;
+                FsmBool open = use != null ? use.FsmVariables.FindFsmBool("Open") : null;
+                GameObject cd = CdObject("CD1");
+                Transform lid = c1 != null ? c1.Find("PivotTop") : null;
+                Log.Info("autotest : cd, boitier 1 " + (use != null ? use.ActiveStateName + " Open=" + (open != null && open.Value) : "introuvable")
+                         + (lid != null ? " couvercle " + lid.localEulerAngles.ToString("F0") : "")
+                         + " ; CD1 " + (cd != null ? "sous " + (cd.transform.parent != null ? cd.transform.parent.name : "(racine)") + " en " + cd.transform.position.ToString("F2")
+                                        + (cd.GetComponent<Rigidbody>() != null ? ", physique" : ", sans corps") : "introuvable")
+                         + " ; suivis " + Props.Ids("w:cd:"));
+            }
+        }
+
+        // Comme un vrai clic : 'Wait button' (survol) puis USE dans la meme image (sinon MousePickEvent ressort).
+        // Le survol (MousePickEvent, curseur absent) est coupe le temps du clic.
+        static string CaseClick()
+        {
+            GameObject c = GameObject.Find("Systems/CDs/cd case(item1)");
+            PlayMakerFSM use = c != null ? Game.FsmOn(c, "Use") : null;
+            FsmState wb = use != null ? use.Fsm.GetState("Wait button") : null;
+            if (wb == null) return "boitier introuvable";
+            var off = new System.Collections.Generic.List<FsmStateAction>();
+            foreach (FsmStateAction a in wb.Actions) if (a != null && a.Enabled && a.GetType().Name == "MousePickEvent") { a.Enabled = false; off.Add(a); }
+            try
+            {
+                WorldFsms.TestClick("cd case(item1)::Use", "Wait button");
+                return WorldFsms.TestEvent("cd case(item1)::Use", "USE");
+            }
+            finally { foreach (FsmStateAction a in off) a.Enabled = true; }
+        }
+
+        static GameObject CdObject(string name)
+        {
+            foreach (PlayMakerFSM f in Resources.FindObjectsOfTypeAll(typeof(PlayMakerFSM)))
+                if (f.FsmName == "Data" && f.gameObject.name == "cd(itemx)" && f.hideFlags == HideFlags.None)
+                {
+                    FsmString n = f.FsmVariables.FindFsmString("ThisCD");
+                    if (n != null && n.Value == name) return f.gameObject;
+                }
+            return null;
+        }
+        static string clipShot;
+        static float nextSleepLog;
+        public static int PoseFlags;
+        static int seenFlags = -1;
+        static float shotAt = -1;
+        static string bagId;
+        static int step, step2, step3, portiereMark, spamLogged = -1;
+        static bool brokeLock;
+        static float maxUp = 0.5f, maxRot, coffreT;
+        static bool coffreStartSet;
+        static Vector3 coffreStart;
+        static float lastPeriodic;
+
+        // La camera du joueur suit l'avatar le plus proche (souris du jeu coupee pendant le test).
+        static void LookAtGroup()
+        {
+            GameObject p = GameObject.Find("PLAYER");
+            Transform cam = p != null ? p.transform.Find("Pivot/AnimPivot/Camera/FPSCamera") : null;
+            if (cam == null) return;
+            Vector3 sum = Vector3.zero;
+            int n = 0;
+            foreach (Avatar a in PlayerSync.Avatars) if (a.Root != null) { sum += a.Root.transform.position; n++; }
+            if (n == 0) return;
+            AimAt(p, cam, sum / n + Vector3.up * 1.0f);
+        }
+
+        static void FacePoint(string xyz)
+        {
+            GameObject p = GameObject.Find("PLAYER");
+            Transform cam = p != null ? p.transform.Find("Pivot/AnimPivot/Camera/FPSCamera") : null;
+            string[] c = xyz.Split(',');
+            if (cam == null || c.Length < 3) return;
+            var ci = System.Globalization.CultureInfo.InvariantCulture;
+            AimAt(p, cam, new Vector3(float.Parse(c[0], ci), float.Parse(c[1], ci), float.Parse(c[2], ci)));
+        }
+
+        internal static void AimAt(GameObject p, Transform cam, Vector3 target)
+        {
+            foreach (Behaviour b in p.GetComponents<Behaviour>()) if (b.GetType().Name.Contains("MouseLook")) b.enabled = false;
+            foreach (Behaviour b in cam.GetComponents<Behaviour>()) if (b.GetType().Name.Contains("MouseLook")) b.enabled = false;
+            Vector3 to = target - cam.position;
+            p.transform.rotation = Quaternion.Euler(0, Mathf.Atan2(to.x, to.z) * Mathf.Rad2Deg, 0);
+            cam.localRotation = Quaternion.Euler(-Mathf.Atan2(to.y, new Vector2(to.x, to.z).magnitude) * Mathf.Rad2Deg, 0, 0);
+        }
+
+        static void LookAtNearestAvatar()
+        {
+            GameObject p = GameObject.Find("PLAYER");
+            if (p == null) return;
+            Transform cam = p.transform.Find("Pivot/AnimPivot/Camera/FPSCamera");
+            Avatar best = null;
+            float bd = float.MaxValue;
+            foreach (Avatar a in PlayerSync.Avatars)
+            {
+                if (a.Root == null) continue;
+                float d = (a.Root.transform.position - p.transform.position).sqrMagnitude;
+                if (d < bd) { bd = d; best = a; }
+            }
+            if (best == null || cam == null) return;
+            var cc = p.GetComponent<CharacterController>();
+            if (cc != null && bd < 2.5f * 2.5f)
+            {
+                Vector3 away = p.transform.position - best.Root.transform.position;
+                away.y = 0;
+                cc.SimpleMove((away.sqrMagnitude > 0.01f ? away.normalized : Vector3.forward) * 1.5f);
+            }
+            foreach (Behaviour b in p.GetComponents<Behaviour>()) if (b.GetType().Name.Contains("MouseLook")) b.enabled = false;
+            foreach (Behaviour b in cam.GetComponents<Behaviour>()) if (b.GetType().Name.Contains("MouseLook")) b.enabled = false;
+            Vector3 to = best.Root.transform.position + Vector3.up * 1.2f - cam.position;
+            p.transform.rotation = Quaternion.Euler(0, Mathf.Atan2(to.x, to.z) * Mathf.Rad2Deg, 0);
+            float pitch = -Mathf.Atan2(to.y, new Vector2(to.x, to.z).magnitude) * Mathf.Rad2Deg;
+            cam.localRotation = Quaternion.Euler(pitch, 0, 0);
+        }
+    }
+}

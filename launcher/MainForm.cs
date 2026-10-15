@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -11,15 +11,24 @@ using SummerCoop.Setup;
 
 namespace SummerCoop.Launcher
 {
-    internal sealed class MainForm : Form
+    internal sealed partial class MainForm : Form
     {
         private readonly LauncherSettings settings;
         private readonly string configPath;
         private readonly StringBuilder activity = new StringBuilder();
+        private readonly ISteamInviteClient steamClient;
+        private readonly SteamLaunchInbox steamInbox;
+        private readonly Timer steamTimer = new Timer();
+        private readonly Dictionary<ulong, DateTime> dismissedInvites = new Dictionary<ulong, DateTime>();
+        private ComboBox cmbInvites;
+        private Control inviteRow;
+        private Label lblSteam;
+        private bool lastLaunchSucceeded;
+        private DateTime nextInboxUtc;
         private bool busy;
         private bool loading;
 
-        private readonly Panel content = new Panel();
+        private readonly Panel content = new MwScenePanel();
         private Button navHome, navSettings, navLogs;
         private Panel pageHome, pageSettings, pageLogs;
         private ComboBox cmbMode, cmbGame, cmbMethod;
@@ -29,12 +38,17 @@ namespace SummerCoop.Launcher
         private Button btnPlay, btnInstall;
         private Control addressRow, portRow, passwordRow, lobbyRow;
 
-        internal MainForm() : this(LauncherSettings.ConfigPath()) { }
+        internal MainForm() : this((SteamLaunchRequest)null) { }
+        internal MainForm(SteamLaunchRequest request) : this(LauncherSettings.ConfigPath(), new SteamInviteClient(), request) { }
 
         // An isolated settings path lets GUI checks avoid the user's real configuration.
-        internal MainForm(string settingsPath)
+        internal MainForm(string settingsPath) : this(settingsPath, null, null) { }
+
+        internal MainForm(string settingsPath, ISteamInviteClient invites, SteamLaunchRequest request)
         {
             configPath = settingsPath;
+            steamClient = invites;
+            steamInbox = new SteamLaunchInbox(settingsPath);
             settings = LauncherSettings.Load(configPath);
             if (settings.GamePath.Length == 0)
             {
@@ -46,19 +60,17 @@ namespace SummerCoop.Launcher
                 catch (Exception) { }
             }
             Text = "SummerCoop — My Summer Car";
-            ClientSize = new Size(1000, 700);
-            MinimumSize = new Size(820, 660);
+            ClientSize = new Size(1280, 800);
+            MinimumSize = new Size(1024, 640);
+            FormBorderStyle = FormBorderStyle.None;
+            DoubleBuffered = true;
             StartPosition = FormStartPosition.CenterScreen;
-            AutoScaleMode = AutoScaleMode.Dpi;
-            Font = new Font("Segoe UI", 10);
-            ForeColor = Color.FromArgb(30, 44, 55);
-            BackColor = Color.FromArgb(24, 34, 44);
-
+            AutoScaleMode = AutoScaleMode.None;
+            Font = new Font("Segoe UI", 14, FontStyle.Regular, GraphicsUnit.Pixel);
+            MwStyle.Dark = settings.DarkTheme;
+            ForeColor = MwStyle.Ink;
+            BackColor = Color.FromArgb(4, 8, 22);
             content.Dock = DockStyle.Fill;
-            content.Padding = new Padding(28, 24, 28, 24);
-            try { content.BackgroundImage = BackgroundArt.Load(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)); }
-            catch (Exception) { }
-            content.BackgroundImageLayout = ImageLayout.Zoom;
             Controls.Add(content);
             BuildNavigation();
             BuildStatus();
@@ -71,6 +83,17 @@ namespace SummerCoop.Launcher
             LoadSettingsToUI();
             RefreshStatuses();
             ShowPage(pageHome);
+            Resize += delegate { LayoutView(); };
+            Shown += delegate {
+                Rectangle area = Screen.FromControl(this).WorkingArea;
+                if (Width > area.Width || Height > area.Height) Size = new Size(Math.Max(MinimumSize.Width, Math.Min(Width, area.Width)), Math.Max(MinimumSize.Height, Math.Min(Height, area.Height)));
+                LayoutView();
+            };
+            if (steamClient != null) steamClient.Invitation += ReceiveInvitation;
+            steamTimer.Interval = 250;
+            steamTimer.Tick += delegate { TickSteam(); };
+            if (steamClient != null) Shown += delegate { TickSteam(); steamTimer.Start(); };
+            if (request != null) ReceiveSteamLaunch(request);
             FormClosing += delegate(object sender, FormClosingEventArgs e)
             {
                 if (busy) { e.Cancel = true; AppendHome("Дождитесь завершения установки."); return; }
@@ -80,6 +103,12 @@ namespace SummerCoop.Launcher
 
         protected override void Dispose(bool disposing)
         {
+            if (disposing)
+            {
+                steamTimer.Stop();
+                steamTimer.Dispose();
+                if (steamClient != null) { steamClient.Invitation -= ReceiveInvitation; steamClient.Dispose(); }
+            }
             if (disposing && content.BackgroundImage != null)
             {
                 Image background = content.BackgroundImage;
@@ -87,290 +116,6 @@ namespace SummerCoop.Launcher
                 background.Dispose();
             }
             base.Dispose(disposing);
-        }
-
-        private void BuildNavigation()
-        {
-            TableLayoutPanel bar = new TableLayoutPanel();
-            bar.Dock = DockStyle.Top;
-            bar.Height = 76;
-            bar.Padding = new Padding(28, 14, 28, 14);
-            bar.BackColor = Color.FromArgb(20, 30, 40);
-            bar.ColumnCount = 4;
-            bar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            for (int i = 0; i < 3; i++) bar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 140));
-            Label title = new Label();
-            title.Text = "SummerCoop  /  " + LauncherInfo.ModVersion;
-            title.Font = new Font("Segoe UI", 16, FontStyle.Bold);
-            title.ForeColor = Color.White;
-            title.Dock = DockStyle.Fill;
-            title.TextAlign = ContentAlignment.MiddleLeft;
-            bar.Controls.Add(title, 0, 0);
-            navHome = MakeButton("Играть", false);
-            navSettings = MakeButton("Настройки", false);
-            navLogs = MakeButton("Диагностика", false);
-            Button[] buttons = { navHome, navSettings, navLogs };
-            for (int i = 0; i < buttons.Length; i++)
-            {
-                buttons[i].Dock = DockStyle.Fill;
-                buttons[i].ForeColor = Color.White;
-                bar.Controls.Add(buttons[i], i + 1, 0);
-            }
-            navHome.Click += delegate { ShowPage(pageHome); RefreshStatuses(); };
-            navSettings.Click += delegate { ShowPage(pageSettings); };
-            navLogs.Click += delegate { ShowPage(pageLogs); RefreshLogs(); };
-            Controls.Add(bar);
-        }
-
-        private void BuildStatus()
-        {
-            lblStatus = new Label();
-            lblStatus.Dock = DockStyle.Bottom;
-            lblStatus.Height = 48;
-            lblStatus.Padding = new Padding(28, 0, 28, 0);
-            lblStatus.BackColor = Color.FromArgb(20, 30, 40);
-            lblStatus.ForeColor = Color.FromArgb(220, 230, 240);
-            lblStatus.TextAlign = ContentAlignment.MiddleLeft;
-            lblStatus.AutoEllipsis = true;
-            lblStatus.Text = "Выберите режим и нажмите «Играть». Меню в игре — F6.";
-            Controls.Add(lblStatus);
-        }
-
-        private Panel MakePage()
-        {
-            Panel page = new Panel();
-            page.Dock = DockStyle.Fill;
-            page.BackColor = Color.Transparent;
-            page.AutoScroll = true;
-            page.Visible = false;
-            content.Controls.Add(page);
-            return page;
-        }
-
-        private TableLayoutPanel Card(Panel page, string title)
-        {
-            TableLayoutPanel card = new TableLayoutPanel();
-            card.Dock = DockStyle.Top;
-            card.AutoSize = true;
-            card.AutoSizeMode = AutoSizeMode.GrowAndShrink;
-            card.ColumnCount = 1;
-            card.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            card.BackColor = Color.FromArgb(248, 250, 251);
-            card.Padding = new Padding(24, 18, 24, 18);
-            page.Controls.Add(card);
-            Label heading = MakeLabel(title);
-            heading.Font = new Font("Segoe UI", 18, FontStyle.Bold);
-            heading.Margin = new Padding(0, 0, 0, 14);
-            Add(card, heading);
-            return card;
-        }
-
-        private static void Add(TableLayoutPanel table, Control control)
-        {
-            int row = table.RowCount++;
-            table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            table.Controls.Add(control, 0, row);
-        }
-
-        private static Label MakeLabel(string text)
-        {
-            Label label = new Label();
-            label.Text = text;
-            label.AutoSize = true;
-            label.Dock = DockStyle.Fill;
-            label.Margin = new Padding(0, 0, 0, 10);
-            return label;
-        }
-
-        private static Button MakeButton(string text, bool primary)
-        {
-            Button button = new Button();
-            button.Text = text;
-            button.AutoSize = true;
-            button.MinimumSize = new Size(140, 40);
-            button.Padding = new Padding(12, 4, 12, 4);
-            button.FlatStyle = FlatStyle.Flat;
-            button.FlatAppearance.BorderSize = 0;
-            button.BackColor = primary ? Color.FromArgb(195, 76, 34) : Color.FromArgb(224, 231, 235);
-            button.ForeColor = primary ? Color.White : Color.FromArgb(30, 44, 55);
-            button.Font = new Font("Segoe UI", 10, primary ? FontStyle.Bold : FontStyle.Regular);
-            button.Margin = new Padding(0, 4, 12, 0);
-            button.Cursor = Cursors.Hand;
-            return button;
-        }
-
-        private static Control Field(TableLayoutPanel card, string caption, Control input)
-        {
-            TableLayoutPanel row = new TableLayoutPanel();
-            row.AutoSize = true;
-            row.Dock = DockStyle.Fill;
-            row.Margin = new Padding(0, 0, 0, 10);
-            row.ColumnCount = 2;
-            row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 160));
-            row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            Label label = MakeLabel(caption);
-            label.Anchor = AnchorStyles.Left;
-            label.Margin = new Padding(0, 4, 8, 4);
-            row.Controls.Add(label, 0, 0);
-            input.Dock = DockStyle.Fill;
-            input.Margin = Padding.Empty;
-            row.Controls.Add(input, 1, 0);
-            Add(card, row);
-            return row;
-        }
-
-        private static ComboBox Choice(params string[] items)
-        {
-            ComboBox choice = new ComboBox();
-            choice.DropDownStyle = ComboBoxStyle.DropDownList;
-            choice.Items.AddRange(items);
-            return choice;
-        }
-
-        private static CheckBox Option(string text)
-        {
-            CheckBox option = new CheckBox();
-            option.Text = text;
-            option.AutoSize = true;
-            option.Margin = new Padding(0, 0, 0, 10);
-            return option;
-        }
-
-        private void BuildHome()
-        {
-            TableLayoutPanel card = Card(pageHome, "Игра с друзьями");
-            cmbMode = Choice("Выбрать подключение в игре (F6)", "Создать игру · LAN / VPN", "Присоединиться · LAN / VPN", "Создать игру · Steam", "Присоединиться · Steam");
-            Field(card, "Как играть", cmbMode);
-            cmbMode.SelectedIndexChanged += delegate { if (!loading) RefreshModeHint(); };
-            lblModeDesc = MakeLabel("");
-            lblModeDesc.ForeColor = Color.FromArgb(75, 93, 106);
-            Add(card, lblModeDesc);
-            txtName = new TextBox();
-            txtName.MaxLength = 48;
-            Field(card, "Имя игрока", txtName);
-            txtAddress = new TextBox();
-            addressRow = Field(card, "Адрес хоста", txtAddress);
-            txtPort = new TextBox();
-            portRow = Field(card, "Порт", txtPort);
-            txtPassword = new TextBox();
-            txtPassword.UseSystemPasswordChar = true;
-            passwordRow = Field(card, "Пароль (если есть)", txtPassword);
-            txtLobby = new TextBox();
-            lobbyRow = Field(card, "Номер лобби", txtLobby);
-
-            lblGame = MakeLabel("");
-            lblGame.Margin = new Padding(0, 12, 0, 8);
-            Add(card, lblGame);
-            lblMod = MakeLabel("");
-            Add(card, lblMod);
-            FlowLayoutPanel actions = new FlowLayoutPanel();
-            actions.AutoSize = true;
-            actions.Dock = DockStyle.Fill;
-            actions.Margin = Padding.Empty;
-            btnPlay = MakeButton("Играть", true);
-            btnPlay.MinimumSize = new Size(200, 46);
-            btnPlay.Click += delegate { Play(); };
-            btnInstall = MakeButton("Установить мод", false);
-            btnInstall.Click += delegate { InstallMod(); };
-            actions.Controls.Add(btnPlay);
-            actions.Controls.Add(btnInstall);
-            Add(card, actions);
-        }
-
-        private void BuildSettings()
-        {
-            TableLayoutPanel card = Card(pageSettings, "Настройки");
-            cmbGame = new ComboBox();
-            Field(card, "Папка игры", PathPicker(cmbGame, "Выберите папку с mysummercar.exe"));
-            cmbGame.TextChanged += delegate { if (!loading) RefreshStatuses(); };
-            txtProfile = new TextBox();
-            Field(card, "Сохранение мира", PathPicker(txtProfile, "Выберите папку сохранения мира"));
-            Label profileHint = MakeLabel("Мир хранится отдельно от одиночного сохранения.");
-            profileHint.ForeColor = Color.FromArgb(75, 93, 106);
-            Add(card, profileHint);
-            chkImport = Option("Начать новый мир с копии одиночного сохранения");
-            Add(card, chkImport);
-            chkDisable = Option("Отключить другие моды при установке");
-            Add(card, chkDisable);
-            chkClose = Option("Закрывать лаунчер после запуска игры");
-            Add(card, chkClose);
-            cmbMethod = Choice("Автоматически", "Напрямую", "Через Steam");
-            Field(card, "Способ запуска", cmbMethod);
-            Button save = MakeButton("Сохранить", true);
-            save.Click += delegate { if (SaveUIToSettings(true)) { RefreshStatuses(); AppendHome("Настройки сохранены."); } };
-            Add(card, save);
-        }
-
-        private Control PathPicker(Control input, string description)
-        {
-            TableLayoutPanel picker = new TableLayoutPanel();
-            picker.AutoSize = true;
-            picker.ColumnCount = 2;
-            picker.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            picker.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            input.Dock = DockStyle.Fill;
-            input.Anchor = AnchorStyles.Left | AnchorStyles.Right;
-            input.Margin = new Padding(0, 4, 10, 4);
-            picker.Controls.Add(input, 0, 0);
-            Button browse = MakeButton("Обзор…", false);
-            browse.MinimumSize = new Size(100, 32);
-            browse.Margin = Padding.Empty;
-            browse.Click += delegate
-            {
-                using (FolderBrowserDialog dialog = new FolderBrowserDialog())
-                {
-                    dialog.Description = description;
-                    if (Directory.Exists(input.Text)) dialog.SelectedPath = input.Text;
-                    if (dialog.ShowDialog(this) == DialogResult.OK) input.Text = dialog.SelectedPath;
-                }
-            };
-            picker.Controls.Add(browse, 1, 0);
-            return picker;
-        }
-
-        private void BuildLogs()
-        {
-            TableLayoutPanel card = Card(pageLogs, "Диагностика");
-            txtLogs = new TextBox();
-            txtLogs.Multiline = true;
-            txtLogs.ReadOnly = true;
-            txtLogs.ScrollBars = ScrollBars.Both;
-            txtLogs.WordWrap = false;
-            txtLogs.Dock = DockStyle.Fill;
-            txtLogs.Height = 320;
-            txtLogs.Font = new Font("Consolas", 9);
-            Add(card, txtLogs);
-            FlowLayoutPanel actions = new FlowLayoutPanel();
-            actions.Dock = DockStyle.Fill;
-            actions.AutoSize = true;
-            actions.Margin = Padding.Empty;
-            Button refresh = MakeButton("Обновить", false);
-            refresh.Click += delegate { RefreshLogs(); };
-            Button profile = MakeButton("Папка сохранения", false);
-            profile.Click += delegate { OpenFolder(txtProfile.Text); };
-            Button game = MakeButton("Папка игры", false);
-            game.Click += delegate { OpenFolder(cmbGame.Text); };
-            actions.Controls.Add(refresh);
-            actions.Controls.Add(profile);
-            actions.Controls.Add(game);
-            Add(card, actions);
-        }
-
-        private void ShowPage(Panel page)
-        {
-            pageHome.Visible = page == pageHome;
-            pageSettings.Visible = page == pageSettings;
-            pageLogs.Visible = page == pageLogs;
-            if (page == pageHome) AcceptButton = btnPlay;
-            else AcceptButton = null;
-            Highlight(navHome, page == pageHome);
-            Highlight(navSettings, page == pageSettings);
-            Highlight(navLogs, page == pageLogs);
-        }
-
-        private static void Highlight(Button button, bool active)
-        {
-            button.BackColor = active ? Color.FromArgb(195, 76, 34) : Color.FromArgb(35, 49, 62);
         }
 
         private void LoadSettingsToUI()
@@ -432,6 +177,10 @@ namespace SummerCoop.Launcher
             chkImport.Enabled = mode == ConnectionMode.Solo || mode == ConnectionMode.HostLan || mode == ConnectionMode.HostSteam;
             btnPlay.Text = mode == ConnectionMode.HostLan || mode == ConnectionMode.HostSteam ? "Создать игру" :
                 mode == ConnectionMode.JoinLan || mode == ConnectionMode.JoinSteam ? "Присоединиться" : "Играть";
+            bool steam = mode == ConnectionMode.HostSteam || mode == ConnectionMode.JoinSteam;
+            netSteam.Selected = steam;
+            netLan.Selected = !steam;
+            netSteam.Invalidate(); netLan.Invalidate();
             pageHome.ResumeLayout(true);
         }
 
@@ -442,13 +191,14 @@ namespace SummerCoop.Launcher
             bool found = HasGameFile(game, "mysummercar.exe");
             bool loader = found && HasGameFile(game, @"mysummercar_Data\Managed\MSCLoader.dll");
             lblGame.Text = !found ? "Выберите папку My Summer Car в настройках." :
-                !loader ? "Установите MSCLoader 1.3.5 в папку игры." : "My Summer Car найдена · MSCLoader установлен";
-            lblGame.ForeColor = loader ? Color.FromArgb(40, 112, 77) : Color.FromArgb(161, 72, 33);
+                !loader ? "Установите MSCLoader в папку игры." : "My Summer Car найдена · MSCLoader установлен";
+            lblGame.ForeColor = loader ? MwStyle.Ok : MwStyle.Warn;
             bool installed = found && HasGameFile(game, @"Mods\SummerCoop.dll") &&
                 HasGameFile(game, @"Mods\References\SummerCoop.Core.dll");
             lblMod.Text = installed ? "Мод установлен. Для совместной игры используйте одну сборку." : "Установите мод перед первым запуском.";
             btnInstall.Text = installed ? "Обновить мод" : "Установить мод";
             btnInstall.Enabled = !busy && loader;
+            if (gameFooter != null) gameFooter.Text = found ? "✓ My Summer Car" : "My Summer Car · выберите папку";
         }
 
         private static bool HasGameFile(string game, string relativePath)
@@ -469,8 +219,101 @@ namespace SummerCoop.Launcher
 
         private void AppendLaunch(string line) { AppendHome(line); }
 
+        private void TickSteam()
+        {
+            if (IsDisposed || busy) return;
+            if (steamClient != null)
+            {
+                steamClient.Update(cmbGame.Text.Trim());
+                lblSteam.Text = steamClient.Status;
+                lblSteam.ForeColor = steamClient.Ready ? MwStyle.Ok : MwStyle.Warn;
+            }
+            if (DateTime.UtcNow >= nextInboxUtc)
+            {
+                nextInboxUtc = DateTime.UtcNow.AddSeconds(1);
+                try { foreach (SteamLaunchRequest request in steamInbox.Drain(DateTime.UtcNow)) ReceiveSteamLaunch(request); }
+                catch (Exception e)
+                {
+                    nextInboxUtc = DateTime.UtcNow.AddSeconds(10);
+                    AppendHome("Не удалось прочитать приглашение: " + e.Message);
+                }
+            }
+            for (int i = cmbInvites.Items.Count - 1; i >= 0; i--)
+                if (((SteamInvitation)cmbInvites.Items[i]).ReceivedUtc < DateTime.UtcNow.AddMinutes(-30)) cmbInvites.Items.RemoveAt(i);
+            inviteRow.Visible = cmbInvites.Items.Count != 0;
+            if (cmbInvites.Items.Count != 0 && cmbInvites.SelectedIndex < 0) cmbInvites.SelectedIndex = 0;
+        }
+
+        private void ReceiveSteamLaunch(SteamLaunchRequest request)
+        {
+            if (request.GamePath.Length != 0 && HasGameFile(request.GamePath, "mysummercar.exe")) cmbGame.Text = request.GamePath;
+            if (request.LobbyId != 0) ReceiveInvitation(new SteamInvitation(request.LobbyId, 0, "Приглашение из Steam"));
+            else FocusLauncher();
+        }
+
+        private void FocusLauncher()
+        {
+            if (!IsHandleCreated) return;
+            if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+            Show();
+            Activate();
+        }
+
+        private void ReceiveInvitation(SteamInvitation invitation)
+        {
+            if (IsDisposed) return;
+            if (InvokeRequired) { BeginInvoke(new Action<SteamInvitation>(ReceiveInvitation), invitation); return; }
+            DateTime dismissed;
+            if (dismissedInvites.TryGetValue(invitation.LobbyId, out dismissed) && dismissed > DateTime.UtcNow.AddSeconds(-3)) return;
+            for (int i = 0; i < cmbInvites.Items.Count; i++)
+            {
+                SteamInvitation existing = (SteamInvitation)cmbInvites.Items[i];
+                if (existing.LobbyId != invitation.LobbyId) continue;
+                if (invitation.SenderId != 0) cmbInvites.Items[i] = invitation;
+                return;
+            }
+            if (cmbInvites.Items.Count >= 16) cmbInvites.Items.RemoveAt(0);
+            cmbInvites.Items.Add(invitation);
+            cmbInvites.SelectedIndex = cmbInvites.Items.Count - 1;
+            inviteRow.Visible = true;
+            inviteRow.BringToFront();
+            ShowPage(pageHome);
+            AppendHome(invitation.SenderName + " приглашает вас в My Summer Car.");
+            FocusLauncher();
+        }
+
+        private void DismissInvitation()
+        {
+            SteamInvitation invitation = cmbInvites.SelectedItem as SteamInvitation;
+            if (invitation == null) return;
+            dismissedInvites[invitation.LobbyId] = DateTime.UtcNow;
+            if (dismissedInvites.Count > 64)
+            {
+                List<ulong> expired = new List<ulong>();
+                foreach (KeyValuePair<ulong, DateTime> item in dismissedInvites)
+                    if (item.Value < DateTime.UtcNow.AddSeconds(-3)) expired.Add(item.Key);
+                foreach (ulong lobby in expired) dismissedInvites.Remove(lobby);
+            }
+            cmbInvites.Items.Remove(invitation);
+            if (cmbInvites.Items.Count != 0) cmbInvites.SelectedIndex = 0;
+            inviteRow.Visible = cmbInvites.Items.Count != 0;
+        }
+
+        private void AcceptInvitation()
+        {
+            if (busy) { AppendHome("Дождитесь завершения установки."); return; }
+            SteamInvitation invitation = cmbInvites.SelectedItem as SteamInvitation;
+            if (invitation == null) return;
+            cmbMode.SelectedIndex = (int)ConnectionMode.JoinSteam;
+            cmbMethod.SelectedIndex = (int)LaunchMethod.Steam;
+            txtLobby.Text = invitation.LobbyId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            Play();
+            if (lastLaunchSucceeded && !IsDisposed) DismissInvitation();
+        }
+
         private void Play()
         {
+            lastLaunchSucceeded = false;
             if (busy) { AppendHome("Дождитесь завершения установки."); return; }
             SaveUIToSettings(false);
             List<string> errors = settings.Validate(true);
@@ -480,7 +323,7 @@ namespace SummerCoop.Launcher
                 if (settings.GamePath.Length == 0 || settings.ProfilePath.Length == 0) ShowPage(pageSettings);
                 else
                 {
-                    ShowPage(pageHome);
+                    ShowPage(pageLobby);
                     if (settings.PlayerName.Length == 0 || settings.PlayerName.Length > 48) txtName.Focus();
                     else if ((settings.Mode == ConnectionMode.HostLan || settings.Mode == ConnectionMode.JoinLan) && (settings.Port < 1024 || settings.Port > 65535)) txtPort.Focus();
                     else if (settings.Mode == ConnectionMode.JoinLan) txtAddress.Focus();
@@ -502,10 +345,15 @@ namespace SummerCoop.Launcher
             try
             {
                 InstallerServices services = new InstallerServices();
-                if (services.IsGameRunning(settings.GamePath)) throw new IOException("Закройте My Summer Car перед запуском.");
-                Process.Start(GameArgs.Launch(settings, FindSteamExe()));
+                if (services.IsGameRunning(settings.GamePath)) throw new IOException("Закройте My Summer Car перед подключением. Приглашение останется в лаунчере.");
+                bool steamMode = settings.Mode == ConnectionMode.HostSteam || settings.Mode == ConnectionMode.JoinSteam;
+                if (steamClient != null) steamClient.Update(settings.GamePath);
+                if (steamMode && (steamClient == null || !steamClient.Ready))
+                    throw new IOException(steamClient == null ? "Откройте Steam перед подключением." : steamClient.Status);
+                using (Process launched = Process.Start(GameArgs.Launch(settings, FindSteamExe(), steamClient != null && steamClient.Ready))) { }
+                lastLaunchSucceeded = true;
                 activity.AppendLine("Запуск: " + GameArgs.ToDisplayCommandLine(args));
-                AppendHome("Игра запущена. Меню SummerCoop в игре — F6.");
+                AppendHome("Игра запущена. Меню SummerCoop — F10, подключение — F6.");
                 if (settings.CloseOnLaunch) Close();
             }
             catch (Exception e) { AppendHome(e.Message); }
@@ -549,7 +397,7 @@ namespace SummerCoop.Launcher
             }
             if (!SaveUIToSettings(true)) return;
             busy = true;
-            pageHome.Enabled = pageSettings.Enabled = false;
+            pageHome.Enabled = pageLobby.Enabled = pageSettings.Enabled = false;
             btnInstall.Enabled = btnPlay.Enabled = false;
             AppendHome("Установка…");
             BackgroundWorker worker = new BackgroundWorker();
@@ -561,7 +409,7 @@ namespace SummerCoop.Launcher
             worker.RunWorkerCompleted += delegate(object s, RunWorkerCompletedEventArgs e)
             {
                 busy = false;
-                pageHome.Enabled = pageSettings.Enabled = true;
+                pageHome.Enabled = pageLobby.Enabled = pageSettings.Enabled = true;
                 btnPlay.Enabled = true;
                 RefreshStatuses();
                 if (e.Error != null)

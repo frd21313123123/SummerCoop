@@ -1,0 +1,54 @@
+SummerCoop 0.2.0-alpha / MWCoop MSC verification
+Date: 2026-10-15 Asia/Yekaterinburg
+Upstream: MWCoop 0.95.3 / 25f322a749f53f2dca16b09c14165ae64709a9db
+Core suite: 121 passed, including actual localhost TCP/UDP. Most are retained SummerCoop component tests, not gameplay tests of the new engine.
+MSC adapter suite: 8 passed, including actual MWCoop UDP host + 3 clients.
+No-game MWCoop transport/codec suite: 5 passed, including actual UDP and seeded 150ms/5% loss/reordering.
+Installer: 12 passed. Launcher: 14 passed plus fixture GUI checks.
+
+GAME run mwcoop-msc-05 / host
+Engine=MWCoop 0.95.3 / MSC adapter 1
+Level=GAME
+Ready=False
+Players=1
+PartsBindings=337
+Vehicles=9
+WorldFsms=524
+SaveReceived=False
+SaveDirectory=D:\programing 2\ml-sum\.local\mwcoop-msc-05-host\mwcoop-profiles\host
+Chat=Smoke-host : MSC smoke host | Smoke-client : MSC smoke guest
+Starter=Installed=True;Parent=pivot_starter;Bolt=1
+FrameP95ms=19.61
+FrameMaxms=142.08
+
+GAME run mwcoop-msc-05 / client
+Engine=MWCoop 0.95.3 / MSC adapter 1
+Level=GAME
+Ready=True
+Players=2
+PartsBindings=331
+Vehicles=9
+WorldFsms=482
+SaveReceived=True
+SaveDirectory=D:\programing 2\ml-sum\.local\mwcoop-msc-05-client\mwcoop-profiles\guest
+Chat=Smoke-client : MSC smoke guest | Smoke-host : MSC smoke host
+Starter=Installed=True;Parent=pivot_starter;Bolt=1
+FrameP95ms=24.18
+FrameMaxms=9544.37
+
+Single-player unchanged: defaultES2File.txt
+Single-player unchanged: graveyard.txt
+Single-player unchanged: items.txt
+Single-player unchanged: meshsave.txt
+Single-player unchanged: trophies.txt
+
+B176C8D24FF02C813CFD4AAD72A5ABED2D83C640420FC0F4D7533E22EE52A493  SummerCoop.dll
+C3B35A8608E863DC0EBF94C9D819B633EF4F35D4789F7538670A54A3F1A2F87B  SummerCoop.Core.dll
+
+Both processes joined GAME with two players; guest verified the host save; both saw chat and starter mounted to pivot_starter with bolt Stage 1.
+Host Ready=False/Players=1 in its final report is expected: guest records and exits first, host records 8 seconds later. The guest report and both chat histories prove the two-player interval.
+Automatic starter exercise invokes real native FSMs through the adapter; it is not a manual mouse/input test.
+Observed long frames include scene activation/join work. Stable 60 FPS is not achieved or claimed. Native save still performs synchronous filesystem work.
+Game/loader logs also contain native warnings/errors (including a missing Ionic.Zip.Reduced loader component) and unmatched MWC paths; no claim of an error-free game log.
+Untested: full Satsuma assembly/wiring, all shops/jobs/NPC interactions, driving and boat trips, save/reload after a full playthrough, all death paths, Steam with two real accounts, long sessions and third-party mods.
+Legacy world.scw is preserved, not converted into the new engine; optional import copies native files.

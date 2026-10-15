@@ -1,0 +1,51 @@
+﻿SummerCoop 0.2.2-alpha — домкраты и лаунчер
+Дата: 2026-10-15
+Игра: Unity 5.0.0f4 / MSC, MSCLoader 1.4.2
+Финальный нативный прогон: msc-garage-06, две изолированные копии, LAN localhost
+
+SHA256 SummerCoop.dll ABC70BB70ED22BC400B40E6D973626E724870C66A27094CA233C6EE7E83E8194
+SHA256 SummerCoop.Core.dll 8FDE5DA7DD576F6937F788BB0B88ABBF3059EB91FE119BA53E4C6FA361B4B22D
+
+Результаты нативной проверки:
+host: Garage=0;Device=msc:garage:floor-jack:home;Role=observer;Tracked=True;RootError=0.0000;LevelError=0.0000;CarError=0.0010;Level=0.3800;CarY=-0.0668;Rise=0.1838;Pumps=0;Owner=1;Problem=
+host: Garage=1;Device=msc:garage:floor-jack:home;Role=actor;Tracked=True;RootError=0.0000;LevelError=0.0000;CarError=0.0000;Level=0.3800;CarY=-0.0666;Rise=0.0000;Pumps=39;Owner=0;Problem=
+host: Garage=2;Device=msc:garage:car-jack;Role=observer;Tracked=True;RootError=0.0001;LevelError=0.0000;CarError=0.0000;Level=0.3600;CarY=-0.2755;Rise=0.0000;Pumps=0;Owner=1;Problem=
+host: Garage=3;Device=msc:garage:car-jack;Role=actor;Tracked=True;RootError=0.0000;LevelError=0.0000;CarError=0.0000;Level=0.3600;CarY=-0.2755;Rise=0.0000;Pumps=39;Owner=0;Problem=
+client: Garage=0;Device=msc:garage:floor-jack:home;Role=actor;Tracked=True;RootError=0.0000;LevelError=0.0000;CarError=0.0000;Level=0.3800;CarY=-0.0678;Rise=0.1829;Pumps=38;Owner=1;Problem=
+client: Garage=1;Device=msc:garage:floor-jack:home;Role=observer;Tracked=True;RootError=0.0000;LevelError=0.0000;CarError=0.0027;Level=0.3800;CarY=-0.0693;Rise=0.0000;Pumps=0;Owner=0;Problem=
+client: Garage=2;Device=msc:garage:car-jack;Role=actor;Tracked=True;RootError=0.0000;LevelError=0.0000;CarError=0.0000;Level=0.3600;CarY=-0.2755;Rise=0.0000;Pumps=39;Owner=1;Problem=
+client: Garage=3;Device=msc:garage:car-jack;Role=observer;Tracked=True;RootError=0.0000;LevelError=0.0000;CarError=0.0000;Level=0.3600;CarY=-0.2755;Rise=0.0000;Pumps=0;Owner=0;Problem=
+
+Подкатный домкрат: гость поднял SATSUMA на 0.1829 м; хост увидел подъём на 0.1838 м.
+В момент сравнения высота машины расходилась на 0.0010 м. После передачи управления
+хосту поднятая машина совпала у гостя с погрешностью 0.0027 м. Источник позы —
+соответственно игрок 1 и игрок 0. Положение основания домкрата и уровень совпали.
+
+Винтовой домкрат: перенос, раскрытие, платформа и уровень Y=0.3600 переданы
+в обе стороны; владельцы — игрок 1 и затем игрок 0. Физического подъёма кузова
+на этом домкрате в свежей тестовой сцене не было, поэтому его работа под нагрузкой
+на собранной машине не считается проверенной. Положение основания расходилось
+не более чем примерно на 0.1 мм. Нативный шаг подъёма запускался после проверки
+поверхности; подбор мышью и выбор правильного места под автомобиль не тестировались.
+
+Гость подтвердил получение сохранения. Восемь сценарных записей завершены.
+Хост в конце отчёта имеет Ready=False/Players=1: гость штатно вышел на 8 с раньше.
+ModuleError и ActionError отсутствуют. Другие предупреждения переноса MWC в журналах
+не являются подтверждением полного прохождения MSC без ошибок.
+Пять исходных файлов одиночного сохранения сохранили SHA256. DLL тестовых копий
+совпали с build. Изолированные игровые процессы после проверки завершились.
+
+Автоматические проверки:
+- 121 тест библиотеки компонентов/сохранений; это не 121 игровой сценарий MWCoop.
+- 12 проверок MSC-адаптера, включая реальный UDP на localhost.
+- 8 проверок транспорта/кодека MWCoop, включая потери, перестановку и UDP.
+- 12 проверок установщика.
+- 19 проверок ядра лаунчера и проверки реального WinForms GUI:
+  переходы с главной к Steam/IP, настройки, темы, режимы, проверка ввода,
+  callbacks приглашений, выбор точного лобби, отказ/повтор и размеры окна.
+  Скриншоты: build/launcher-tests/screenshots.
+
+Ограничения: проверка игры выполнена локально; WAN, два Steam-аккаунта и полное
+прохождение не повторялись в этом запросе. Предпросмотр персонажа 3D и зимние
+страницы оригинального лаунчера не перенесены; внешность настраивается через F10.
+Сборка не заявляет гарантированного отсутствия всех ошибок игры и других модов.

@@ -177,6 +177,71 @@ internal static class LauncherTests
                 Check(model.IndexOf("Version = " + LauncherInfo.ProtocolVersion) >= 0, "Protocol version drifted");
                 Check(model.IndexOf("DefaultPort = " + LauncherInfo.DefaultPort) >= 0, "DefaultPort drifted");
             });
+            Test("Steam invitation accepts the full unsigned lobby id and rejects malformed commands", delegate
+            {
+                SteamLaunchRequest request;
+                Check(SteamLaunchRequest.TryParse(new[] { "+connect_lobby", "18446744073709551615" }, out request) && request.LobbyId == ulong.MaxValue, "64-bit lobby truncated");
+                Check(SteamLaunchRequest.TryParse(new[] { "+connect_lobby=123456" }, out request) && request.LobbyId == 123456, "equals form lost");
+                foreach (string[] args in new[] { new[] { "+connect_lobby" }, new[] { "+connect_lobby", "0" }, new[] { "+connect_lobby", "-1" }, new[] { "+connect_lobby", "+123" }, new[] { "+connect_lobby", " 123" }, new[] { "+connect_lobby", "18446744073709551616" }, new[] { "+connect_lobby", "123", "+connect_lobby", "456" } })
+                {
+                    bool refused = false;
+                    try { SteamLaunchRequest.TryParse(args, out request); } catch (ArgumentException) { refused = true; }
+                    Check(refused, "malformed Steam command accepted: " + string.Join(" ", args));
+                }
+                Check(!SteamLaunchRequest.TryParse(new[] { "--print-args", "--mode=host-lan" }, out request), "CLI was intercepted");
+                Check(!SteamLaunchRequest.TryParse(new[] { "other.exe", "+connect_lobby", "123" }, out request), "arbitrary executable was accepted");
+            });
+            Test("Steam launch option extracts the game path and lobby without executing supplied commands", delegate
+            {
+                SteamLaunchRequest request;
+                Check(SteamLaunchRequest.TryParse(new[] { @"E:\Steam Library\My Summer Car\mysummercar.exe", "-force-d3d9", "+connect_lobby", "109775241234567890" }, out request), "Steam %command% not recognized");
+                Check(request.GamePath == @"E:\Steam Library\My Summer Car" && request.LobbyId == 109775241234567890UL, "game path or lobby lost");
+                SteamLaunchRequest copy = SteamLaunchRequest.Decode(request.Encode());
+                Check(copy != null && copy.LobbyId == request.LobbyId && copy.GamePath == request.GamePath, "forwarding changed invite");
+                Check(SteamLaunchRequest.Decode("SummerCoop.Steam.1\n1\nD:\\Game\nextra") == null, "extra IPC fields accepted");
+                Check(SteamLaunchRequest.Decode("SummerCoop.Steam.1\n-1\n") == null, "negative IPC lobby accepted");
+                Check(SteamLaunchRequest.Decode(new string('x', 4097)) == null, "oversized IPC accepted");
+            });
+            Test("second launcher forwards multiple invites atomically and discards stale or invalid input", delegate
+            {
+                string root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "SummerCoop-Invites-" + Guid.NewGuid().ToString("N"));
+                try
+                {
+                    SteamLaunchInbox sender = new SteamLaunchInbox(System.IO.Path.Combine(root, "test.ini"));
+                    SteamLaunchInbox receiver = new SteamLaunchInbox(System.IO.Path.Combine(root, "test.ini"));
+                    sender.Send(new SteamLaunchRequest { LobbyId = 123 });
+                    sender.Send(new SteamLaunchRequest { LobbyId = 456 });
+                    string queue = System.IO.Path.Combine(root, "steam-inbox");
+                    System.IO.File.WriteAllText(System.IO.Path.Combine(queue, "incomplete.tmp"), "not complete");
+                    System.IO.File.WriteAllText(System.IO.Path.Combine(queue, "invalid.invite"), "invalid");
+                    string old = System.IO.Path.Combine(queue, "expired.invite");
+                    System.IO.File.WriteAllText(old, new SteamLaunchRequest { LobbyId = 789 }.Encode());
+                    System.IO.File.SetLastWriteTimeUtc(old, DateTime.UtcNow.AddMinutes(-11));
+                    List<SteamLaunchRequest> requests = receiver.Drain(DateTime.UtcNow);
+                    Check(requests.Count == 2 && requests[0].LobbyId + requests[1].LobbyId == 579, "lost, duplicated or stale invite");
+                    Check(receiver.Drain(DateTime.UtcNow).Count == 0, "invite replayed");
+                    Check(System.IO.File.Exists(System.IO.Path.Combine(queue, "incomplete.tmp")), "partial write consumed");
+                }
+                finally { if (System.IO.Directory.Exists(root)) System.IO.Directory.Delete(root, true); }
+            });
+            Test("initialized Steam launcher starts the game child without reopening its own Steam launch option", delegate
+            {
+                LauncherSettings s = Base(); s.Mode = ConnectionMode.JoinSteam; s.LaunchMethod = LaunchMethod.Steam;
+                var launch = GameArgs.Launch(s, null, true);
+                Check(launch.FileName == System.IO.Path.Combine(s.GamePath, "mysummercar.exe"), "launcher recursion remains");
+                Check(launch.Arguments == GameArgs.ToCommandLine(GameArgs.Build(s)) && Has(GameArgs.Build(s), "--summercoop-join-steam", s.LobbyId), "wrong lobby on child");
+                Check(launch.EnvironmentVariables["SteamAppId"] == "516750" && launch.EnvironmentVariables["SteamGameId"] == "516750", "Steam context missing");
+                s.LaunchMethod = LaunchMethod.DirectExe;
+                bool refused = false;
+                try { GameArgs.Launch(s, null, true); } catch (ArgumentException) { refused = true; }
+                Check(refused, "Steam direct launch setting bypassed");
+            });
+            Test("invitation names are bounded and safe to display", delegate
+            {
+                SteamInvitation invite = new SteamInvitation(123, 456, "Player\r\n\t" + new string('a', 200));
+                Check(invite.SenderName.Length == 80 && invite.SenderName.IndexOf('\n') < 0, "invalid display name");
+                Check(new SteamInvitation(123, 0, null).SenderName.Length != 0, "empty inviter");
+            });
             Console.WriteLine("ALL " + passed + " LAUNCHER TESTS PASSED");
             return 0;
         }
