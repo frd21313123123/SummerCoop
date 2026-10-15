@@ -37,7 +37,7 @@ class MscAdapterTests
         public void Forget(object value) { }
         public void Close() { packets.Clear(); }
     }
-    static Transport Create() { return new Transport { NetVersion = 1042 }; }
+    static Transport Create() { return new Transport { NetVersion = 1043 }; }
     static int Main(string[] args)
     {
         try
@@ -102,6 +102,27 @@ class MscAdapterTests
                 Assert(first == "the church" && second == "the parents' house", "MWC apartment respawn survived");
             });
 #endif
+            Test("standing player support poses retain local feet, head and yaw and detach without stale attachment data", delegate {
+                var pose = new SupportPose { Vehicle = 5, Feet = new UnityEngine.Vector3(.2f, 1.4f, -2.3f), Head = new UnityEngine.Vector3(.3f, 3f, -2.2f), Yaw = -45f };
+                var writer = new NetWriter(Msg.PlayerState); pose.Write(writer);
+                byte[] bytes = writer.ToArray();
+                var decoded = SupportPose.Read(new NetReader(bytes, 1, bytes.Length - 1));
+                Assert(decoded.Attached && decoded.VehicleIndex == 4 && decoded.Feet.x == .2f && decoded.Head.y == 3f && decoded.Yaw == -45f, "Relative player pose changed on the wire");
+                writer = new NetWriter(Msg.PlayerState); new SupportPose().Write(writer); bytes = writer.ToArray();
+                decoded = SupportPose.Read(new NetReader(bytes, 1, bytes.Length - 1));
+                Assert(!decoded.Attached && decoded.VehicleIndex == -1 && bytes.Length == 2, "Leaving a platform retained the old vehicle or coordinates");
+            });
+            Test("invalid, truncated and excessive player support poses are refused before applying an avatar", delegate {
+                Reject(delegate { new SupportPose { Vehicle = 256 }.Write(new NetWriter(Msg.PlayerState)); });
+                Reject(delegate { new SupportPose { Vehicle = -1 }.Write(new NetWriter(Msg.PlayerState)); });
+                Reject(delegate { new SupportPose { Vehicle = 1, Feet = new UnityEngine.Vector3(33f, 0, 0) }.Write(new NetWriter(Msg.PlayerState)); });
+                Reject(delegate { SupportPose.Read(new NetReader(new byte[] { 1 }, 0, 1)); });
+                Reject(delegate { SupportPose.Read(new NetReader(new byte[] { 0, 1 }, 0, 2)); });
+                foreach (float value in new[] { float.NaN, float.PositiveInfinity, 33f }) {
+                    byte[] bad = new NetWriter(Msg.PlayerState).U8(1).Vec(new UnityEngine.Vector3(value, 0, 0)).Vec(new UnityEngine.Vector3()).F32(0).ToArray();
+                    Reject(delegate { SupportPose.Read(new NetReader(bad, 1, bad.Length - 1)); });
+                }
+            });
             Test("moving MSC vehicles without cabin heat survive the production motion decoder", delegate {
                 foreach (int mode in new[] { 1, 2 })
                 {

@@ -11,6 +11,10 @@ The native MWC loader, graphics plugin and updater are not built by this project
 The MSC route in `Sync/Settings.cs` uses `MscTuning`: stable per-FSM identities,
 absolute native tuning commits and revisioned edits. `MscParts` adapts Stage bolts,
 their native Tightness/Bolted totals, completed wiring connections and numbered
-alternator belts. These local changes use network version 1042 (SummerCoop 0.3.0).
+alternator belts. These changes introduced network version 1042 (SummerCoop 0.3.0).
+SummerCoop 0.3.1 enables MSC's native CharacterMotor moving supports, follows
+standing riders in vehicle-local coordinates and excludes their own support
+from run-over detection. The current network version is 1043; all peers must
+update both mod DLLs together.
 
 No LICENSE file was present in the imported revision. The repository's MIT license does not relicense upstream code or assets. See the original README for third-party asset attribution. No upstream binaries or game assemblies were imported.

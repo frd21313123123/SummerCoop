@@ -581,6 +581,9 @@ namespace MWCoop
         static int noLateAnchor = -1;
         Vector3 rideLocalPos;
         Quaternion rideLocalRot = Quaternion.identity;
+        Transform standingSurface;
+        Vector3 standingLocal;
+        float standingYaw;
 
         public void LatePose()
         {
@@ -590,6 +593,12 @@ namespace MWCoop
             {
                 Root.transform.position = vehicleT.TransformPoint(rideLocalPos);
                 Root.transform.rotation = vehicleT.rotation * rideLocalRot;
+                pos = Root.transform.position;
+            }
+            if (!inCar && standingSurface != null)
+            {
+                Root.transform.position = standingSurface.TransformPoint(standingLocal);
+                Root.transform.rotation = Quaternion.Euler(0f, standingSurface.eulerAngles.y + standingYaw, 0f);
                 pos = Root.transform.position;
             }
             if (boneList == null)
@@ -1538,6 +1547,8 @@ namespace MWCoop
         public void Apply(PlayerInfo pi)
         {
             PlayerState st = pi.State;
+            Transform previousSurface = standingSurface;
+            standingSurface = null;
             int f = st.Flags;
             // Mort (en train de choisir ou revenir) : a pied, pantin qui tombe ; au volant ou passager, affale sur le siege
             // (LatePose). Pendant le pantin, plus rien ne le deplace ni ne le pose. [Coop] Pantin=0 : comme avant.
@@ -1556,11 +1567,14 @@ namespace MWCoop
             }
             Gestures.Remote g = Gestures.Of(pi.Id);
             bool down = g != null && (g.Bits & Gestures.G_Down) != 0;
-            Vector3 seatPos;
-            Quaternion seatRot;
-            inCar = VehicleSync.SeatPose(pi.Id, st.Head, out seatPos, out seatRot);
+            Rigidbody support = st.Support.Attached && !dead && !down && (f & (PlayerSync.F_Sleep | PlayerSync.F_Seated)) == 0 ? VehicleSync.CarBody(st.Support.VehicleIndex) : null;
+            // A fresh standing contact takes precedence over a previous driver's
+            // vehicle packet, which can arrive after their exit/player packet.
+            Vector3 seatPos = Vector3.zero;
+            Quaternion seatRot = Quaternion.identity;
+            inCar = support == null && VehicleSync.SeatPose(pi.Id, st.Head, out seatPos, out seatRot);
             Transform pCar = null; Vector3 pHead = Vector3.zero; string pName = null;
-            passenger = !inCar && Seats.RemoteSeat(pi.Id, out pCar, out pHead, out pName);
+            passenger = support == null && !inCar && Seats.RemoteSeat(pi.Id, out pCar, out pHead, out pName);
             if (passenger)
             {
                 // Passager : la place fixe de la voiture locale, assis, la tete suit son regard.
@@ -1627,8 +1641,19 @@ namespace MWCoop
                 if (!placed) { pos = st.Feet; yaw = st.Yaw; placed = true; }
                 // Lissage : rattrape l'etat recu (20/s) sans a-coups ; teleportation au-dela de 8 m.
                 float k = 1f - Mathf.Exp(-12f * Time.deltaTime);
-                if ((st.Feet - pos).sqrMagnitude > 64f) pos = st.Feet; else pos = Vector3.Lerp(pos, st.Feet, k);
-                yaw = Mathf.LerpAngle(yaw, st.Yaw, k);
+                if (support != null)
+                {
+                    standingSurface = support.transform;
+                    standingLocal = previousSurface != standingSurface ? st.Support.Feet : Vector3.Lerp(standingLocal, st.Support.Feet, k);
+                    standingYaw = previousSurface != standingSurface ? st.Support.Yaw : Mathf.LerpAngle(standingYaw, st.Support.Yaw, k);
+                    pos = standingSurface.TransformPoint(standingLocal);
+                    yaw = standingSurface.eulerAngles.y + standingYaw;
+                }
+                else
+                {
+                    if ((st.Feet - pos).sqrMagnitude > 64f) pos = st.Feet; else pos = Vector3.Lerp(pos, st.Feet, k);
+                    yaw = Mathf.LerpAngle(yaw, st.Yaw, k);
+                }
                 // Essais : avatar de profil face a la camera locale (TestProfil=angle).
                 string prof = Config.Get("Test", "TestProfil", "");
                 if (prof.Length > 0 && PlayerSync.LocalCamera != null) yaw = PlayerSync.LocalCamera.eulerAngles.y + float.Parse(prof, System.Globalization.CultureInfo.InvariantCulture);

@@ -4,11 +4,14 @@ $root = Split-Path -Parent $PSScriptRoot
 $model = [IO.File]::ReadAllText((Join-Path $root 'src/Core/Model.cs'))
 if ($model -notmatch 'ModVersion\s*=\s*"([^"]+)"') { throw 'Missing mod version.' }
 $version = $Matches[1]
+$session = [IO.File]::ReadAllText((Join-Path $root 'vendor/MWCoop/src/MWCoop/Net/Session.cs'))
+if ($session -notmatch 'NetVersion\s*=\s*([0-9]+)') { throw 'Missing network version.' }
+$networkVersion = $Matches[1]
 $rows = @(('SummerCoop ' + $version + ' - native workshop verification'), ('Recorded: ' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss K')), ('Run: ' + $Run), '')
 foreach ($role in @('host','client')) {
     $reportPath = Join-Path $root ('.local/' + $Run + '-' + $role + '-report.txt')
     $report = @(Get-Content -LiteralPath $reportPath -Encoding UTF8)
-    if ($report -notcontains ('ModVersion=' + $version) -or $report -notcontains 'NetVersion=1042' -or $report -notcontains 'Level=GAME') { throw ('Wrong native build or level: ' + $role) }
+    if ($report -notcontains ('ModVersion=' + $version) -or $report -notcontains ('NetVersion=' + $networkVersion) -or $report -notcontains 'Level=GAME') { throw ('Wrong native build or level: ' + $role) }
     if ($role -eq 'client' -and $report -notcontains 'SaveReceived=True') { throw 'Guest did not receive the native save.' }
     foreach ($kind in @(@{Pattern='^Workshop=';Count=4},@{Pattern='^Wiring=';Count=2},@{Pattern='^Belt=';Count=3})) {
         $results = @($report | Where-Object { $_ -match $kind.Pattern })

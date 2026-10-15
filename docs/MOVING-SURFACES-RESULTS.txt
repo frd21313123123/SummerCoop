@@ -1,0 +1,58 @@
+SummerCoop 0.3.1 - native moving surface verification
+Recorded: 2026-10-15 12:13:35 +05:00
+Run: msc-platform-08
+
+host SHA256 D740B2D1FFE159EE6AD303751E1F81907FDB3265E7AE121D22B4972C69076DA6  SummerCoop.dll
+host SHA256 14A98742F0470C7BD035893FC05A6902C38BA053C2298E1DDC05B6DFE90D43D8  References/SummerCoop.Core.dll
+
+host report:
+Engine=MWCoop 0.95.3 / MSC adapter 1
+Level=GAME
+ModVersion=0.3.1
+NetVersion=1043
+Ready=False
+Players=1
+SaveReceived=False
+Platform=BOAT;Driver=guest;Role=rider;Pass=True;Contact=46/46;Drift=0.105;Distance=18.58;Walk=0.286;Jump=True;Left=True;Remote=0/0;Rendered=0/0;RenderGap=0.000
+Platform=BOAT;Driver=host;Role=driver;Pass=True;Contact=0/0;Drift=0.000;Distance=0.00;Walk=0.000;Jump=False;Left=False;Remote=48/48;Rendered=48/48;RenderGap=0.000
+Platform=HAYOSIKO;Driver=guest;Role=rider;Pass=True;Contact=48/48;Drift=0.121;Distance=19.24;Walk=0.154;Jump=True;Left=True;Remote=0/0;Rendered=0/0;RenderGap=0.000
+Platform=HAYOSIKO;Driver=host;Role=driver;Pass=True;Contact=0/0;Drift=0.000;Distance=0.00;Walk=0.000;Jump=False;Left=False;Remote=48/48;Rendered=48/48;RenderGap=0.000
+Platform=FLATBED;Driver=guest;Role=rider;Pass=True;Contact=48/48;Drift=0.066;Distance=19.35;Walk=0.226;Jump=True;Left=True;Remote=0/0;Rendered=0/0;RenderGap=0.000
+Platform=FLATBED;Driver=host;Role=driver;Pass=True;Contact=0/0;Drift=0.000;Distance=0.00;Walk=0.000;Jump=False;Left=False;Remote=48/48;Rendered=48/48;RenderGap=0.001
+FrameP95ms=13.85
+FrameMaxms=147.86
+client SHA256 D740B2D1FFE159EE6AD303751E1F81907FDB3265E7AE121D22B4972C69076DA6  SummerCoop.dll
+client SHA256 14A98742F0470C7BD035893FC05A6902C38BA053C2298E1DDC05B6DFE90D43D8  References/SummerCoop.Core.dll
+
+client report:
+Engine=MWCoop 0.95.3 / MSC adapter 1
+Level=GAME
+ModVersion=0.3.1
+NetVersion=1043
+Ready=True
+Players=2
+SaveReceived=True
+Platform=BOAT;Driver=guest;Role=driver;Pass=True;Contact=0/0;Drift=0.000;Distance=0.00;Walk=0.000;Jump=False;Left=False;Remote=48/48;Rendered=48/48;RenderGap=0.000
+Platform=BOAT;Driver=host;Role=rider;Pass=True;Contact=48/48;Drift=0.091;Distance=18.97;Walk=0.152;Jump=True;Left=True;Remote=0/0;Rendered=0/0;RenderGap=0.000
+Platform=HAYOSIKO;Driver=guest;Role=driver;Pass=True;Contact=0/0;Drift=0.000;Distance=0.00;Walk=0.000;Jump=False;Left=False;Remote=47/47;Rendered=47/47;RenderGap=0.000
+Platform=HAYOSIKO;Driver=host;Role=rider;Pass=True;Contact=48/48;Drift=0.091;Distance=19.40;Walk=0.288;Jump=True;Left=True;Remote=0/0;Rendered=0/0;RenderGap=0.000
+Platform=FLATBED;Driver=guest;Role=driver;Pass=True;Contact=0/0;Drift=0.000;Distance=0.00;Walk=0.000;Jump=False;Left=False;Remote=48/48;Rendered=48/48;RenderGap=0.002
+Platform=FLATBED;Driver=host;Role=rider;Pass=True;Contact=48/48;Drift=0.094;Distance=19.34;Walk=0.325;Jump=True;Left=True;Remote=0/0;Rendered=0/0;RenderGap=0.000
+FrameP95ms=14.23
+FrameMaxms=6563.20
+
+Original single-player save files checked: 5; changed: 0
+
+Automated checks (121 component regressions are not 121 native MWCoop gameplay tests):
+build/test-results.txt: ALL 121 TESTS PASSED
+build/msc-tests/test-results.txt: ALL 15 MSC ADAPTER TESTS PASSED
+build/mwcoop-network-tests/test-results.txt: ALL 10 MSC ADAPTER TESTS PASSED
+build/launcher-tests/test-results.txt: ALL 19 LAUNCHER TESTS PASSED | PASS launcher GUI: settings, modes, validation, invitation callbacks, startup/forwarded invites, exact lobby selection, dismissal, failed launch retention and minimum-size layouts
+
+Fixture limits: native CharacterMotor and colliders; surface pose, speed (4 m/s) and input are controlled.
+BOAT/HAYOSIKO use native driver entry; FLATBED uses physical motion and the normal owned-push network path.
+No trailer hitch test. Leaving support is checked by an out-of-vehicle warp, not walking over every edge.
+Run-over immunity is inspected in code; the fixture speed stays below the run-over threshold.
+The host records eight seconds after the guest finishes; Ready=False/Players=1 then means the guest already quit.
+No complete playthrough, every modded surface, two-account Steam/WAN test or 60 FPS guarantee.
+See MOVING-SURFACES.md for reproduction and scope.

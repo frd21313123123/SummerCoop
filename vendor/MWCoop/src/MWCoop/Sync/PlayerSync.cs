@@ -106,6 +106,8 @@ namespace MWCoop
             Avatar a;
             if (!avatars.TryGetValue(id, out a) || a == null || a.Root == null) return false;
             pos = st.Head + (a.Root.transform.position - st.Feet);
+            Rigidbody support = st.Support.Attached ? VehicleSync.CarBody(st.Support.VehicleIndex) : null;
+            if (support != null) pos = support.transform.TransformPoint(st.Support.Head) + a.Root.transform.position - support.transform.TransformPoint(st.Support.Feet);
             rot = Quaternion.Euler(st.Pitch, a.Root.transform.eulerAngles.y, 0f);
             return true;
         }
@@ -164,6 +166,7 @@ namespace MWCoop
             Session.Me.State = st;
             var w = new NetWriter(Msg.PlayerState).U8(Session.LocalId).U8(Session.Me.Level)
                 .Vec(st.Feet).Vec(st.Head).F32(st.Yaw).F32(st.Pitch).F32(st.Height).F32(st.Speed).U16(st.Flags).U8(st.Drink);
+            st.Support.Write(w);
             Session.SendAll(w, false);
         }
 
@@ -198,6 +201,7 @@ namespace MWCoop
                 bool seatedNow = Game.GlobalBool("PlayerSeated") || crouchFsm != null && crouchFsm.ActiveStateName == "Seated" || VehicleSync.LocalDriving >= 0 || Seats.Seated;
                 if (!seatedNow && st.Height < 1.2f) st.Flags |= F_Crouch;
                 if (seatedNow) st.Flags |= F_Seated;
+                if (!seatedNow) st.Support = MscPlatforms.Capture(st.Feet, st.Head, st.Yaw);
                 if (Game.GlobalBool("PlayerSleeps")) st.Flags |= F_Sleep;
                 if (Game.GlobalBool("PlayerSleeps") && World.BedCounting()) st.Flags |= F_SleepFast;
                 // Au lit, le jeu couche le joueur avec le pivot du lit (AnimPivotSleep, animation sleep_bed_in) : son « haut »
@@ -240,6 +244,7 @@ namespace MWCoop
             if (!Session.Players.TryGetValue(id, out pi) || pi.Local) return;
             int level = r.U8();
             var st = new PlayerState { Feet = r.Vec(), Head = r.Vec(), Yaw = r.F32(), Pitch = r.F32(), Height = r.F32(), Speed = r.F32(), Flags = r.U16(), Drink = r.U8() };
+            st.Support = SupportPose.Read(r);
             bool levelChanged = pi.Level != level;
             pi.Level = level;
             pi.State = st;
@@ -249,6 +254,7 @@ namespace MWCoop
                 // Relais aux autres invites, avec le bon numero de joueur.
                 var w = new NetWriter(Msg.PlayerState).U8(id).U8(level)
                     .Vec(st.Feet).Vec(st.Head).F32(st.Yaw).F32(st.Pitch).F32(st.Height).F32(st.Speed).U16(st.Flags).U8(st.Drink);
+                st.Support.Write(w);
                 Session.Broadcast(w, false, id);
                 if (levelChanged) Session.SendRoster();
                 if (levelChanged && level == 1)

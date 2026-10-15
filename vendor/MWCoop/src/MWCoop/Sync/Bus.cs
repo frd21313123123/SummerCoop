@@ -60,6 +60,7 @@ namespace MWCoop
         static Vector3 prevPos; static Quaternion prevRot; static bool prevOk;
         static Transform player;
         static object platform; static FieldInfo platformOn; static bool platformWas;
+        public static bool CarriesLocalPlayer { get { return riding; } }
 
         public static void OnLevelLoaded()
         {

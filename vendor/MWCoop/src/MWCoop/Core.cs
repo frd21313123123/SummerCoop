@@ -119,6 +119,7 @@ namespace MWCoop
             new Mod("menu", Menu.Update),
             new Mod("mscloader", MscMods.Update),
             new Mod("lanceur", MWCoop.Net.Admin.Update),
+            new Mod("supports MSC", MscPlatforms.Update),
             new Mod("joueurs", PlayerSync.Update),
             new Mod("monde", World.Update),
             new Mod("radio", Radio.Update),

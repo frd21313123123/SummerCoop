@@ -32,6 +32,8 @@ namespace MWCoop
                 catch (Exception e) { if (actionError.Length == 0) { actionError = e.ToString(); Log.Error("MSC wiring probe: " + e); } }
                 try { MscVehicleProbe.Update(); }
                 catch (Exception e) { if (actionError.Length == 0) { actionError = e.ToString(); Log.Error("MSC vehicle probe: " + e); } }
+                try { MscPlatformProbe.Update(); }
+                catch (Exception e) { if (actionError.Length == 0) { actionError = e.ToString(); Log.Error("MSC platform probe: " + e); } }
                 if (MscRuntime.Argument("--summercoop-test-garage-channel").Length > 0)
                 {
                     try { MscGarageProbe.Update(); }
@@ -51,7 +53,7 @@ namespace MWCoop
             }
             int duration; if (!int.TryParse(MscRuntime.Argument("--summercoop-test-duration"), out duration)) duration = 35;
             float finish = duration + (Session.IsHost ? 8 : 0); // Guest records before the host closes its transport.
-            float timeout = MscRuntime.Argument("--summercoop-test-garage-channel").Length > 0 || MscRuntime.Argument("--summercoop-test-workshop-channel").Length > 0 ? 420 : 180;
+            float timeout = MscRuntime.Argument("--summercoop-test-garage-channel").Length > 0 || MscRuntime.Argument("--summercoop-test-workshop-channel").Length > 0 || MscRuntime.Argument("--summercoop-test-platform-channel").Length > 0 ? 420 : 180;
             if (!(readyAt >= 0 && Time.realtimeSinceStartup - readyAt >= finish) && Time.realtimeSinceStartup - began < timeout) return;
             List<string> report = new List<string>();
             report.Add("Engine=MWCoop 0.95.3 / MSC adapter 1"); report.Add("Level=" + Application.loadedLevelName);
@@ -66,6 +68,7 @@ namespace MWCoop
             report.AddRange(MscWorkshopProbe.Results);
             report.AddRange(MscWiringProbe.Results);
             report.AddRange(MscBeltProbe.Results);
+            report.AddRange(MscPlatformProbe.Results);
             foreach (string failure in MscRuntime.Failures) report.Add("ModuleError=" + failure);
             frames.Sort();
             if (frames.Count > 0) { report.Add("FrameP95ms=" + frames[(int)((frames.Count - 1) * .95)].ToString("F2", CultureInfo.InvariantCulture)); report.Add("FrameMaxms=" + frames[frames.Count - 1].ToString("F2", CultureInfo.InvariantCulture)); }

@@ -41,6 +41,7 @@ namespace MWCoop
             {
                 if (a == null || a.Player == null || a.Root == null) continue;
                 PlayerState st = a.Player.State;
+                if (st.Support.Attached && VehicleSync.CarBody(st.Support.VehicleIndex) == body) continue;
                 if (a.InVehicle || a.Ragdolled || a.Player.Level != 1) continue;
                 if ((st.Flags & (PlayerSync.F_Dead | PlayerSync.F_Seated | PlayerSync.F_Sleep)) != 0) continue;
                 Vector3 feet = st.Feet;
@@ -66,6 +67,7 @@ namespace MWCoop
             float kmh = v.magnitude * 3.6f;
             if (kmh < MinKmh) return;
             if (Respawn.Choosing || Seats.Seated || VehicleSync.LocalDriving >= 0) return;
+            if (MscPlatforms.SupportBody == body) return;
             PlayerState st = Session.Me.State;
             if ((st.Flags & (PlayerSync.F_Dead | PlayerSync.F_Seated | PlayerSync.F_Sleep)) != 0) return;
             Vector3 feet = st.Feet;
@@ -154,6 +156,7 @@ namespace MWCoop
             string car = r.More ? r.Str() : "?";
             Hit(victim, v);
             if (victim != Session.LocalId || !On) return;
+            if (MscPlatforms.SupportBody != null && VehicleSync.Body(car) == MscPlatforms.SupportBody) return;
             if (Respawn.Choosing || Seats.Seated || VehicleSync.LocalDriving >= 0) return;
             if (logs++ < 10) Log.Info("renverse par " + car + " (#" + who + ", " + (v.magnitude * 3.6f).ToString("F0") + " km/h) : " + Respawn.TestDie(cause == "RunOverRally" ? cause : "RunOver"));
             else Respawn.TestDie("RunOver");

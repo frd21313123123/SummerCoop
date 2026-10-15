@@ -23,12 +23,13 @@ namespace MWCoop.Net
         public float Yaw, Pitch, Height, Speed;
         public int Flags;              // PlayerSync.F_* : accroupi, assis, fume, boit, porte, salue, dort
         public int Drink;              // ce qu'il a en main en buvant : rang dans Drinks.Names (0 : rien)
+        public SupportPose Support;    // standing/walking on a vehicle; independent of seats
     }
 
     // Session coop : l'hote fait autorite et relaie tout. [Coop] Mode=solo|hote|invite.
     public static class Session
     {
-        public const int NetVersion = 1042;   // MSC 0.3.0: absolute bolt totals and revisioned bolt/tuning packets.
+        public const int NetVersion = 1043;   // MSC 0.3.1: vehicle-relative standing player poses.
         static readonly HashSet<int> authenticated = new HashSet<int>();
         public static Transport T;
         public static bool Active, IsHost;

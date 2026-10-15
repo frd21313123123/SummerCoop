@@ -736,7 +736,7 @@ namespace MWCoop
                 bool remote = Remote(c, now);
                 if (!remote && c.RemoteBy >= 0 && now - c.LastRemote >= 1.5f) { c.RemoteBy = -1; c.RemoteDriver = -1; }
                 SetKinematic(c, remote);
-                Ride(c, remote && Seats.SeatedCar == c.T);
+                Ride(c, remote && (Seats.SeatedCar == c.T || MscPlatforms.SupportBody == c.Body));
                 if (remote)
                 {
                     if (c.Framewise && c.Body.gameObject.activeInHierarchy) FollowFrame(c);
@@ -1907,6 +1907,14 @@ namespace MWCoop
         {
             Car c = Named(name);
             if (c != null && LocalDriving < 0 && owned != c.Index) { owned = c.Index; Log.Info("autotest : " + c.Key + " gardee comme moteur laisse tournant"); }
+        }
+
+        public static void TestPushBody(string name)
+        {
+            if (MscRuntime.Argument("--summercoop-test-platform-channel").Length == 0) throw new System.InvalidOperationException("Platform push fixture is test-only");
+            Car c = Named(name);
+            if (c == null || LocalDriving >= 0) return;
+            owned = pushCar = c.Index; pushUntil = Time.realtimeSinceStartup + .5f;
         }
 
         public static string TestExit(string name)
