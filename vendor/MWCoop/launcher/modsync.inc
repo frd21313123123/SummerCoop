@@ -1,4 +1,4 @@
-﻿// ---------------------------------------------------------------- mods de l'hote chez les invites - inclus par launcher.cpp (apres mods.inc)
+// ---------------------------------------------------------------- mods de l'hote chez les invites - inclus par launcher.cpp (apres mods.inc)
 // Demande de JD (07/10) : les invites recoivent les mods MSCLoader de l'hote, d'un seul accord ("tout accepter" : on
 // joue entre amis).
 //  - Hote : les mods de son dossier Mods coches "Envoyer" (onglet MODS ; [Lanceur] ModsPrives : ceux qu'il garde pour
@@ -686,10 +686,8 @@ static DWORD WINAPI SyncCheckThread(void *p)
     std::string names;
     for (auto &m : o.mods) names += " " + m;
     LaunchLog("mods : %d mod(s) chez l'hote :%s, %d fichier(s) a recevoir (%llu octets)", (int)o.mods.size(), names.c_str(), (int)need.size(), (unsigned long long)bytes);
-    // Mods de l'hote : acceptes d'office (demande de JD, 10/10 : « si quelqu'un rejoint une partie avec des mods, que ca lui
-    // installe MSCLoader et lui prenne les mods » ; retour de Menos : un ami sans les mods entrait quand meme). Seul ce qui
-    // n'est que du contenu (CD, images) demande encore TOUT ACCEPTER, sauf ModsAuto.
-    if (!o.mods.empty()) g_syncAccepted = true;
+    // Mods et contenu (musiques CD/Radio, images) de l'hote : acceptes d'office pour synchronisation automatique
+    if (!o.mods.empty() || !o.files.empty()) g_syncAccepted = true;
     if (need.empty()) SyncFinishLocked();
     else if (g_syncAccepted || ModsAuto()) { g_syncAccepted = true; SyncStartLocked(); }
     else g_sync = SY_ASK;

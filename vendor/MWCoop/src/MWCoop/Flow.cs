@@ -110,7 +110,9 @@ namespace MWCoop
 
         static bool HasSave()
         {
-            return System.IO.File.Exists(System.IO.Path.Combine(SaveTransfer.SaveDir, "savefile.txt"));
+            string dir = SaveTransfer.SaveDir;
+            if (string.IsNullOrEmpty(dir)) dir = System.IO.Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.LocalApplicationData), @"..\LocalLow\Amistech\My Summer Car");
+            return System.IO.File.Exists(System.IO.Path.Combine(dir, "defaultES2File.txt")) || System.IO.File.Exists(System.IO.Path.Combine(dir, "savefile.txt"));
         }
 
         static void Continue()

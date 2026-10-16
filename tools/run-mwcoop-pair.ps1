@@ -1,4 +1,4 @@
-param([ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9_-]{0,48}$')][string]$Run = ('mwcoop-' + (Get-Date -Format yyyyMMdd-HHmmss)), [int]$Port = 27991, [int]$Duration = 35, [switch]$Actions, [switch]$Vehicles, [switch]$Garage, [switch]$Workshop, [switch]$Platforms, [switch]$Activities, [switch]$Regression, [ValidateSet('JONNEZ','BOAT','KEKMET','SATSUMA')][string[]]$VehicleNames)
+param([ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9_-]{0,48}$')][string]$Run = ('mwcoop-' + (Get-Date -Format yyyyMMdd-HHmmss)), [int]$Port = 27991, [int]$Duration = 35, [switch]$Actions, [switch]$Vehicles, [switch]$Garage, [switch]$Workshop, [switch]$Platforms, [switch]$Activities, [switch]$Regression, [switch]$Assembly, [switch]$Carrier, [ValidatePattern('^[a-zA-Z0-9_-]+$')][string]$HostGame = 'game', [ValidatePattern('^[a-zA-Z0-9_-]+$')][string]$ClientGame = 'game-client', [ValidateSet('JONNEZ','BOAT','KEKMET','SATSUMA')][string[]]$VehicleNames)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $local = Join-Path $root '.local'
@@ -14,16 +14,20 @@ if ($Workshop -and !$PSBoundParameters.ContainsKey('Duration')) { $Duration = 29
 if ($Platforms -and !$PSBoundParameters.ContainsKey('Duration')) { $Duration = 190 }
 if ($Activities -and !$PSBoundParameters.ContainsKey('Duration')) { $Duration = 270 }
 if ($Regression -and !$PSBoundParameters.ContainsKey('Duration')) { $Duration = 295 }
+if ($Assembly -and !$PSBoundParameters.ContainsKey('Duration')) { $Duration = 180 }
+if ($Carrier -and !$Assembly -and !$PSBoundParameters.ContainsKey('Duration')) { $Duration = 135 }
 $vehicleChannel = Join-Path $local ($Run + '-vehicles')
 $garageChannel = Join-Path $local ($Run + '-garage')
 $workshopChannel = Join-Path $local ($Run + '-workshop')
 $platformChannel = Join-Path $local ($Run + '-platforms')
 $regressionChannel = Join-Path $local ($Run + '-regression')
 $activitiesChannel = Join-Path $local ($Run + '-activities')
+$assemblyChannel = Join-Path $local ($Run + '-assembly')
+$carrierChannel = Join-Path $local ($Run + '-carrier')
 if ($Port -lt 1024 -or $Port -gt 65535 -or $Duration -lt 10 -or $Duration -gt 300) { throw 'Invalid test port or duration.' }
 foreach ($role in @('host','client')) {
     if (Test-Path -LiteralPath (Join-Path $local ($Run + '-' + $role))) { throw 'Use a fresh test run name.' }
-    $dir = Join-Path $local $(if ($role -eq 'host') { 'game' } else { 'game-client' })
+    $dir = Join-Path $local $(if ($role -eq 'host') { $HostGame } else { $ClientGame })
     $exe = Join-Path $dir 'mysummercar.exe'
     if (!(Test-Path -LiteralPath $exe)) { throw 'Prepare isolated .local/game and .local/game-client first.' }
     $running = @(Get-Process mysummercar -ErrorAction SilentlyContinue | Where-Object Path -eq $exe)
@@ -53,11 +57,13 @@ if ($Activities) {
     if (Test-Path -LiteralPath $activitiesChannel) { throw 'Use a fresh activities test run name.' }
     New-Item -ItemType Directory -Path $activitiesChannel | Out-Null
 }
+if ($Assembly) { New-Item -ItemType Directory -Path $assemblyChannel | Out-Null }
+if ($Carrier) { New-Item -ItemType Directory -Path $carrierChannel | Out-Null }
 $original = Join-Path $env:USERPROFILE 'AppData\LocalLow\Amistech\My Summer Car'
 $before = @(Get-ChildItem -LiteralPath $original -File -ErrorAction SilentlyContinue | Where-Object Name -in @('defaultES2File.txt','items.txt','meshsave.txt','graveyard.txt','trophies.txt','carparts.txt') | Get-FileHash -Algorithm SHA256 | Select-Object Path,Hash)
 $before | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $local ($Run + '-original-before.json')) -Encoding utf8
 foreach ($role in @('host','client')) {
-    $dir = Join-Path $local $(if ($role -eq 'host') { 'game' } else { 'game-client' })
+    $dir = Join-Path $local $(if ($role -eq 'host') { $HostGame } else { $ClientGame })
     $exe = Join-Path $dir 'mysummercar.exe'
     Copy-Item -LiteralPath (Join-Path $root 'build\SummerCoop.dll') -Destination (Join-Path $dir 'Mods\SummerCoop.dll') -Force
     Copy-Item -LiteralPath (Join-Path $root 'build\SummerCoop.Core.dll') -Destination (Join-Path $dir 'Mods\References\SummerCoop.Core.dll') -Force
@@ -69,6 +75,8 @@ foreach ($role in @('host','client')) {
     # MSC's Unity 5 crashes while loading GAME with -nographics.
     $arguments = '-nosound -screen-fullscreen 0 -screen-width 640 -screen-height 480 -logFile "' + $log + '" ' + $mode + ' --summercoop-profile "' + $profile + '" --summercoop-name Smoke-' + $role + ' --summercoop-test-report "' + $report + '" --summercoop-test-duration ' + $Duration
     if ($Actions) { $arguments += ' --summercoop-test-actions yes' }
+    if ($Assembly) { $arguments += ' --summercoop-test-assembly-channel "' + $assemblyChannel + '"' }
+    if ($Carrier) { $arguments += ' --summercoop-test-carrier-channel "' + $carrierChannel + '"' }
     if ($Garage) { $arguments += ' --summercoop-test-garage-channel "' + $garageChannel + '"' }
     if ($Workshop) { $arguments += ' --summercoop-test-workshop-channel "' + $workshopChannel + '"' }
     if ($Vehicles) { $arguments += ' --summercoop-test-vehicle-channel "' + $vehicleChannel + '"' }

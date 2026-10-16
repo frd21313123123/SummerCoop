@@ -40,6 +40,12 @@ namespace MWCoop
                     if (f.FsmName == "Data" && Recon.Path(f.transform) == "Database/PartsStatus/AlternatorBelt") database = f;
                 }
                 if (spawn == null || assembly == null || rotate == null || database == null) throw new InvalidOperationException("Native belt fixture is missing");
+                if (Session.IsHost)
+                {
+                    FsmGameObject existing = database.FsmVariables.FindFsmGameObject("CurrentBelt");
+                    PlayMakerFSM previous = existing == null || existing.Value == null ? null : Game.FsmOn(existing.Value, "Removal");
+                    if (previous != null) { Game.SetState(previous, "Remove part"); Results.Add("BeltFixture=Existing saved belt removed natively"); }
+                }
                 Game.SetState(spawn, "Create product");
                 belt = spawn.FsmVariables.FindFsmGameObject("New").Value;
                 if (belt == null) throw new InvalidOperationException("Native belt spawner returned no item");
@@ -66,7 +72,9 @@ namespace MWCoop
             if (actor && elapsed >= 153 && elapsed < 158 && Time.realtimeSinceStartup >= nextStep)
             {
                 nextStep = Time.realtimeSinceStartup + .3f;
-                if (check.FsmVariables.FindFsmFloat("Rotation").Value < 6) Game.SetState(rotate, "Clockwise");
+                float rotation = check.FsmVariables.FindFsmFloat("Rotation").Value;
+                if (rotation < 6) Game.SetState(rotate, "Clockwise");
+                else if (rotation > 6.5f) Game.SetState(rotate, "Counterwise");
             }
             if (elapsed >= 160 && elapsed < 174 && actor && !blocked)
             {

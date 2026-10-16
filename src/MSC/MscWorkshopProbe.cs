@@ -91,7 +91,7 @@ namespace MWCoop
                 {
                     if (step >= 1 + i % 3) continue;
                     PlayMakerFSM f = tuners[i];
-                    string state = f.FsmName == "HandRotate" ? tighten ? "Clockwise" : "Counterwise" : tighten ? "Unscrew 2" : "Screw 2";
+                    string state = MscTuning.IsTiming(f) ? "Adjust" : f.FsmName == "HandRotate" ? tighten ? "Clockwise" : "Counterwise" : tighten ? "Unscrew 2" : "Screw 2";
                     if (f.Fsm.GetState(state) == null) state = tighten ? "Unscrew" : "Screw";
                     Game.SetState(f, state);
                 }
@@ -131,8 +131,8 @@ namespace MWCoop
             foreach (PlayMakerFSM f in tuners)
             {
                 string key = MscParts.Key(f);
-                values[key + "/value"] = f.FsmVariables.FindFsmFloat(f.FsmName == "HandRotate" ? "Rotation" : "Alignment").Value;
-                foreach (string name in new[] { "Setup", "Wait1", "Wait", "Idle", "Clockwise" })
+                values[key + "/value"] = f.FsmVariables.FindFsmFloat(MscTuning.ValueName(f)).Value;
+                foreach (string name in new[] { "Setup", "Wait1", "Wait", "Idle", "Clockwise", "Adjust", "Set angle" })
                 {
                     FsmState state = f.Fsm.GetState(name); if (state == null) continue;
                     foreach (FsmStateAction action in state.Actions)

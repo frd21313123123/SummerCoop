@@ -33,8 +33,15 @@ namespace MWCoop
                 else
                 {
                     GameObject wood = Op == AddWood ? Obj(Fsm, "FirewoodObject") : null;
-                    if (Op != AddWood || wood != null && Home.CausedHere(wood, 5))
+                    bool valid = wood != null && wood.name.StartsWith("firewood", StringComparison.Ordinal)
+                        && wood.transform.parent == null && FireTools.Held() != wood && Item.Count < 9;
+                    if (Op != AddWood || valid && Home.CausedHere(wood, 5))
+                    {
+                        // A freshly split local log may not yet be in Props' next
+                        // census. Register it before the host resolves the edit.
+                        if (wood != null) Props.Track(wood);
                         Send(Item, Op, wood != null ? Props.ItemId(wood) : "", 0);
+                    }
                 }
                 FireTools.Cancel(Fsm, State, this, Back);
             }
@@ -80,6 +87,7 @@ namespace MWCoop
                         var tag = f.FsmVariables.FindFsmString("UniqueTagWood"); if (tag == null || tag.Value.Length == 0) continue;
                         Item item = Register("carrier:" + tag.Value, "carrier", f.transform.parent.gameObject, f);
                         item.Count = f.FsmVariables.GetFsmInt("WoodsIndex").Value;
+                        AddHook(item, f, "Parent", AddWood, "Wait wood");
                         AddHook(item, f, "Fetch array", AddWood, "Wait wood");
                         PlayMakerFSM pick = Game.FsmOn(item.Root.transform.Find("PickupTrigger").gameObject, "Use");
                         AddHook(item, pick, "Bool test", TakeWood, "Wait player");
@@ -106,6 +114,10 @@ namespace MWCoop
                 if (item.Fsm == null) continue;
                 if (item.Kind == "carrier")
                 {
+                    // Native Parent rejects velocity < .001. Network replicas
+                    // can have zero velocity while the host puts a log down;
+                    // ownership and an unparented split log identify the deposit.
+                    AddHook(item, item.Fsm, "Parent", AddWood, "Wait wood");
                     AddHook(item, item.Fsm, "Fetch array", AddWood, "Wait wood");
                     AddHook(item, Game.FsmOn(item.Root.transform.Find("PickupTrigger").gameObject, "Use"), "Bool test", TakeWood, "Wait player");
                 }

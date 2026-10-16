@@ -86,6 +86,18 @@ class MscAdapterTests
                 hostClock.ForgetActor(2);
                 Assert(hostClock.AcceptRequest(2, 1) && hostClock.HostRevision == hostRevision, "A rejoining player's reset request sequence was rejected or changed the host revision");
             });
+            Test("an old host repair cannot cancel native assembly or acknowledge a newer local removal", delegate {
+                var pending = new MWCoop.MscPendingPartEdit();
+                pending.Begin();
+                Assert(!pending.PermitSnapshot(false, 1), "Old removal cancelled native assembly before publication");
+                pending.Sent(2);
+                Assert(!pending.PermitSnapshot(true, 1) && !pending.PermitSnapshot(false, 8), "Unacknowledged assembly was replaced");
+                pending.Begin(); pending.Sent(3);
+                Assert(!pending.PermitSnapshot(true, 2), "Assembly reply acknowledged a later local removal");
+                Assert(pending.PermitSnapshot(true, 3) && pending.PermitSnapshot(false, 9), "Latest acknowledgement did not restore host authority");
+                pending.Begin(); pending.Cancel();
+                Assert(pending.PermitSnapshot(false, 10), "Failed native action blocked host repair");
+            });
             Test("MSC policy excludes winter terrain, MWC shops and native DXR while retaining major coop modules", delegate {
                 foreach (Type type in new[] { typeof(MWCoop.Clearing), typeof(MWCoop.Kauppa), typeof(MWCoop.Frost), typeof(MWCoop.RayTracing) }) Assert(!MWCoop.MscRuntime.Supports(type), "Winter-only module enabled: " + type);
                 foreach (Type type in new[] { typeof(MWCoop.PlayerSync), typeof(MWCoop.VehicleSync), typeof(MWCoop.Parts), typeof(MWCoop.Chat), typeof(MWCoop.WorldFsms), typeof(MWCoop.Wallet), typeof(SaveTransfer) }) Assert(MWCoop.MscRuntime.Supports(type), "Core MWCoop module removed: " + type);

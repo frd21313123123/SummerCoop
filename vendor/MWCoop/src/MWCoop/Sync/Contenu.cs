@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
@@ -60,8 +60,8 @@ namespace MWCoop
         // de TOUS les automates force PlayMaker a les charger une a une : des dizaines de secondes, jeu fige.)
         static bool Reader(PlayMakerFSM f)
         {
-            if (f.Fsm == null || f.Fsm.States == null) return false;
-            return f.FsmName == "LoadSongs" || f.FsmVariables.FindFsmString("Folder") != null;
+            if (f == null || f.Fsm == null || f.Fsm.States == null) return false;
+            return f.FsmName == "LoadSongs" || f.FsmVariables.FindFsmString("Folder") != null || f.FsmVariables.FindFsmString("Path") != null;
         }
 
         static HashSet<string> roots, images;
@@ -130,8 +130,9 @@ namespace MWCoop
                         string v = parts[i] != null ? parts[i].Value : null;
                         if (string.IsNullOrEmpty(v)) continue;
                         v = v.Replace('\\', '/');
+                        string vNorm = v.Trim('/', '\\') + "/";
                         foreach (string r in new[] { "CD1/", "CD2/", "CD3/", "Radio/", "Extra/", "Images/" })
-                            if (string.Equals(v, r, StringComparison.OrdinalIgnoreCase))
+                            if (string.Equals(v, r, StringComparison.OrdinalIgnoreCase) || string.Equals(vNorm, r, StringComparison.OrdinalIgnoreCase))
                             {
                                 root = r;
                                 if (i + 1 < parts.Length && parts[i + 1] != null) file = parts[i + 1].Value;
@@ -181,7 +182,7 @@ namespace MWCoop
         // ---- menu principal : lecteurs pointes, import des musiques quand le mod entre lui-meme en partie
         static float menuAt = -1, importUntil;
         static bool menuDone;
-        public static bool MenuBusy { get { return importUntil > Time.realtimeSinceStartup; } }
+        public static bool MenuBusy { get { return (!menuDone && menuAt > 0) || importUntil > Time.realtimeSinceStartup; } }
 
         public static void MenuUpdate()
         {
@@ -198,7 +199,9 @@ namespace MWCoop
                 MenuImport();
             }
             WatchCds();
-            if (importUntil > 0 && (Imported(Fsm("CD", "Playlist")) || now >= importUntil))
+            PlayMakerFSM playlist = Fsm("CD", "Playlist");
+            bool doneSongs = (playlist != null && Imported(playlist)) || (playlist == null && Imported(Fsm("Folk", "LoadSongs")));
+            if (importUntil > 0 && (doneSongs || now >= importUntil))
             {
                 Log.Info("musiques : " + (now >= importUntil ? "import pas fini apres 30 s" : "import fini") + " -- " + Songs());
                 importUntil = 0;
@@ -222,25 +225,75 @@ namespace MWCoop
 
         static bool HasMusic(string root)
         {
-            if (roots != null && roots.Contains(root)) return true;   // (recue de l'hote)
-            try { return File.Exists(Path.Combine(Path.Combine(Path.GetDirectoryName(Application.dataPath), root.TrimEnd('/')), "track1.ogg")); } catch { return false; }
+            if (roots != null)
+            {
+                string normRoot = root.TrimEnd('/', '\\') + "/";
+                foreach (string r in roots)
+                {
+                    if (string.Equals(r.TrimEnd('/', '\\') + "/", normRoot, StringComparison.OrdinalIgnoreCase))
+                        return true;
+                }
+            }
+            string recFolder = Folder();
+            if (recFolder.Length > 0)
+            {
+                try
+                {
+                    string recDir = Path.Combine(recFolder, root.Trim('/', '\\'));
+                    if (Directory.Exists(recDir))
+                    {
+                        if (File.Exists(Path.Combine(recDir, "track1.ogg"))) return true;
+                        string[] oggs = Directory.GetFiles(recDir, "*.ogg");
+                        if (oggs != null && oggs.Length > 0) return true;
+                    }
+                }
+                catch {}
+            }
+            try
+            {
+                string gameDir = Path.Combine(Path.GetDirectoryName(Application.dataPath), root.Trim('/', '\\'));
+                if (Directory.Exists(gameDir))
+                {
+                    if (File.Exists(Path.Combine(gameDir, "track1.ogg"))) return true;
+                    string[] oggs = Directory.GetFiles(gameDir, "*.ogg");
+                    if (oggs != null && oggs.Length > 0) return true;
+                }
+            }
+            catch {}
+            return false;
         }
 
         static void MenuImport()
         {
             if (!HasMusic("CD1/") && !HasMusic("CD2/") && !HasMusic("CD3/") && !HasMusic("Radio/"))
             {
-                Log.Info("musiques : rien a importer (pas de track1.ogg dans CD1, CD2, CD3 ni Radio de " + Path.GetDirectoryName(Application.dataPath) + (roots != null && roots.Count > 0 ? ", ni de musiques recues" : "") + ")");
+                Log.Info("musiques : rien a importer (pas de track1.ogg ni de fichiers .ogg dans CD1, CD2, CD3 ni Radio de " + Path.GetDirectoryName(Application.dataPath) + (roots != null && roots.Count > 0 ? ", ni de musiques recues" : "") + ")");
                 return;
             }
             PlayMakerFSM folk = Fsm("Folk", "LoadSongs"), button = Fsm("Button", "Button");
             if (folk == null) { Log.Warn("musiques : Radio/Folk::LoadSongs introuvable, pas d'import"); return; }
-            importUntil = Time.realtimeSinceStartup + 30f;
             FsmString p = folk.FsmVariables.FindFsmString("Path");
-            if (folk.enabled || (p != null && p.Value == "RADIO IMPORTED")) { Log.Info("musiques : import deja lance"); return; }
+            if (p != null && p.Value == "RADIO IMPORTED")
+            {
+                PlayMakerFSM pl = Fsm("CD", "Playlist");
+                if (pl == null || Imported(pl))
+                {
+                    Log.Info("musiques : import deja termine");
+                    return;
+                }
+            }
+            importUntil = Time.realtimeSinceStartup + 30f;
+            if (!folk.gameObject.activeSelf) folk.gameObject.SetActive(true);
             FsmBool si = button != null ? button.FsmVariables.FindFsmBool("SongImported") : null;
             if (si != null) si.Value = true;
-            folk.enabled = true;
+            if (button != null)
+            {
+                try { button.SendEvent("CLICK"); } catch {}
+                try { button.SendEvent("MOUSE DOWN"); } catch {}
+            }
+            string startState = !string.IsNullOrEmpty(folk.Fsm.StartState) ? folk.Fsm.StartState : "Init";
+            if (!folk.enabled) folk.enabled = true;
+            else Game.SetState(folk, startState);
             Log.Info("musiques : import lance au menu (comme IMPORT MUSIC FILES)" + (roots != null && roots.Count > 0 ? ", contenu de l'hote : " + string.Join(",", new List<string>(roots).ToArray()) : ""));
         }
 

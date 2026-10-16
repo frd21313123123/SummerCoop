@@ -350,6 +350,7 @@ namespace MWCoop
                     if (h == null && noKey.Add(go.name)) Log.Info("objets : objet tenu sans cle, non synchronise : " + go.name);
                 }
             }
+            if (held != null && Mounted(held)) ReleaseMounted(held);
             if (h != held)
             {
                 if (held != null && held.Body != null && !Destroyed(held.Body) && !held.Body.gameObject.activeInHierarchy)
@@ -375,6 +376,7 @@ namespace MWCoop
                 for (int i = settling.Count - 1; i >= 0; i--)
                 {
                     Prop p = settling[i];
+                    if (Mounted(p)) { ReleaseMounted(p); continue; }
                     bool done = p.Body == null || now > p.SettleUntil || (now > p.SettleUntil - 4.5f && p.Body.IsSleeping());
                     p.LocalAt = now;
                     Send(p, done ? 0 : 2);
@@ -457,6 +459,7 @@ namespace MWCoop
             foreach (Prop p in props.Values)
             {
                 if (p.Body == null) { if (p.GoneAt == 0f && Destroyed(p.Body)) Gone(p, now); continue; }
+                if (Mounted(p)) { ReleaseMounted(p); continue; }
                 if (p.RemoteBy < 0 || p.RideCar >= 0) continue;   // transporte : place apres la physique (LateUpdate)
                 if (now - p.LastRemote > 1.5f) { p.RemoteBy = -1; SetKinematic(p, false); continue; }
                 Follow(p);
@@ -485,6 +488,25 @@ namespace MWCoop
         // Hote : invite arrive en jeu -> 20 s plus tard (ses objets sont releves), la pose de tout ce qui est au repos.
         static float resendAt;
         public static void ScheduleSnapshot() { if (Session.IsHost) resendAt = Time.realtimeSinceStartup + 20f; }
+
+        static bool Mounted(Prop p)
+        {
+            return p.Body != null && p.Body.transform.parent != null && !Game.UnderPlayer(p.Body.transform) && VehicleSync.CarRoot(p.Body.transform) != null;
+        }
+        static void ReleaseMounted(Prop p)
+        {
+            // A held/drop interpolation can outlive native assembly. Leave the
+            // native joint and body settings intact and discard the loose pose.
+            if (p.Kinematic && p.Body != null)
+            {
+                p.Body.isKinematic = p.WasKinematic;
+                if (!p.Body.isKinematic) { p.Body.velocity = Vector3.zero; p.Body.angularVelocity = Vector3.zero; }
+            }
+            p.RemoteBy = p.HeadBy = -1; p.RelCar = -1; p.Kinematic = false;
+            HeldLook(p, false); Unride(p); settling.Remove(p);
+            p.RideOut = -1; ridingOut.Remove(p);
+            if (held == p) held = null;
+        }
 
         // Objet au repos dont l'hote fait foi (ni tenu, ni deplace par un autre, ni transporte par un autre).
         static bool HostResends(Prop p)
@@ -559,6 +581,7 @@ namespace MWCoop
         static void Send(Prop p, int state, bool reliable = false)
         {
             if (p.Body == null) return;
+            if (Mounted(p)) { ReleaseMounted(p); return; }
             p.LastSentPos = p.Body.position;
             var w = new NetWriter(Msg.Prop).U8(Session.LocalId).Str(p.Id).U8(state)
                 .Vec(p.Body.position).Quat(p.Body.rotation).Vec(p.Body.velocity);
@@ -773,9 +796,10 @@ namespace MWCoop
         {
             if (ridingIn.Count == 0) return;
             float k = 1f - Mathf.Exp(-12f * Time.deltaTime);
-            for (int i = 0; i < ridingIn.Count; i++)
+            for (int i = ridingIn.Count - 1; i >= 0; i--)
             {
                 Prop p = ridingIn[i];
+                if (Mounted(p)) { ReleaseMounted(p); continue; }
                 if (p.Body == null || p == held) continue;
                 p.RideCur = Vector3.Lerp(p.RideCur, p.RideLocal, k);
                 p.RideCurRot = Quaternion.Slerp(p.RideCurRot, p.RideLocalRot, k);
@@ -850,6 +874,7 @@ namespace MWCoop
                 // Toujours inconnu (objet absent ici) : pas d'autre releve force pour lui avant 10 s (messages a 8-15/s).
                 if (p == null || p.Body == null) unknown[id] = now + 10f;
             }
+            if (p != null && Mounted(p)) { ReleaseMounted(p); return; }
             if (state == STORED) { stored.Add(id); storedBy[id] = who; } else stored.Remove(id);
             if (p == null || p.Body == null || p == held) return;
             if (MscFireworks.Flying(p.Body.gameObject)) return;

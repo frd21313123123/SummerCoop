@@ -1,0 +1,39 @@
+// SummerCoop-Launcher.exe : icone, manifeste (styles Windows, PPP), fonds de la fenetre (make-art.ps1), informations de version
+// (MWV_NUM / MWV_STR : build\mwversion.h, ecrit par build.cmd depuis src\MWCoop\Version.cs)
+#include "mwversion.h"
+1 ICON "mwcoop.ico"
+1 24 "launcher.manifest"
+4 RCDATA "logo-titre.png"
+6 RCDATA "summer-background.png"
+7 RCDATA "..\\build\\SummerCoop.dll"
+8 RCDATA "..\\build\\SummerCoop.Core.dll"
+
+1 VERSIONINFO
+FILEVERSION MWV_NUM
+PRODUCTVERSION MWV_NUM
+FILEFLAGSMASK 0x3F
+FILEFLAGS 0x0
+FILEOS 0x40004
+FILETYPE 0x1
+FILESUBTYPE 0x0
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "CompanyName", "SummerCoop (open source)"
+      VALUE "FileDescription", "SummerCoop launcher: installs, updates and starts the SummerCoop co-op mod"
+      VALUE "FileVersion", MWV_STR
+      VALUE "InternalName", "SummerCoopLauncher"
+      VALUE "LegalCopyright", "Open source: https://github.com/frd21313123123/SummerCoop"
+      VALUE "OriginalFilename", "SummerCoop-Launcher.exe"
+      VALUE "ProductName", "SummerCoop - co-op mod for My Summer Car"
+      VALUE "ProductVersion", MWV_STR
+      VALUE "Comments", "Fan-made co-op mod for My Summer Car (Amistech Games), not affiliated. Source code and releases: https://github.com/frd21313123123/SummerCoop"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x0409, 1200
+  END
+END

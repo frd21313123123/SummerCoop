@@ -23,7 +23,7 @@ namespace MWCoop
         static void AddWood()
         {
             var wood = Wood(false); if (wood.Count == 0) throw new InvalidOperationException("No split wood for carrier");
-            Home.MarkHeld(wood[0]); carrier.FsmVariables.GetFsmGameObject("FirewoodObject").Value = wood[0]; Game.SetState(carrier, "Fetch array");
+            Home.MarkHeld(wood[0]); carrier.FsmVariables.GetFsmGameObject("FirewoodObject").Value = wood[0]; Game.SetState(carrier, "Parent");
         }
         static void TakeWood() { var f = Game.FsmOn(carrier.transform.parent.Find("PickupTrigger").gameObject, "Use"); Game.SetState(f, "Bool test"); }
         static void Count(string channel, string name, int expected)

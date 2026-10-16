@@ -41,17 +41,24 @@ namespace MWCoop
         static readonly HashSet<PlayMakerFSM> hooked = new HashSet<PlayMakerFSM>();
         static readonly List<string> completed = new List<string>();
         static float nextScan, nextSnapshot;
+        static bool leftHooked;
         public static int Count { get { return bindings.Count; } }
         public static bool Owns(PlayMakerFSM f)
         {
             if (f == null || Game.UnderPlayer(f.transform)) return false;
             if (f.FsmName == "Screw") return !MscParts.IsBolt(f) && f.FsmVariables.FindFsmFloat("Alignment") != null;
-            return f.FsmName == "HandRotate" && f.FsmVariables.FindFsmFloat("Rotation") != null;
+            return f.FsmName == "HandRotate" && f.FsmVariables.FindFsmFloat("Rotation") != null || IsTiming(f);
         }
-        public static void Reset() { bindings.Clear(); pending.Clear(); hooked.Clear(); completed.Clear(); nextScan = nextSnapshot = 0; }
-        static bool Mutation(string state, bool rotation)
+        internal static bool IsTiming(PlayMakerFSM f)
         {
-            return rotation ? state == "Clockwise" || state == "Counterwise"
+            return f != null && f.FsmName == "BoltCheck" && f.FsmVariables.FindFsmFloat("Angle") != null
+                && f.Fsm.GetState("Adjust") != null && f.Fsm.GetState("Set angle") != null;
+        }
+        internal static string ValueName(PlayMakerFSM f) { return IsTiming(f) ? "Angle" : f.FsmName == "HandRotate" ? "Rotation" : "Alignment"; }
+        public static void Reset() { bindings.Clear(); pending.Clear(); hooked.Clear(); completed.Clear(); nextScan = nextSnapshot = 0; }
+        static bool Mutation(string state, PlayMakerFSM f)
+        {
+            return IsTiming(f) ? state == "Adjust" : f.FsmName == "HandRotate" ? state == "Clockwise" || state == "Counterwise"
                 : state == "Screw" || state == "Unscrew" || state == "Screw 2" || state == "Unscrew 2";
         }
         static void Scan()
@@ -59,16 +66,22 @@ namespace MWCoop
             foreach (UnityEngine.Object item in Game.AllFsms())
             {
                 PlayMakerFSM f = item as PlayMakerFSM;
-                if (f == null || f.hideFlags != HideFlags.None || hooked.Contains(f) || !Owns(f) || !f.Fsm.Initialized) continue;
+                if (f == null || f.hideFlags != HideFlags.None || hooked.Contains(f) || !Owns(f)) continue;
+                if (!f.Fsm.Initialized)
+                {
+                    string path = Recon.Path(f.transform);
+                    if (!path.StartsWith("SATSUMA", StringComparison.Ordinal) && !path.StartsWith("CARPARTS/", StringComparison.Ordinal)) continue;
+                    f.Fsm.InitData();
+                }
                 if (!Replay.Claim(f, "msc-tuning")) continue;
                 string key = MscParts.Key(f);
                 Binding previous;
                 if (bindings.TryGetValue(key, out previous) && previous.Fsm != null && previous.Fsm != f) { Log.Warn("MSC ambiguous tuning FSM: " + key); continue; }
-                Binding b = new Binding { Key = key, Fsm = f, Value = f.FsmVariables.FindFsmFloat(f.FsmName == "HandRotate" ? "Rotation" : "Alignment") };
+                Binding b = new Binding { Key = key, Fsm = f, Value = f.FsmVariables.FindFsmFloat(ValueName(f)) };
                 bool installed = false;
                 foreach (FsmState state in f.FsmStates)
                 {
-                    if (!state.IsInitialized || !Mutation(state.Name, f.FsmName == "HandRotate")) continue;
+                    if (!state.IsInitialized || !Mutation(state.Name, f)) continue;
                     List<FsmStateAction> actions = new List<FsmStateAction>(state.Actions);
                     actions.Insert(0, new Hook { Binding = b }); state.Actions = actions.ToArray(); installed = true;
                 }
@@ -78,6 +91,7 @@ namespace MWCoop
         public static void Update()
         {
             if (!PlayerSync.InGame || !Session.Active) return;
+            if (!leftHooked) { leftHooked = true; Session.PlayerLeft += player => { foreach (Binding b in bindings.Values) b.Clock.ForgetActor(player.Id); }; }
             float now = Time.realtimeSinceStartup;
             if (now >= nextScan) { nextScan = now + 2f; Scan(); }
             completed.Clear();
@@ -134,7 +148,15 @@ namespace MWCoop
             try
             {
                 b.Value.Value = value;
-                if (b.Fsm.FsmName == "HandRotate")
+                if (IsTiming(b.Fsm))
+                {
+                    // Adjust rotates by a delta. Store the received absolute angle
+                    // first, then let Set angle restore the native timing mark.
+                    foreach (FsmStateAction action in b.Fsm.Fsm.GetState("Adjust").Actions)
+                        if (action is SetFsmFloat) action.OnEnter();
+                    Commit(b.Fsm.Fsm.GetState("Set angle"), false);
+                }
+                else if (b.Fsm.FsmName == "HandRotate")
                 {
                     // Reuse the game's clamp, pose and database write without
                     // adding another scroll step or entering a local input loop.
@@ -148,6 +170,21 @@ namespace MWCoop
                     Commit(b.Fsm.Fsm.GetState("Idle"), false);
                 }
             }
+            finally { Replay.Depth--; }
+        }
+        internal static void RestoreTiming(GameObject part, bool pose)
+        {
+            if (part == null) return;
+            PlayMakerFSM f = Game.FsmOn(part, "BoltCheck");
+            if (!IsTiming(f)) return;
+            FsmGameObject db = f.FsmVariables.FindFsmGameObject("db_ThisPart");
+            PlayMakerFSM data = db == null || db.Value == null ? null : Game.FsmOn(db.Value, "Data");
+            FsmFloat angle = data == null ? null : data.FsmVariables.FindFsmFloat("Angle");
+            if (angle == null) return;
+            f.FsmVariables.FindFsmFloat("Angle").Value = angle.Value;
+            if (!pose) return;
+            Replay.Depth++;
+            try { Commit(f.Fsm.GetState("Set angle"), false); }
             finally { Replay.Depth--; }
         }
         static void Commit(FsmState state, bool rotationOnly)

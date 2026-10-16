@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9_-]{0,48}$')][string]$Run)
+param([Parameter(Mandatory=$true)][ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9_-]{0,48}$')][string]$Run, [switch]$ModOnly)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $model = [IO.File]::ReadAllText((Join-Path $root 'src/Core/Model.cs'))
@@ -36,7 +36,9 @@ $before = @(Get-Content -LiteralPath (Join-Path $root ('.local/' + $Run + '-orig
 foreach ($file in $before) { if ((Get-FileHash -LiteralPath $file.Path -Algorithm SHA256).Hash -ne $file.Hash) { throw 'An original single-player save changed.' } }
 $rows += @('', ('Original single-player save files checked: ' + $before.Count + '; changed: 0'), '',
     'Automated checks (121 component regressions are not 121 native MWCoop gameplay tests):')
-foreach ($test in @('build/test-results.txt','build/msc-tests/test-results.txt','build/mwcoop-network-tests/test-results.txt','build/installer-tests/test-results.txt','build/launcher-tests/test-results.txt')) {
+$testFiles = @('build/test-results.txt','build/msc-tests/test-results.txt','build/mwcoop-network-tests/test-results.txt')
+if (!$ModOnly) { $testFiles += @('build/installer-tests/test-results.txt','build/launcher-tests/test-results.txt') }
+foreach ($test in $testFiles) {
     $summary = @(Get-Content -LiteralPath (Join-Path $root $test) | Where-Object { $_ -match '^ALL .* PASSED$|^PASS launcher GUI:' })
     if ($summary.Count -eq 0) { throw ('Missing test result: ' + $test) }
     $rows += $test + ': ' + ($summary -join ' | ')

@@ -1,32 +1,77 @@
-param([string]$PackagePath, [string]$OutputPath)
+param(
+    [string]$PackagePath = '',
+    [string]$OutputPath = '',
+    [string]$Version = ''
+)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-if (!$PackagePath) {
-    $model = Get-Content -LiteralPath (Join-Path $root 'src\Core\Model.cs') -Raw
-    if ($model -notmatch 'ModVersion\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)"') { throw 'Unable to read the mod version.' }
-    $PackagePath = Join-Path $root ('dist\SummerCoop-' + $Matches[1])
+
+if (!$Version) {
+    $modelFile = Join-Path $root 'src\Core\Model.cs'
+    if (Test-Path -LiteralPath $modelFile) {
+        $model = Get-Content -LiteralPath $modelFile -Raw
+        if ($model -match 'ModVersion\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)"') {
+            $Version = $Matches[1]
+        }
+    }
+    if (!$Version) { $Version = '0.4.1' }
 }
-$PackagePath = [IO.Path]::GetFullPath($PackagePath)
-if (!$OutputPath) { $OutputPath = Join-Path $root 'dist\SummerCoop-Launcher.exe' }
+
+if (!$OutputPath) {
+    $OutputPath = Join-Path $root 'dist\SummerCoop-Launcher.exe'
+}
 $OutputPath = [IO.Path]::GetFullPath($OutputPath)
-New-Item -ItemType Directory -Path (Split-Path -Parent $OutputPath) -Force | Out-Null
-$compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework\v4.0.30319\csc.exe'
-if (!(Test-Path -LiteralPath $compiler)) { throw '.NET Framework C# compiler is missing.' }
-$files = @('SummerCoop.dll','References\SummerCoop.Core.dll','References\SummerCoop.ProfileUpdate.exe')
-$manifest = Join-Path (Split-Path -Parent $OutputPath) 'launcher-payload-sha256.txt'
-$lines = @()
-$resources = @()
-for ($i = 0; $i -lt $files.Count; $i++) {
-    $file = Join-Path (Join-Path $PackagePath 'Mods') $files[$i]
-    if (!(Test-Path -LiteralPath $file -PathType Leaf)) { throw ('Missing launcher payload: ' + $file) }
-    $lines += (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash + '  ' + $files[$i]
-    $resources += '/resource:' + $file + ',SummerCoop.Payload.' + $i
+$outputDir = Split-Path -Parent $OutputPath
+New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
+
+$buildDir = Join-Path $root 'build'
+New-Item -ItemType Directory -Path $buildDir -Force | Out-Null
+
+# Generate mwversion.h
+$parts = $Version.Split('-')[0].Split('.')
+while ($parts.Count -lt 3) { $parts += '0' }
+$mwvNum = "$($parts[0]),$($parts[1]),$($parts[2]),0"
+$versionHeader = @"
+#define MWV_NUM $mwvNum
+#define MWV_STR "$Version"
+"@
+$versionHeader | Set-Content -LiteralPath (Join-Path $buildDir 'mwversion.h') -Encoding ascii
+$versionHeader | Set-Content -LiteralPath (Join-Path (Join-Path $root 'launcher') 'mwversion.h') -Encoding ascii
+
+# Locate Visual Studio Build Tools
+$vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+if (!(Test-Path -LiteralPath $vswhere)) {
+    throw 'vswhere.exe not found. Visual Studio C++ build tools are required.'
 }
-$lines | Set-Content -LiteralPath $manifest -Encoding ASCII
-$resources += '/resource:' + $manifest + ',SummerCoop.Payload.SHA256'
-$resources += '/resource:' + (Join-Path $root 'launcher\assets\background.png') + ',SummerCoop.Launcher.Background'
-$sources = @(Get-ChildItem -LiteralPath (Join-Path $root 'launcher') -Filter '*.cs' -File | Sort-Object Name | ForEach-Object FullName)
-& $compiler /nologo /langversion:5 /target:winexe /optimize+ /platform:anycpu ('/out:' + $OutputPath) ('/win32manifest:' + (Join-Path $root 'launcher\app.manifest')) /reference:System.dll /reference:System.Drawing.dll /reference:System.Windows.Forms.dll $resources (Join-Path $root 'tools\Installer\InstallerCore.cs') $sources
-if ($LASTEXITCODE) { throw 'Launcher build failed.' }
-((Get-FileHash -LiteralPath $OutputPath -Algorithm SHA256).Hash + '  ' + [IO.Path]::GetFileName($OutputPath)) | Set-Content -LiteralPath ($OutputPath + '.sha256') -Encoding ASCII
-Write-Output $OutputPath
+$visualStudio = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+if (!$visualStudio) {
+    throw 'Visual Studio C++ build tools (MSVC x64) not found.'
+}
+$vcvars = Join-Path $visualStudio 'VC\Auxiliary\Build\vcvars64.bat'
+if (!(Test-Path -LiteralPath $vcvars)) {
+    throw "vcvars64.bat not found at $vcvars"
+}
+
+# Compile native launcher
+$launcherDir = Join-Path $root 'launcher'
+$resFile = Join-Path $buildDir 'launcher.res'
+$cmdScript = Join-Path $buildDir 'compile-launcher.cmd'
+
+$batch = @"
+@echo off
+call "$vcvars" >nul || exit /b 1
+cd /d "$launcherDir"
+rc /nologo /i "$buildDir" /i "$launcherDir" /fo "$resFile" launcher.rc || exit /b 1
+cl /nologo /O2 /MT /W3 /EHsc /utf-8 /std:c++17 /DUNICODE /D_UNICODE /D_CRT_SECURE_NO_WARNINGS /Fo"$buildDir\\" launcher.cpp "$resFile" /Fe"$OutputPath" /link /SUBSYSTEM:WINDOWS user32.lib gdi32.lib gdiplus.lib winhttp.lib comdlg32.lib shell32.lib ole32.lib advapi32.lib shlwapi.lib ws2_32.lib winmm.lib oleaut32.lib uuid.lib delayimp.lib /DELAYLOAD:winhttp.dll /DELAYLOAD:winmm.dll || exit /b 1
+"@
+
+$batch | Set-Content -LiteralPath $cmdScript -Encoding ascii
+& $env:ComSpec /d /c $cmdScript
+if ($LASTEXITCODE -ne 0) {
+    throw "Native launcher compilation failed with exit code $LASTEXITCODE"
+}
+
+$hash = (Get-FileHash -LiteralPath $OutputPath -Algorithm SHA256).Hash
+("$hash  " + [IO.Path]::GetFileName($OutputPath)) | Set-Content -LiteralPath ($OutputPath + '.sha256') -Encoding ASCII
+
+Write-Output "Successfully built native launcher: $OutputPath"

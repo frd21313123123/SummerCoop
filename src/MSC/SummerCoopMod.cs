@@ -6,8 +6,8 @@ namespace SummerCoop.Game
     public sealed class SummerCoopMod : Mod
     {
         public override string ID { get { return "SummerCoop"; } }
-        public override string Name { get { return "SummerCoop / MWCoop for MSC"; } }
-        public override string Author { get { return "MWCoop contributors; SummerCoop contributors"; } }
+        public override string Name { get { return "SummerCoop"; } }
+        public override string Author { get { return "SummerCoop contributors"; } }
         public override string Version { get { return Core.Protocol.ModVersion; } }
         public override void ModSetup()
         {
@@ -19,11 +19,12 @@ namespace SummerCoop.Game
         {
             if (MWCoop.Entry.Root != null) return;
             MWCoop.MscRuntime.PrepareEnvironment();
+            MWCoop.MscRuntime.TouchLoaderTrace();
             MWCoop.Entry.Init();
             if (MWCoop.Entry.Root != null) MWCoop.Entry.Root.AddComponent<MWCoop.MscConnectPanel>();
             if (MWCoop.Entry.Root != null && MWCoop.MscRuntime.Argument("--summercoop-test-report").Length > 0) MWCoop.Entry.Root.AddComponent<MWCoop.MscSmokeProbe>();
-            ModConsole.Print("SummerCoop " + Version + " — MWCoop engine, MSC bindings");
+            ModConsole.Print("SummerCoop " + Version);
         }
-        private void BeforeGame() { MWCoop.MscRuntime.ConfigureGame(); MWCoop.MscParts.Index(); }
+        private void BeforeGame() { MWCoop.MscRuntime.TouchLoaderTrace(); MWCoop.MscRuntime.ConfigureGame(); MWCoop.MscParts.Index(); }
     }
 }

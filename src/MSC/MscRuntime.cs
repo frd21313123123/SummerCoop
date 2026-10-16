@@ -35,6 +35,37 @@ namespace MWCoop
             string[] args = Environment.GetCommandLineArgs(); int i = Array.IndexOf(args, key);
             return i >= 0 && i + 1 < args.Length ? args[i + 1] : "";
         }
+        public static bool HasArgument(string key)
+        {
+            string[] args = Environment.GetCommandLineArgs();
+            return Array.IndexOf(args, key) >= 0;
+        }
+        public static void TouchLoaderTrace()
+        {
+            try
+            {
+                string text = DateTime.UtcNow.ToString("o") + "\r\nSummerCoop loaded successfully\r\n";
+                string localApp = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+                string[] dirs = new[] {
+                    Path.Combine(localApp, "MWCoop"),
+                    Path.Combine(localApp, "SummerCoop"),
+                    Path.Combine(Environment.CurrentDirectory, "MWCoop"),
+                    Path.Combine(Environment.CurrentDirectory, "SummerCoop"),
+                    Root != null ? Path.Combine(Root, "mwcoop") : null
+                };
+                foreach (string d in dirs)
+                {
+                    if (string.IsNullOrEmpty(d)) continue;
+                    try
+                    {
+                        Directory.CreateDirectory(d);
+                        File.WriteAllText(Path.Combine(d, "dernier-lancement.txt"), text);
+                    }
+                    catch {}
+                }
+            }
+            catch {}
+        }
         public static void PrepareEnvironment()
         {
             string root = Argument("--summercoop-profile");
@@ -42,26 +73,69 @@ namespace MWCoop
             string data = Path.Combine(Root, "mwcoop"); Directory.CreateDirectory(data);
             Environment.SetEnvironmentVariable("MWCOOP_DIR", data);
             Environment.SetEnvironmentVariable("MWCOOP_DATA", data);
+            string gameDir = Path.GetDirectoryName(Application.dataPath);
+            string localApp = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            string[] sources = new[] {
+                !string.IsNullOrEmpty(gameDir) ? Path.Combine(gameDir, "MWCoop\\lancement.ini") : null,
+                !string.IsNullOrEmpty(gameDir) ? Path.Combine(gameDir, "SummerCoop\\lancement.ini") : null,
+                Path.Combine(Environment.CurrentDirectory, "MWCoop\\lancement.ini"),
+                Path.Combine(Environment.CurrentDirectory, "SummerCoop\\lancement.ini"),
+                !string.IsNullOrEmpty(localApp) ? Path.Combine(localApp, "MWCoop\\lancement.ini") : null,
+                Path.Combine(Application.persistentDataPath, "SummerCoop\\mwcoop\\lancement.ini")
+            };
+            string target = Path.Combine(data, "lancement.ini");
+            foreach (string s in sources)
+            {
+                if (!string.IsNullOrEmpty(s) && File.Exists(s))
+                {
+                    try { File.Copy(s, target, true); } catch {}
+                    break;
+                }
+            }
+            TouchLoaderTrace();
         }
         public static void Configure()
         {
             if (Root == null) PrepareEnvironment();
             Config.Override("Coop", "Langue", "ru");
-            Config.Override("Coop", "Mode", "solo");
             Config.Override("Coop", "Ajouts", "0");
             Config.Override("Coop", "RayTracing", "0");
-            string name = Argument("--summercoop-name"); if (name.Length > 0) Config.Override("Coop", "Pseudo", name);
+
+            string mode = Config.Get("Arg", "mode", Config.Get("Coop", "Mode", "")).ToLowerInvariant();
+            string rawReseau = Config.Get("Coop", "Reseau", "ip").ToLowerInvariant();
+            string rawHostSteam = Config.Get("Coop", "HoteSteam", "");
+            string rawAddress = Config.Get("Arg", "adresse", Config.Get("Coop", "Adresse", ""));
+            string rawPort = Config.Get("Arg", "port", Config.Get("Coop", "Port", ""));
+            string rawName = Config.Get("Coop", "Pseudo", "");
+
+            string name = Argument("--summercoop-name");
+            if (name.Length > 0) Config.Override("Coop", "Pseudo", name);
+            else if (rawName.Length > 0) Config.Override("Coop", "Pseudo", rawName);
+
             string port = Argument("--summercoop-host-lan");
-            bool steamHost = Argument("--summercoop-host-steam") == "yes";
-            string steamLobby = Argument("--summercoop-join-steam"); if (steamLobby.Length == 0) steamLobby = Argument("+connect_lobby");
-            bool guest = Argument("--summercoop-join-lan").Length > 0 || steamLobby.Length > 0;
-            AutoStart = port.Length > 0 || steamHost || guest;
-            Config.Override("Coop", "Mode", guest ? "client" : AutoStart ? "host" : "solo");
-            Config.Override("Coop", "Reseau", steamHost || steamLobby.Length > 0 ? "steam" : "ip");
-            Config.Override("Coop", "Port", port.Length > 0 ? port : Argument("--summercoop-port").Length > 0 ? Argument("--summercoop-port") : "27842");
-            Config.Override("Coop", "Adresse", Argument("--summercoop-join-lan"));
-            Config.Override("Coop", "Salon", steamLobby);
+            bool steamHost = Argument("--summercoop-host-steam") == "yes" || (mode == "hote" && rawReseau == "steam");
+            string steamLobby = Argument("--summercoop-join-steam");
+            if (steamLobby.Length == 0) steamLobby = Argument("+connect_lobby");
+            if (steamLobby.Length == 0 && mode == "invite" && rawReseau == "steam") steamLobby = Config.Get("Coop", "Salon", "");
+
+            bool guest = Argument("--summercoop-join-lan").Length > 0 || steamLobby.Length > 0 || mode == "invite" || mode == "client";
+            bool host = port.Length > 0 || steamHost || mode == "hote" || mode == "host";
+            string partie = Config.Get("Arg", "partie", Config.Get("Coop", "Partie", "")).ToLowerInvariant();
+            bool auto = HasArgument("--summercoop-auto") || Config.HasArg("auto") || partie == "continuer" || partie == "nouvelle";
+            AutoStart = host || guest || auto;
+
+            Config.Override("Coop", "Mode", guest ? "client" : (host || AutoStart) && mode != "solo" ? "host" : "solo");
+            Config.Override("Coop", "Reseau", steamHost || steamLobby.Length > 0 || rawReseau == "steam" ? "steam" : "ip");
+
+            string resolvedPort = port.Length > 0 ? port : Argument("--summercoop-port").Length > 0 ? Argument("--summercoop-port") : rawPort.Length > 0 ? rawPort : "27842";
+            Config.Override("Coop", "Port", resolvedPort);
+
+            string resolvedAddr = Argument("--summercoop-join-lan").Length > 0 ? Argument("--summercoop-join-lan") : rawAddress;
+            Config.Override("Coop", "Adresse", resolvedAddr);
+            if (steamLobby.Length > 0) Config.Override("Coop", "Salon", steamLobby);
+            if (rawHostSteam.Length > 0) Config.Override("Coop", "HoteSteam", rawHostSteam);
             Config.Override("Coop", "MotDePasseMSC", Argument("--summercoop-password"));
+
             MscProfile.Activate(Root, guest, Argument("--summercoop-import-save") == "yes");
             BuildIdentity = Codec.Hash(Codec.Make(delegate(BinaryWriter w) {
                 Codec.Text(w, "My Summer Car / MWCoop adapter 1");
@@ -80,6 +154,18 @@ namespace MWCoop
             { FsmBool value = globals.FindFsmBool(key); if (value != null) value.Value = false; }
             foreach (string key in new[] { "PlayerFirstName", "PlayerLastName", "PlayerName" })
             { FsmString value = globals.FindFsmString(key); if (value != null && value.Value.Length == 0) value.Value = "Coop"; }
+            FsmBool songImported = globals.FindFsmBool("SongImported");
+            if (songImported != null) songImported.Value = true;
+            try
+            {
+                PlayMakerFSM gfx = Game.FindFsm("Systems/Options", "GFX");
+                if (gfx != null)
+                {
+                    FsmBool si = gfx.FsmVariables.FindFsmBool("SongImport");
+                    if (si != null) si.Value = true;
+                }
+            }
+            catch {}
         }
         public static bool Supports(Type module) { return module == null || !excluded.Contains(module.Name); }
         public static void Run(Action action)
@@ -113,7 +199,7 @@ namespace MWCoop
         {
             if (!visible) return;
             GUILayout.BeginArea(new Rect(20, 20, Mathf.Min(490, Screen.width - 40), Screen.height - 40), GUI.skin.box);
-            GUILayout.Label("SummerCoop " + Version.Text + " / MWCoop → My Summer Car");
+            GUILayout.Label("SummerCoop " + Version.Text);
             GUILayout.Label("F10 — игроки, внешность, чат, синхронизация. T — чат.");
             if (Application.loadedLevelName != "GAME")
             {

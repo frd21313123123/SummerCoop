@@ -22,7 +22,7 @@ namespace MWCoop
             FieldInfo field = type.GetField("persistentDataPath", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
             if (field == null || field.FieldType != typeof(string)) throw new InvalidOperationException("MSC save isolation is unavailable");
             Directory.CreateDirectory(path);
-            if (!guest && import && !File.Exists(Path.Combine(path, "defaultES2File.txt")))
+            if (!guest && (import || !File.Exists(Path.Combine(path, "defaultES2File.txt"))))
             {
                 string legacy = Path.Combine(root, "world");
                 string source = File.Exists(Path.Combine(legacy, "defaultES2File.txt")) ? legacy : OriginalDirectory;

@@ -18,11 +18,18 @@ namespace MWCoop
     {
         sealed class Binding { public string Key, MountState; public PlayMakerFSM Fsm; public BoltTotal Total; public bool BoltChanged; public readonly MscEditClock Clock = new MscEditClock(); }
         sealed class BoltTotal { public PlayMakerFSM Fsm; public FsmFloat Tightness; public FsmBool Bolted; }
-        sealed class Pending { public Binding Binding; public string State; public GameObject Part; public int Frame; public float ReadyAt; }
+        sealed class Pending { public Binding Binding; public string State, Id; public GameObject Part; public int Frame; public float ReadyAt; }
+        sealed class PartEdit { public int Who, Revision, ActorRevision; public string Key, State, Id; public float Until, Angle; public bool HasAngle; }
+        sealed class PartState { public PartEdit Edit; public readonly MscEditClock Clock = new MscEditClock(); public readonly MscPendingPartEdit Pending = new MscPendingPartEdit(); }
         sealed class PendingBolt { public int Who, Target, Revision; public float Until, Tightness; public bool HasTotal, HasBolted, Bolted; }
         sealed class Scope { public float Until; }
         static readonly Dictionary<string, GameObject> parts = new Dictionary<string, GameObject>(StringComparer.Ordinal);
         static readonly Dictionary<GameObject, string> ids = new Dictionary<GameObject, string>();
+        static readonly Dictionary<GameObject, string> modelKeys = new Dictionary<GameObject, string>();
+        static readonly Dictionary<string, PlayMakerFSM> databases = new Dictionary<string, PlayMakerFSM>(StringComparer.Ordinal);
+        static readonly Dictionary<string, PartState> partStates = new Dictionary<string, PartState>(StringComparer.Ordinal);
+        static readonly Dictionary<string, PartEdit> pendingParts = new Dictionary<string, PartEdit>(StringComparer.Ordinal);
+        static readonly List<string> completedParts = new List<string>();
         static readonly Dictionary<string, Binding> bindings = new Dictionary<string, Binding>(StringComparer.Ordinal);
         static readonly Dictionary<PlayMakerFSM, Binding> byFsm = new Dictionary<PlayMakerFSM, Binding>();
         static readonly HashSet<PlayMakerFSM> hooked = new HashSet<PlayMakerFSM>();
@@ -36,11 +43,12 @@ namespace MWCoop
         static readonly HashSet<MethodBase> patched = new HashSet<MethodBase>();
         static readonly List<Fsm> finished = new List<Fsm>();
         static HarmonyInstance harmony;
-        static float nextScan, nextBoltSnapshot;
+        static float nextScan, nextBoltSnapshot, nextPartSnapshot;
         static int localBoltRevision, hostBoltRevision;
         static Binding exercisedBolt;
+        static bool leftHooked;
         public static int Count { get { return bindings.Count; } }
-        public static void Reset() { parts.Clear(); ids.Clear(); bindings.Clear(); byFsm.Clear(); hooked.Clear(); pending.Clear(); pendingBolts.Clear(); completedBolts.Clear(); totalClocks.Clear(); repairs.Clear(); remote.Clear(); nextScan = nextBoltSnapshot = 0; localBoltRevision = hostBoltRevision = 0; }
+        public static void Reset() { parts.Clear(); ids.Clear(); modelKeys.Clear(); databases.Clear(); partStates.Clear(); pendingParts.Clear(); completedParts.Clear(); bindings.Clear(); byFsm.Clear(); hooked.Clear(); pending.Clear(); pendingBolts.Clear(); completedBolts.Clear(); totalClocks.Clear(); repairs.Clear(); remote.Clear(); nextScan = nextBoltSnapshot = nextPartSnapshot = 0; localBoltRevision = hostBoltRevision = 0; }
         public static bool Owns(PlayMakerFSM f)
         {
             return f != null && !MscBrewing.Owns(f) && (f.FsmName == "Assembly" || f.FsmName == "Removal" || f.FsmName == "Assemble" && Recon.Path(f.transform).IndexOf("Wiring", StringComparison.OrdinalIgnoreCase) >= 0 || IsBolt(f));
@@ -50,19 +58,75 @@ namespace MWCoop
         {
             if (go == null) return "";
             string id; if (ids.TryGetValue(go, out id)) return id;
+            // Removal can create a new loose chassis clone and the player can
+            // reinstall it before the next census. SpawnThis is already updated
+            // by the native removal, even when that clone has no Removal FSM.
+            foreach (KeyValuePair<string, PlayMakerFSM> entry in databases)
+            {
+                if (entry.Value == null) continue;
+                FsmGameObject loose = entry.Value.FsmVariables.FindFsmGameObject("SpawnThis");
+                if (loose == null || loose.Value != go) continue;
+                ids[go] = entry.Key; parts[entry.Key] = go; return entry.Key;
+            }
             foreach (PlayMakerFSM f in go.GetComponents<PlayMakerFSM>())
             {
                 if (f.FsmName != "Removal") continue;
                 FsmGameObject database = f.FsmVariables.FindFsmGameObject("db_ThisPart");
                 if (database == null || database.Value == null) continue;
+                PlayMakerFSM data = Game.FsmOn(database.Value, "Data");
+                FsmGameObject actual = data == null ? null : data.FsmVariables.FindFsmGameObject("ThisPart") ?? data.FsmVariables.FindFsmGameObject("ActivateThis");
+                if (actual != null && actual.Value != go && (actual.Name == "ThisPart" || actual.Value == null || !go.transform.IsChildOf(actual.Value.transform))) continue;
                 id = "mscdb:" + Parts.RankPath(database.Value.transform);
                 ids[go] = id; parts[id] = go; return id;
             }
             id = MscBelt.Identity(go);
+            if (id.Length == 0 && !MscBelt.IsBelt(go))
+            {
+                PlayMakerFSM use = Game.FsmOn(go, "Use");
+                FsmString tag = use == null || use.FsmVariables.FindFsmBool("Installed") == null && use.FsmVariables.FindFsmString("Corner") == null ? null : use.FsmVariables.FindFsmString("UniqueTag") ?? use.FsmVariables.FindFsmString("ID");
+                if (tag != null && tag.Value.Length > 0 && tag.Value != "sparkplug0" && tag.Value != "oilfilter0" && tag.Value != "bulb0" && tag.Value != "battery0" && tag.Value != "wheel0") id = "mscitem:" + tag.Value;
+            }
             if (id.Length > 0) { ids[go] = id; parts[id] = go; return id; }
             return "";
         }
-        public static GameObject Find(string id) { GameObject go; return parts.TryGetValue(id, out go) && go != null ? go : null; }
+        public static GameObject Find(string id)
+        {
+            PlayMakerFSM data;
+            if (databases.TryGetValue(id, out data) && data != null)
+            {
+                FsmGameObject value = data.FsmVariables.FindFsmGameObject("ThisPart")
+                    ?? data.FsmVariables.FindFsmGameObject(Installed(id) ? "ActivateThis" : "SpawnThis");
+                if (value == null && Installed(id)) foreach (FsmGameObject model in data.FsmVariables.GameObjectVariables)
+                    if (model.Name.StartsWith("ActivateThis", StringComparison.Ordinal) && model.Value != null && (value == null || model.Value.activeSelf)) value = model;
+                if (value != null && value.Value != null)
+                {
+                    GameObject representation = value.Name.StartsWith("ActivateThis", StringComparison.Ordinal) ? ModelPart(value.Value, data) : value.Value;
+                    ids[representation] = id; parts[id] = representation; return representation;
+                }
+                return null;
+            }
+            GameObject go; return parts.TryGetValue(id, out go) && go != null ? go : null;
+        }
+        static bool Installed(string id)
+        {
+            PlayMakerFSM data;
+            if (databases.TryGetValue(id, out data) && data != null) return data.FsmVariables.FindFsmBool("Installed").Value;
+            GameObject part; if (!parts.TryGetValue(id, out part) || part == null) return false;
+            PlayMakerFSM use = Game.FsmOn(part, "Use");
+            FsmBool installed = use == null ? null : use.FsmVariables.FindFsmBool("Installed");
+            return installed != null ? installed.Value : NativeAssembly.Installed(part);
+        }
+        static GameObject ModelPart(GameObject root, PlayMakerFSM data)
+        {
+            // Wishbone ActivateThis points at an IK pivot; the native Removal
+            // FSM and mesh are on its child. Both belong to the same DB part.
+            foreach (PlayMakerFSM f in root.GetComponentsInChildren<PlayMakerFSM>(true))
+            {
+                FsmGameObject db = f.FsmName == "Removal" ? f.FsmVariables.FindFsmGameObject("db_ThisPart") : null;
+                if (db != null && db.Value == data.gameObject) return f.gameObject;
+            }
+            return root;
+        }
         public static void Index()
         {
             foreach (Object value in Game.AllFsms())
@@ -71,11 +135,20 @@ namespace MWCoop
                 if (f != null && f.FsmName == "Use" && f.hideFlags == HideFlags.None) IdOf(f.gameObject);
                 if (f == null || f.FsmName != "Data" || f.hideFlags != HideFlags.None) continue;
                 FsmGameObject part = f.FsmVariables.FindFsmGameObject("ThisPart");
-                if (part == null || part.Value == null || f.FsmVariables.FindFsmBool("Installed") == null) continue;
+                FsmGameObject loose = f.FsmVariables.FindFsmGameObject("SpawnThis");
+                List<FsmGameObject> models = new List<FsmGameObject>();
+                foreach (FsmGameObject model in f.FsmVariables.GameObjectVariables) if (model.Name.StartsWith("ActivateThis", StringComparison.Ordinal)) models.Add(model);
+                if (f.FsmVariables.FindFsmBool("Installed") == null || part == null && (models.Count == 0 || loose == null)) continue;
                 string id = "mscdb:" + Parts.RankPath(f.transform);
-                GameObject previous;
-                if (parts.TryGetValue(id, out previous) && previous != null && previous != part.Value) throw new InvalidOperationException("Ambiguous MSC database part: " + id);
-                parts[id] = part.Value; ids[part.Value] = id;
+                databases[id] = f;
+                foreach (FsmGameObject representation in new[] { part, loose }) if (representation != null && representation.Value != null) ids[representation.Value] = id;
+                foreach (FsmGameObject model in models) if (model.Value != null)
+                {
+                    GameObject representation = ModelPart(model.Value, f);
+                    ids[model.Value] = ids[representation] = id;
+                    if (models.Count > 1) modelKeys[model.Value] = modelKeys[representation] = "@" + model.Name + "/";
+                }
+                Find(id);
             }
         }
         internal static string Key(PlayMakerFSM f)
@@ -85,7 +158,7 @@ namespace MWCoop
             for (Transform p = t; p != null; p = p.parent)
             {
                 string id = IdOf(p.gameObject);
-                if (id.Length > 0) return id + "/" + relative + "::" + f.FsmName;
+                if (id.Length > 0) { string model; modelKeys.TryGetValue(p.gameObject, out model); return id + "/" + model + relative + "::" + f.FsmName; }
                 relative = p.name + "[" + SameNameIndex(p) + "]/" + relative;
             }
             return relative + "::" + f.FsmName;
@@ -110,10 +183,15 @@ namespace MWCoop
                         RefreshKey(Binding);
                         FsmGameObject variable = Binding.Fsm.FsmVariables.FindFsmGameObject("Part") ?? Binding.Fsm.FsmVariables.FindFsmGameObject("ThisPart");
                         GameObject part = variable != null ? variable.Value : null;
-                        if (part == null && Binding.Fsm.FsmName == "Removal") part = Binding.Fsm.gameObject;
+                        if (Binding.Fsm.FsmName == "Removal") part = Binding.Fsm.gameObject;
                         if (Binding.Fsm.FsmName == "Assembly") Binding.MountState = StateName;
                         bool bolt = IsBolt(Binding.Fsm);
-                        pending.Add(new Pending { Binding = Binding, State = StateName, Part = part, Frame = Time.frameCount + (bolt ? 2 : 1), ReadyAt = bolt ? Time.realtimeSinceStartup + .1f : 0 });
+                        // Chassis assembly destroys the loose object in this state.
+                        // Capture its database identity before the native actions run.
+                        PlayMakerFSM target = Binding.Fsm.FsmName == "Assembly" ? NativeAssembly.Database(Binding.Fsm, Binding.Fsm.Fsm.GetState(StateName)) : null;
+                        string id = target == null ? IdOf(part) : "mscdb:" + Parts.RankPath(target.transform);
+                        if (!Session.IsHost && !bolt && (id.Length > 0 || Binding.Fsm.FsmName == "Assemble")) StateFor(new PartEdit { Key = Binding.Key, Id = id }).Pending.Begin();
+                        pending.Add(new Pending { Binding = Binding, State = StateName, Part = part, Id = id, Frame = Time.frameCount + (bolt ? 2 : 1), ReadyAt = bolt ? Time.realtimeSinceStartup + .1f : 0 });
                     }
                 }
                 catch (Exception e) { Replay.HookError(e); }
@@ -124,7 +202,7 @@ namespace MWCoop
         {
             string name = state.Name;
             if (IsBolt(f)) return name == "Screw 2" || name == "Unscrew 2" || name == "Screw" || name == "Unscrew";
-            if (f.FsmName == "Assembly") return name == "Assemble" || name.StartsWith("Assemble ", StringComparison.Ordinal);
+            if (f.FsmName == "Assembly") return name == "Assemble" || name.StartsWith("Assemble ", StringComparison.Ordinal) || NativeAssembly.MountAction(state.Actions) != null;
             if (f.FsmName == "Removal") return name.StartsWith("Remove", StringComparison.Ordinal) || name.StartsWith("Disassemble", StringComparison.Ordinal);
             if (f.FsmName == "Assemble" && Recon.Path(f.transform).IndexOf("Wiring", StringComparison.OrdinalIgnoreCase) >= 0) return name == "Finish assembly";
             return name == "Assemble" || name == "Connect";
@@ -135,12 +213,20 @@ namespace MWCoop
             foreach (Object value in Game.AllFsms())
             {
                 PlayMakerFSM f = value as PlayMakerFSM;
-                if (f == null || !Owns(f) || Game.UnderPlayer(f.transform) || f.hideFlags != HideFlags.None || !f.Fsm.Initialized) continue;
+                if (f == null || !Owns(f) || Game.UnderPlayer(f.transform) || f.hideFlags != HideFlags.None) continue;
+                if (!f.Fsm.Initialized)
+                {
+                    string path = Recon.Path(f.transform);
+                    if (!path.StartsWith("SATSUMA", StringComparison.Ordinal) && !path.StartsWith("CARPARTS/", StringComparison.Ordinal)) continue;
+                    // Load actions without activating a distant/hidden object or
+                    // entering its input states. Its first activation keeps hooks.
+                    f.Fsm.InitData();
+                }
                 Binding known;
                 if (byFsm.TryGetValue(f, out known)) { RefreshKey(known); continue; }
                 // Use.State 1 assigns a consumable's ID after Instantiate.
                 // Never freeze its temporary scene/hand path into the binding.
-                if (f.FsmName == "Removal" && MscBelt.IsBelt(f.gameObject) && IdOf(f.gameObject).Length == 0) continue;
+                if (f.FsmName == "Removal" && IdOf(f.gameObject).Length == 0) continue;
                 if (!Replay.Claim(f, "msc-parts")) continue;
                 Binding binding = new Binding { Key = Key(f), Fsm = f };
                 Binding previous;
@@ -168,6 +254,10 @@ namespace MWCoop
             FsmGameObject held = binding.Fsm.FsmVariables.FindFsmGameObject("Part");
             if (held != null && MscBelt.IsBelt(held.Value) && binding.MountState != null)
             {
+                GameObject parent = NativeAssembly.MountParent(new FsmBinding { Component = binding.Fsm }, binding.MountState);
+                // A previous belt leaves MountState behind. Merely holding a
+                // replacement must not bypass the native rotation requirements.
+                if (!MscBelt.Installed(held.Value) && (parent == null || held.Value.transform.parent != parent.transform)) return;
                 NativeAssembly.Complete(new FsmBinding { Component = binding.Fsm }, binding.MountState, held.Value);
                 if (!MscBelt.Installed(held.Value))
                 {
@@ -181,23 +271,48 @@ namespace MWCoop
                 }
                 return;
             }
-            foreach (FsmGameObject db in binding.Fsm.FsmVariables.GameObjectVariables)
+            FsmState[] states = binding.Fsm.Fsm.States;
+            FsmState selected = binding.MountState == null ? null : binding.Fsm.Fsm.GetState(binding.MountState);
+            if (selected != null) states = new[] { selected };
+            foreach (FsmState state in states)
             {
-                if (!db.Name.StartsWith("db_ThisPart", StringComparison.Ordinal) || db.Value == null) continue;
-                PlayMakerFSM data = Game.FsmOn(db.Value, "Data");
-                FsmGameObject part = data == null ? null : data.FsmVariables.FindFsmGameObject("ThisPart");
+                PlayMakerFSM data = NativeAssembly.Database(binding.Fsm, state);
+                if (data != null && data.FsmVariables.FindFsmGameObject("ThisPart") == null)
+                {
+                    FsmBool installed = data.FsmVariables.FindFsmBool("Installed");
+                    if (installed != null && installed.Value)
+                    {
+                        // Chassis slots activate a built-in model and discard the
+                        // loose clone. Repair only visibility/vehicle behaviour;
+                        // replaying DestroyObject with the model would destroy it.
+                        Replay.Depth++;
+                        try
+                        {
+                            foreach (FsmStateAction action in state.Actions)
+                                if (action is HutongGames.PlayMaker.Actions.ActivateGameObject || action is HutongGames.PlayMaker.Actions.EnableBehaviour) action.OnEnter();
+                        }
+                        finally { Replay.Depth--; }
+                    }
+                    continue;
+                }
+                if (NativeAssembly.MountAction(state.Actions) == null) continue;
+                FsmGameObject part = data == null ? held : data.FsmVariables.FindFsmGameObject("ThisPart");
                 if (part == null || part.Value == null || part.Value.GetComponent<Rigidbody>() != null || !NativeAssembly.Installed(part.Value)) continue;
-                FsmState[] states = binding.Fsm.Fsm.States;
-                FsmState selected = binding.MountState == null ? null : binding.Fsm.Fsm.GetState(binding.MountState);
-                if (selected != null) states = new[] { selected };
-                foreach (FsmState state in states)
-                    if (NativeAssembly.MountAction(state.Actions) != null && NativeAssembly.BelongsToSlot(new FsmBinding { Component = binding.Fsm }, part.Value))
-                    { NativeAssembly.Complete(new FsmBinding { Component = binding.Fsm }, state.Name, part.Value); break; }
+                NativeAssembly.Complete(new FsmBinding { Component = binding.Fsm }, state.Name, part.Value);
             }
         }
         public static void Update()
         {
             if (!PlayerSync.InGame) return;
+            if (!leftHooked)
+            {
+                leftHooked = true;
+                Session.PlayerLeft += player => {
+                    foreach (PartState state in partStates.Values) state.Clock.ForgetActor(player.Id);
+                    foreach (Binding b in bindings.Values) b.Clock.ForgetActor(player.Id);
+                    foreach (MscEditClock clock in totalClocks.Values) clock.ForgetActor(player.Id);
+                };
+            }
             if (Time.realtimeSinceStartup >= nextScan) { nextScan = Time.realtimeSinceStartup + 3f; Scan(); }
             for (int i = 0; i < pending.Count; i++)
             {
@@ -213,9 +328,20 @@ namespace MWCoop
                 else
                 {
                     if (item.Part != null && NativeAssembly.Installed(item.Part)) RepairMount(item.Binding);
-                    Session.SendAll(new NetWriter(Msg.Part).U8(Session.LocalId).Str(item.Binding.Key).Str(item.State).Str(IdOf(item.Part)), true);
+                    if (item.Id.Length == 0 && item.Binding.Fsm.FsmName != "Assemble") continue;
+                    PartEdit edit = new PartEdit { Who = Session.LocalId, Key = item.Binding.Key, State = item.State, Id = item.Id };
+                    if (item.Binding.Fsm.FsmName == "Assembly" && !Installed(item.Id) || item.Binding.Fsm.FsmName == "Removal" && Installed(item.Id)) { StateFor(edit).Pending.Cancel(); continue; }
+                    PublishPart(edit);
                 }
             }
+            completedParts.Clear();
+            foreach (KeyValuePair<string, PartEdit> item in pendingParts)
+            {
+                if (TryPart(item.Value)) completedParts.Add(item.Key);
+                else if (Time.realtimeSinceStartup > item.Value.Until)
+                { Log.Warn("MSC assembly unavailable after retry: " + item.Value.Key + " / " + item.Value.Id); completedParts.Add(item.Key); }
+            }
+            foreach (string key in completedParts) pendingParts.Remove(key);
             finished.Clear();
             foreach (KeyValuePair<Fsm, Scope> item in remote)
             {
@@ -239,6 +365,16 @@ namespace MWCoop
                 else if (Time.realtimeSinceStartup > item.Value.Until) completedBolts.Add(item.Key);
             }
             foreach (string key in completedBolts) pendingBolts.Remove(key);
+            if (Session.IsHost && Session.Active && Time.realtimeSinceStartup >= nextPartSnapshot)
+            {
+                nextPartSnapshot = Time.realtimeSinceStartup + 3;
+                foreach (PartState state in partStates.Values)
+                {
+                    if (state.Edit == null || state.Clock.HostRevision <= 0) continue;
+                    ReconcileHost(state);
+                    Session.Broadcast(PartPacket(state.Edit, state.Clock.HostRevision), true);
+                }
+            }
             if (Session.IsHost && Session.Active && Time.realtimeSinceStartup >= nextBoltSnapshot)
             {
                 nextBoltSnapshot = Time.realtimeSinceStartup + 2;
@@ -247,29 +383,107 @@ namespace MWCoop
         }
         public static void OnPart(Peer from, NetReader reader)
         {
-            int who = reader.U8(); string key = reader.Str(), state = reader.Str(), id = reader.Str();
-            if (Session.IsHost) who = from.Id;
+            PartEdit edit = new PartEdit { Who = reader.U8(), Key = reader.Str(), State = reader.Str(), Id = reader.Str(), Revision = reader.I32(), ActorRevision = reader.I32(), Until = Time.realtimeSinceStartup + 60 };
+            edit.HasAngle = reader.Bool(); if (edit.HasAngle) edit.Angle = reader.F32();
+            if (edit.Revision <= 0 || edit.ActorRevision <= 0 || Session.IsHost && edit.ActorRevision != edit.Revision || reader.More) throw new ProtocolException("Invalid MSC assembly revision");
+            if (Session.IsHost) edit.Who = from.Id;
+            if (TryPart(edit)) return;
+            string address = Address(edit); PartEdit previous;
+            if (!pendingParts.TryGetValue(address, out previous) || Session.IsHost && edit.Who != previous.Who || edit.Revision > previous.Revision) pendingParts[address] = edit;
+        }
+        static string Address(PartEdit edit) { return edit.Id.Length > 0 ? edit.Id : edit.Key; }
+        static PartState StateFor(PartEdit edit)
+        {
+            string address = Address(edit); PartState state;
+            if (!partStates.TryGetValue(address, out state)) partStates[address] = state = new PartState();
+            return state;
+        }
+        static NetWriter PartPacket(PartEdit edit, int revision)
+        {
+            PlayMakerFSM db; FsmFloat angle = databases.TryGetValue(edit.Id, out db) && db != null ? db.FsmVariables.FindFsmFloat("Angle") : null;
+            NetWriter packet = new NetWriter(Msg.Part).U8(edit.Who).Str(edit.Key).Str(edit.State).Str(edit.Id).I32(revision).I32(edit.ActorRevision).Bool(angle != null);
+            if (angle != null) packet.F32(angle.Value);
+            return packet;
+        }
+        static void PublishPart(PartEdit edit)
+        {
+            PartState state = StateFor(edit); edit.Revision = state.Clock.Publish(Session.IsHost); state.Edit = edit;
+            edit.ActorRevision = edit.Revision;
+            if (!Session.IsHost) state.Pending.Sent(edit.ActorRevision);
+            MscTuning.RestoreTiming(Find(edit.Id), false);
+            Session.SendAll(PartPacket(edit, edit.Revision), true);
+        }
+        static void ReconcileHost(PartState state)
+        {
+            PartEdit edit = state.Edit; Binding source;
+            if (!databases.ContainsKey(edit.Id) || !bindings.TryGetValue(edit.Key, out source) || source.Fsm == null) return;
+            bool installed = Installed(edit.Id);
+            if (installed == (source.Fsm.FsmName == "Assembly")) return;
+            Binding actual = null; string nativeState = null;
+            foreach (Binding b in bindings.Values)
+            {
+                if (b.Fsm == null) continue;
+                if (!installed && b.Fsm.FsmName == "Removal" && IdOf(b.Fsm.gameObject) == edit.Id)
+                { actual = b; nativeState = "Remove part"; break; }
+                if (installed && b.Fsm.FsmName == "Assembly") foreach (FsmState s in b.Fsm.FsmStates)
+                {
+                    if (!ActionState(b.Fsm, s)) continue;
+                    PlayMakerFSM db = NativeAssembly.Database(b.Fsm, s);
+                    if (db != null && "mscdb:" + Parts.RankPath(db.transform) == edit.Id) { actual = b; nativeState = s.Name; break; }
+                }
+                if (actual != null) break;
+            }
+            if (actual != null)
+            {
+                int revision = state.Clock.Publish(true);
+                state.Edit = new PartEdit { Who = Session.LocalId, Key = actual.Key, State = nativeState, Id = edit.Id, Revision = revision, ActorRevision = revision };
+            }
+        }
+        static bool TryPart(PartEdit edit)
+        {
+            string key = edit.Key, state = edit.State, id = edit.Id;
             Binding binding;
-            if (!bindings.TryGetValue(key, out binding) || binding.Fsm == null) { Scan(); bindings.TryGetValue(key, out binding); }
+            bindings.TryGetValue(key, out binding);
             GameObject part = Find(id);
             if ((binding == null || binding.Fsm == null) && MscBelt.IsBelt(part))
             {
                 // Removal is addressed by the numbered item as well as the FSM
                 // key, including an item that was initialized after the scan.
-                PlayMakerFSM removal = Game.FsmOn(part, "Removal");
-                if (removal != null) byFsm.TryGetValue(removal, out binding);
+                PlayMakerFSM beltRemoval = Game.FsmOn(part, "Removal");
+                if (beltRemoval != null) byFsm.TryGetValue(beltRemoval, out binding);
             }
-            if (binding == null || binding.Fsm == null) throw new ProtocolException("Unknown MSC assembly point: " + key + " (part " + id + ")");
+            if (binding == null || binding.Fsm == null) return false;
             FsmState native = binding.Fsm.Fsm.GetState(state);
             if (native == null || !ActionState(binding.Fsm, native) || IsBolt(binding.Fsm)) throw new ProtocolException("Invalid MSC assembly state");
-            if (binding.Fsm.FsmName == "Assembly" && (part == null || !NativeAssembly.Accepts(binding.Fsm.FsmVariables.StringVariables, MscBelt.IsBelt(part) ? "alternator belt(Clone)" : part.name))) throw new ProtocolException("Incorrect MSC part");
-            if (binding.Fsm.FsmName == "Assembly" && (NativeAssembly.Installed(part) || MscBelt.Installed(part))) { RepairMount(binding); return; }
+            bool assembly = binding.Fsm.FsmName == "Assembly", removal = binding.Fsm.FsmName == "Removal";
+            PlayMakerFSM db = assembly ? NativeAssembly.Database(binding.Fsm, native) : null;
+            if ((assembly || removal) && part == null) return false;
+            if (assembly && db != null && id != "mscdb:" + Parts.RankPath(db.transform)) throw new ProtocolException("Incorrect MSC database part for " + key);
+            if (assembly && db == null && (part == null || !(NativeAssembly.Accepts(binding.Fsm, part) || MscBelt.IsBelt(part) && NativeAssembly.Accepts(binding.Fsm.FsmVariables.StringVariables, "alternator belt(Clone)")))) throw new ProtocolException("Incorrect MSC part for " + key);
+            if (removal && IdOf(binding.Fsm.gameObject) != id) throw new ProtocolException("Incorrect MSC removal part");
+            PartState accepted = StateFor(edit);
+            if (!Session.IsHost && !accepted.Pending.PermitSnapshot(edit.Who == Session.LocalId, edit.ActorRevision)) return true;
+            bool fresh = Session.IsHost ? accepted.Clock.AcceptRequest(edit.Who, edit.Revision) : accepted.Clock.AcceptSnapshot(edit.Revision);
+            if (!fresh && (Session.IsHost || edit.Revision != accepted.Clock.HostRevision || !(assembly || removal))) return true;
+            accepted.Edit = edit;
+            PlayMakerFSM angleDb;
+            if (fresh && edit.HasAngle && databases.TryGetValue(id, out angleDb) && angleDb != null)
+            {
+                FsmFloat angle = angleDb.FsmVariables.FindFsmFloat("Angle");
+                if (angle != null) angle.Value = edit.Angle;
+            }
             if (binding.Fsm.FsmName == "Assembly") binding.MountState = state;
-            FsmGameObject variable = binding.Fsm.FsmVariables.FindFsmGameObject("Part"); if (variable != null && part != null) variable.Value = part;
-            Execute(binding.Fsm, state);
+            if (assembly && part != null) part.SetActive(true);
+            if (!(assembly && Installed(id) || removal && !Installed(id)))
+            {
+                FsmGameObject variable = binding.Fsm.FsmVariables.FindFsmGameObject("Part"); if (assembly && variable != null) variable.Value = part;
+                Execute(binding.Fsm, state);
+            }
             if (binding.Fsm.FsmName == "Assembly") repairs[binding] = Time.realtimeSinceStartup + 3;
             RepairMount(binding);
-            if (Session.IsHost) Session.Broadcast(new NetWriter(Msg.Part).U8(who).Str(key).Str(state).Str(id), true, who);
+            if (fresh && edit.HasAngle) MscTuning.RestoreTiming(Find(id), assembly);
+            if (Session.IsHost) Session.Broadcast(PartPacket(edit, accepted.Clock.Publish(true)), true);
+            return true;
         }
         public static void OnBolt(Peer from, NetReader reader)
         {
@@ -295,8 +509,9 @@ namespace MWCoop
         }
         static BoltTotal TotalOf(PlayMakerFSM f)
         {
-            FsmState wait = f.Fsm.GetState("Wait 3"); if (wait == null) return null;
-            foreach (FsmStateAction action in wait.Actions)
+            // Oil filters use Wait; ordinary fasteners use Wait 3. The native
+            // target, rather than the state label, identifies the saved total.
+            foreach (FsmState state in f.FsmStates) foreach (FsmStateAction action in state.Actions)
             {
                 var add = action as HutongGames.PlayMaker.Actions.AddFsmFloat;
                 if (add == null || add.variableName.Value != "Tightness") continue;
@@ -366,7 +581,11 @@ namespace MWCoop
         {
             PatchActions(f); remote[f.Fsm] = new Scope { Until = Time.realtimeSinceStartup + 2 };
             Replay.Depth++;
-            try { if (!Game.SetState(f, state)) throw new InvalidOperationException("MSC native state missing: " + state); }
+            try
+            {
+                if (f.FsmName == "Assembly") NativeAssembly.PrepareJoint(f, state);
+                if (!Game.SetState(f, state)) throw new InvalidOperationException("MSC native state missing: " + state);
+            }
             finally { Replay.Depth--; }
         }
         static void PatchActions(PlayMakerFSM f)
@@ -427,7 +646,7 @@ namespace MWCoop
                 part.transform.position = binding.Fsm.transform.position;
                 binding.MountState = "Assemble"; Execute(binding.Fsm, "Assemble");
                 repairs[binding] = Time.realtimeSinceStartup + 3;
-                Session.Broadcast(new NetWriter(Msg.Part).U8(Session.LocalId).Str(binding.Key).Str("Assemble").Str(IdOf(part)), true); return;
+                PublishPart(new PartEdit { Who = Session.LocalId, Key = binding.Key, State = "Assemble", Id = IdOf(part) }); return;
             }
             throw new InvalidOperationException("MSC starter native binding not found");
         }
@@ -441,7 +660,7 @@ namespace MWCoop
             if (NativeAssembly.Installed(part)) return "driver seat already mounted";
             foreach (Binding binding in bindings.Values)
             {
-                if (binding.Fsm == null || binding.Fsm.FsmName != "Assembly" || !NativeAssembly.Accepts(binding.Fsm.FsmVariables.StringVariables, part.name)) continue;
+                if (binding.Fsm == null || binding.Fsm.FsmName != "Assembly" || !NativeAssembly.Accepts(binding.Fsm, part)) continue;
                 foreach (FsmState native in binding.Fsm.FsmStates)
                 {
                     if (!ActionState(binding.Fsm, native) || NativeAssembly.MountAction(native.Actions) == null) continue;
@@ -450,7 +669,7 @@ namespace MWCoop
                     binding.MountState = native.Name; Execute(binding.Fsm, native.Name);
                     if (!NativeAssembly.Installed(part)) continue;
                     repairs[binding] = Time.realtimeSinceStartup + 3;
-                    Session.Broadcast(new NetWriter(Msg.Part).U8(Session.LocalId).Str(binding.Key).Str(native.Name).Str(IdOf(part)), true);
+                    PublishPart(new PartEdit { Who = Session.LocalId, Key = binding.Key, State = native.Name, Id = IdOf(part) });
                     return "driver seat via native " + native.Name + ", installed=True";
                 }
             }
@@ -465,7 +684,7 @@ namespace MWCoop
             if (NativeAssembly.Installed(part)) return partName + ": already installed";
             foreach (Binding binding in bindings.Values)
             {
-                if (binding.Fsm == null || binding.Fsm.FsmName != "Assembly" || !NativeAssembly.Accepts(binding.Fsm.FsmVariables.StringVariables, part.name)) continue;
+                if (binding.Fsm == null || binding.Fsm.FsmName != "Assembly" || !NativeAssembly.Accepts(binding.Fsm, part)) continue;
                 List<FsmState> candidates = new List<FsmState>(binding.Fsm.FsmStates);
                 candidates.Sort((a, b) => a.Name == "Assemble" ? -1 : b.Name == "Assemble" ? 1 : string.CompareOrdinal(a.Name, b.Name));
                 foreach (FsmState state in candidates)
@@ -476,7 +695,7 @@ namespace MWCoop
                     binding.MountState = state.Name; Execute(binding.Fsm, state.Name);
                     if (!NativeAssembly.Installed(part)) continue;
                     repairs[binding] = Time.realtimeSinceStartup + 3;
-                    Session.Broadcast(new NetWriter(Msg.Part).U8(Session.LocalId).Str(binding.Key).Str(state.Name).Str(IdOf(part)), true);
+                    PublishPart(new PartEdit { Who = Session.LocalId, Key = binding.Key, State = state.Name, Id = IdOf(part) });
                     return partName + ": installed through " + state.Name;
                 }
             }

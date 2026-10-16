@@ -2,6 +2,23 @@ using System.Collections.Generic;
 
 namespace MWCoop
 {
+    // An old repair snapshot must not cancel a native action before its request
+    // is sent, or acknowledge a newer action using an earlier actor sequence.
+    public sealed class MscPendingPartEdit
+    {
+        bool native;
+        int sent;
+        public void Begin() { native = true; }
+        public void Cancel() { native = false; }
+        public void Sent(int revision) { native = false; sent = revision; }
+        public bool PermitSnapshot(bool mine, int actorRevision)
+        {
+            if (native) return false;
+            if (sent == 0) return true;
+            if (!mine || actorRevision < sent) return false;
+            sent = 0; return true;
+        }
+    }
     // Reliable UDP can deliver retransmissions out of order. Each actor's edit
     // sequence is checked by the host; observers follow the host's sequence.
     public sealed class MscEditClock

@@ -29,7 +29,7 @@ namespace MWCoop.Net
     // Session coop : l'hote fait autorite et relaie tout. [Coop] Mode=solo|hote|invite.
     public static class Session
     {
-        public const int NetVersion = 1045;   // MSC 0.4.1: shared sleep, island objects and clock minutes.
+        public const int NetVersion = 1046;   // MSC: versioned assembly, chassis replacement parts and timing marks.
         static readonly HashSet<int> authenticated = new HashSet<int>();
         public static Transport T;
         public static bool Active, IsHost;
