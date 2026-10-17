@@ -1,0 +1,44 @@
+SummerCoop 0.4.7 workshop regression
+Run: bolt-positions-workshop-047
+This run preceded changes limited to the directed position QA assertions; gameplay code is identical.
+The final payload is verified separately in BOLT-POSITIONS-RESULTS.txt.
+host ModVersion=0.4.7
+host NetVersion=1047
+host ModMvid=1eb92241-2851-4807-95df-47407cac9443
+host Workshop=0;Role=observer;Tuners=22;Bolts=87;Fields=685;Mismatches=0;WrongStages=0;WrongBolted=0
+host BoltRepairRace=0;Attempts=0;LostTurns=0
+host Workshop=1;Role=actor;Tuners=22;Bolts=87;Fields=685;Mismatches=0;WrongStages=0;WrongBolted=0
+host BoltRepairRace=1;Attempts=0;LostTurns=0
+host Workshop=2;Role=actor;Tuners=22;Bolts=87;Fields=685;Mismatches=0;WrongStages=0;WrongBolted=0
+host BoltRepairRace=2;Attempts=0;LostTurns=0
+host Workshop=3;Role=observer;Tuners=22;Bolts=87;Fields=685;Mismatches=0;WrongStages=0;WrongBolted=0
+host BoltRepairRace=3;Attempts=0;LostTurns=0
+host Workshop=4;Role=observer;Tuners=22;Bolts=87;Fields=685;Mismatches=0;WrongStages=0;WrongBolted=0
+host BoltRepairRace=4;Attempts=0;LostTurns=0
+host Wiring=0;Role=observer;Connections=13;Installed=24;Databases=29;Fields=87;Mismatches=0;Failed=0;TerminalBolts=3;LooseTerminals=0
+host Wiring=1;Role=actor;Connections=13;Installed=29;Databases=29;Fields=87;Mismatches=0;Failed=0;TerminalBolts=3;LooseTerminals=0
+host WorkshopSave=Floats=28;WireFlags=56;BeltFlags=2;Mismatches=0
+host Belt=blocked;Role=observer;Installed=0;Rotation=6.00000668;Locked=False;Fields=11;Mismatches=0;StateErrors=0
+host Belt=mounted;Role=observer;Installed=1;Rotation=6.000011;Locked=True;Fields=11;Mismatches=0;StateErrors=0
+host Belt=removed;Role=actor;Installed=0;Rotation=2.50001287;Locked=False;Fields=11;Mismatches=0;StateErrors=0
+host tested SHA256 2C3C4AAB69A69E149A182999C40C61336FCA1E5DF5836150B117CEDA3FDDBDF4
+client ModVersion=0.4.7
+client NetVersion=1047
+client ModMvid=1eb92241-2851-4807-95df-47407cac9443
+client Workshop=0;Role=actor;Tuners=22;Bolts=87;Fields=685;Mismatches=0;WrongStages=0;WrongBolted=0
+client BoltRepairRace=0;Attempts=21;LostTurns=0
+client Workshop=1;Role=observer;Tuners=22;Bolts=87;Fields=685;Mismatches=0;WrongStages=0;WrongBolted=0
+client BoltRepairRace=1;Attempts=21;LostTurns=0
+client Workshop=2;Role=observer;Tuners=22;Bolts=87;Fields=685;Mismatches=0;WrongStages=0;WrongBolted=0
+client BoltRepairRace=2;Attempts=21;LostTurns=0
+client Workshop=3;Role=actor;Tuners=22;Bolts=87;Fields=685;Mismatches=0;WrongStages=0;WrongBolted=0
+client BoltRepairRace=3;Attempts=87;LostTurns=0
+client Workshop=4;Role=actor;Tuners=22;Bolts=87;Fields=685;Mismatches=0;WrongStages=0;WrongBolted=0
+client BoltRepairRace=4;Attempts=174;LostTurns=0
+client Wiring=0;Role=actor;Connections=13;Installed=24;Databases=29;Fields=87;Mismatches=0;Failed=0;TerminalBolts=3;LooseTerminals=0
+client Wiring=1;Role=observer;Connections=13;Installed=29;Databases=29;Fields=87;Mismatches=0;Failed=0;TerminalBolts=3;LooseTerminals=0
+client Belt=blocked;Role=actor;Installed=0;Rotation=6.00000668;Locked=False;Fields=11;Mismatches=0;StateErrors=0
+client Belt=mounted;Role=actor;Installed=1;Rotation=6.000011;Locked=True;Fields=11;Mismatches=0;StateErrors=0
+client Belt=removed;Role=observer;Installed=0;Rotation=2.50001287;Locked=False;Fields=11;Mismatches=0;StateErrors=0
+client tested SHA256 2C3C4AAB69A69E149A182999C40C61336FCA1E5DF5836150B117CEDA3FDDBDF4
+Original single-player save files unchanged: 5

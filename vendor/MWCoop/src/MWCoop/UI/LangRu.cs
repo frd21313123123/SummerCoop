@@ -7,6 +7,11 @@ namespace MWCoop
     {
         public static readonly Dictionary<string, string> Table = new Dictionary<string, string>
         {
+            { "Restore bolt positions", "Вернуть болты на место" },
+            { "Restore bolt positions locally without changing tightness.", "Возвращает болты на место у вас, сохраняя текущую затяжку." },
+            { "Bolt positions restored: ", "Восстановлено болтов: " },
+            { "; failed: ", "; ошибок: " },
+            { "Load the game first.", "Сначала загрузите игру." },
             { "Tool cases", "Ящики с инструментами" },
             { "Spawn cases in front of you. Everyone in the session sees them.", "Ящики появляются перед вами и видны всем участникам сессии." },
             { "Cases in this session: ", "Ящиков в этой сессии: " },

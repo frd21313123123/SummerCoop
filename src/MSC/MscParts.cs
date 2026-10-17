@@ -79,7 +79,7 @@ namespace MWCoop
             foreach (var row in rows) lines.Add(row.Key + "\t" + row.Value);
             return lines.ToArray();
         }
-        public static void Reset() { parts.Clear(); ids.Clear(); modelKeys.Clear(); databases.Clear(); databaseCache.Clear(); modelCache.Clear(); MscRepairCache.Clear(); changedRoots.Clear(); changedSet.Clear(); changedStack.Clear(); scanFsms = null; scanCursor = scanPhase = 0; keyGeneration++; partStates.Clear(); pendingParts.Clear(); completedParts.Clear(); bindings.Clear(); byFsm.Clear(); hooked.Clear(); pending.Clear(); pendingBolts.Clear(); completedBolts.Clear(); totalClocks.Clear(); totalPending.Clear(); repairs.Clear(); remote.Clear(); nextScan = nextBoltSnapshot = nextPartSnapshot = 0; localBoltRevision = hostBoltRevision = 0; }
+        public static void Reset() { MscBoltPositions.Reset(); parts.Clear(); ids.Clear(); modelKeys.Clear(); databases.Clear(); databaseCache.Clear(); modelCache.Clear(); MscRepairCache.Clear(); changedRoots.Clear(); changedSet.Clear(); changedStack.Clear(); scanFsms = null; scanCursor = scanPhase = 0; keyGeneration++; partStates.Clear(); pendingParts.Clear(); completedParts.Clear(); bindings.Clear(); byFsm.Clear(); hooked.Clear(); pending.Clear(); pendingBolts.Clear(); completedBolts.Clear(); totalClocks.Clear(); totalPending.Clear(); repairs.Clear(); remote.Clear(); nextScan = nextBoltSnapshot = nextPartSnapshot = 0; localBoltRevision = hostBoltRevision = 0; }
         public static bool Owns(PlayMakerFSM f)
         {
             return f != null && !MscBrewing.Owns(f) && (f.FsmName == "Assembly" || f.FsmName == "Removal" || f.FsmName == "Assemble" && Recon.Path(f.transform).IndexOf("Wiring", StringComparison.OrdinalIgnoreCase) >= 0 || IsBolt(f));
@@ -238,6 +238,7 @@ namespace MWCoop
                         if (Binding.Fsm.FsmName == "Removal") part = Binding.Fsm.gameObject;
                         if (Binding.Fsm.FsmName == "Assembly") Binding.MountState = StateName;
                         bool bolt = IsBolt(Binding.Fsm);
+                        if (bolt) MscBoltPositions.Prepare(Binding.Fsm);
                         if (bolt && !Session.IsHost)
                         {
                             Binding.PendingBolt.Begin();
@@ -339,7 +340,7 @@ namespace MWCoop
                     if (!ActionState(f, state)) continue;
                     List<FsmStateAction> actions = new List<FsmStateAction>(state.Actions); actions.Insert(0, new Hook { Binding = binding, StateName = state.Name }); state.Actions = actions.ToArray(); installed = true;
                 }
-                if (installed) { bindings[binding.Key] = binding; byFsm[f] = binding; hooked.Add(f); PatchActions(f); if (IsBolt(f)) binding.Total = TotalOf(f); RepairMount(binding); }
+                if (installed) { bindings[binding.Key] = binding; byFsm[f] = binding; hooked.Add(f); PatchActions(f); if (IsBolt(f)) { MscBoltPositions.Prepare(f); binding.Total = TotalOf(f); } RepairMount(binding); }
         }
         static void RefreshKey(Binding binding)
         {
@@ -703,11 +704,15 @@ namespace MWCoop
                 // Tightness has native clamps and exceptions (alternator pivot),
                 // so it follows the actor's actual total, not a sum of deltas.
                 stage.Value = target;
+                // InitData does not run Save data 2 on hidden/distant bolts.
+                // Resolve the native mesh/name/index before writing its saved slot.
+                MscBoltPositions.Restore(binding.Fsm);
                 HashSet<string> visited = new HashSet<string>(StringComparer.Ordinal);
                 for (int hop = 0; pose != null && hop < 6 && visited.Add(pose.Name); hop++)
                 {
                     foreach (FsmStateAction action in pose.Actions)
-                        if (action != null && !(action is ModHook) && !action.GetType().Name.StartsWith("GetMouse", StringComparison.Ordinal)
+                        if (action != null && !(action is ModHook) && !(action is HutongGames.PlayMaker.Actions.SetPosition)
+                            && !(action is HutongGames.PlayMaker.Actions.SetRotation) && !action.GetType().Name.StartsWith("GetMouse", StringComparison.Ordinal)
                             && action.GetType().Name != "GetAxis" && action.GetType().Name != "MousePickEvent") action.OnEnter();
                     string next = null;
                     foreach (FsmTransition t in pose.Transitions) if (t.EventName == "FINISHED") { next = t.ToState; break; }

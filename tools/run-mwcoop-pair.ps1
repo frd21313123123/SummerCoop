@@ -3,7 +3,7 @@ param([ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9_-]{0,48}$')][string]$Run = ('mwco
     [ValidateRange(320,7680)][int]$Width = 640, [ValidateRange(240,4320)][int]$Height = 480,
     [ValidateSet('Local','Host','Client')][string]$Role = 'Local', [string]$JoinAddress = '127.0.0.1',
     [ValidatePattern('^[a-zA-Z0-9_-]+$')][string[]]$ExtraClientGames,
-    [string]$BuildDirectory, [string]$SeedProfile, [switch]$Optimization, [switch]$PartsProfile, [switch]$ToolCases, [switch]$ToolCaseMenu, [ValidateSet('Host','Guest')][string]$ActionActor = 'Host')
+    [string]$BuildDirectory, [string]$SeedProfile, [switch]$Optimization, [switch]$PartsProfile, [switch]$ToolCases, [switch]$ToolCaseMenu, [switch]$BoltPositions, [ValidateSet('Host','Guest')][string]$ActionActor = 'Host')
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $local = Join-Path $root '.local'
@@ -12,7 +12,7 @@ $BuildDirectory = (Resolve-Path -LiteralPath $BuildDirectory).Path
 if ($SeedProfile) { $SeedProfile = (Resolve-Path -LiteralPath $SeedProfile).Path }
 if ($PartsProfile -and !$Performance) { throw 'Parts profiling requires passive performance mode.' }
 if ($Performance) {
-    if ($Actions -or $Vehicles -or $Garage -or $Workshop -or $Platforms -or $Activities -or $Regression -or $Assembly -or $Carrier -or $Optimization) { throw 'Performance mode cannot run functional probes.' }
+    if ($Actions -or $Vehicles -or $Garage -or $Workshop -or $Platforms -or $Activities -or $Regression -or $Assembly -or $Carrier -or $Optimization -or $BoltPositions) { throw 'Performance mode cannot run functional probes.' }
     if (!$PSBoundParameters.ContainsKey('Duration')) { $Duration = 600 }
     if (!$PSBoundParameters.ContainsKey('Width')) { $Width = 2560 }
     if (!$PSBoundParameters.ContainsKey('Height')) { $Height = 1440 }
@@ -118,6 +118,7 @@ foreach ($instance in $instances) {
     if ($Optimization) { $arguments += ' --summercoop-test-optimization yes' }
     if ($ToolCases) { $arguments += ' --summercoop-test-toolcases yes' }
     if ($ToolCaseMenu) { $arguments += ' --summercoop-test-toolcases-menu yes' }
+    if ($BoltPositions) { $arguments += ' --summercoop-test-bolt-positions yes' }
     if ($Actions) { $arguments += ' --summercoop-test-actions yes' }
     if ($ActionActor -eq 'Guest') { $arguments += ' --summercoop-test-action-actor guest' }
     if ($Assembly) { $arguments += ' --summercoop-test-assembly-channel "' + $assemblyChannel + '"' }

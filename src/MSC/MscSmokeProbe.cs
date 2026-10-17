@@ -32,6 +32,7 @@ namespace MWCoop
             {
                 frames.Add(Time.unscaledDeltaTime * 1000);
                 if (Time.realtimeSinceStartup - readyAt > 6) MscToolCaseProbe.Update();
+                MscBoltPositionProbe.Update();
                 if (!chatSent) { chatSent = true; Chat.Send("MSC smoke " + (Session.IsHost ? "host" : "guest")); }
                 if (Time.realtimeSinceStartup - readyAt > 3)
                     try { MscOptimizationProbe.Update(); }
@@ -116,6 +117,7 @@ namespace MWCoop
             report.AddRange(MscAssemblyProbe.Results);
             report.AddRange(MscCarrierProbe.Results);
             report.AddRange(MscToolCaseProbe.Results);
+            report.AddRange(MscBoltPositionProbe.Results);
             report.AddRange(MscOptimizationProbe.Results);
             report.Add("PartsDiscoveryPending=" + MscParts.DiscoveryPending + ";Age=" + MscParts.DiscoveryAge.ToString("F2", CultureInfo.InvariantCulture));
             foreach (string failure in MscRuntime.Failures) report.Add("ModuleError=" + failure);

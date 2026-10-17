@@ -448,6 +448,12 @@ namespace MWCoop
             Open = true; ChatOpen = false; CheatPanel.Open = WalletPanel.Open = MapPanel.Open = false;
             openedAt = Time.realtimeSinceStartup; SetTab(5); sel = 0;
         }
+        internal static void TestBoltPositionsButton()
+        {
+            if (MscRuntime.Argument("--summercoop-test-bolt-positions") != "yes") return;
+            Open = true; ChatOpen = false; CheatPanel.Open = WalletPanel.Open = MapPanel.Open = false;
+            openedAt = Time.realtimeSinceStartup; SetTab(3); sel = 0; Key(KeyCode.Return, false);
+        }
         static string toolCaseNote;
         static bool toolCaseNoteBad;
         static void ToolCaseResult(string error, string success)
@@ -705,6 +711,12 @@ namespace MWCoop
         // Audit de la synchro : ecarts durables entre l'hote et les invites, actions locales non partagees.
         static void SyncTab()
         {
+            if (MscRuntime.Enabled)
+            {
+                if (Item(Lang.R("Restore bolt positions"), null, false, Lang.R("Restore bolt positions locally without changing tightness."), !PlayerSync.InGame) == 2)
+                    Hud.Toast(MscBoltPositions.RestoreAll());
+                Para(Lang.R("Restore bolt positions locally without changing tightness."), Style.Dim);
+            }
             if (Time.realtimeSinceStartup >= syncAt)
             {
                 syncAt = Time.realtimeSinceStartup + 0.5f;

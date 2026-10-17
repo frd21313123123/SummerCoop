@@ -1,0 +1,19 @@
+SummerCoop bolt position verification
+Run: bolt-positions-final-06
+host SHA256 7F0252E304FB29760EAE0685B41180FABEBC4D2524A761D444590EFD843943D7  SummerCoop.dll
+host SHA256 1AAD368A15B27F1881B6299B3F1DC195DAAC3F6908C59E97628FB7DFABF09E92  References/SummerCoop.Core.dll
+host ModVersion=0.4.7
+host NetVersion=1047
+host ModMvid=df894af0-3a69-4ca2-a7dc-c07c4b0fa695
+host BoltPositions=PASS;Bolts=26;Hidden=9;Suspension=8;Stages=234;Snapshots=0
+host BoltPositionsBulk=PASS;Восстановлено болтов: 356
+host BoltPositionsButton=PASS
+client SHA256 7F0252E304FB29760EAE0685B41180FABEBC4D2524A761D444590EFD843943D7  SummerCoop.dll
+client SHA256 1AAD368A15B27F1881B6299B3F1DC195DAAC3F6908C59E97628FB7DFABF09E92  References/SummerCoop.Core.dll
+client ModVersion=0.4.7
+client NetVersion=1047
+client ModMvid=df894af0-3a69-4ca2-a7dc-c07c4b0fa695
+client BoltPositions=PASS;Bolts=26;Hidden=9;Suspension=8;Stages=234;Snapshots=234
+client BoltPositionsBulk=PASS;Восстановлено болтов: 356
+client BoltPositionsButton=PASS
+Original save files unchanged: 5
