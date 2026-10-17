@@ -61,8 +61,13 @@ try {
     $start.CreateNoWindow = $true
     $start.RedirectStandardInput = $true
     $process = [Diagnostics.Process]::Start($start)
-    $process.StandardInput.WriteLine($env:SUMMERCOOP_REFS_PASSPHRASE)
-    $process.StandardInput.Close()
+    # Use bytes explicitly: .NET Framework's redirected StreamWriter and
+    # modern .NET use different defaults, including line endings for MSYS GPG.
+    $inputBytes = [Text.UTF8Encoding]::new($false).GetBytes($env:SUMMERCOOP_REFS_PASSPHRASE + "`n")
+    $inputStream = $process.StandardInput.BaseStream
+    $inputStream.Write($inputBytes, 0, $inputBytes.Length)
+    $inputStream.Flush()
+    $inputStream.Close()
     $process.WaitForExit()
     if ($process.ExitCode -ne 0) { throw 'Private reference encryption/decryption failed.' }
     $process.Dispose()

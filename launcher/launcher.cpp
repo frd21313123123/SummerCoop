@@ -5321,42 +5321,21 @@ static void ModEnsure(const std::wstring &dir)
         bool ok = WriteFile(f, data, size, &wr, NULL) && wr == size;
         CloseHandle(f);
         if (ok) {
-            MoveFileExW(tmp.c_str(), destPath.c_str(), MOVEFILE_REPLACE_EXISTING);
-            LaunchLog("ModEnsure: deployed resource %d -> %ls (%lu bytes)", resId, destPath.c_str(), size);
+            ok = MoveFileExW(tmp.c_str(), destPath.c_str(), MOVEFILE_REPLACE_EXISTING) != FALSE;
+            if (!ok) DeleteFileW(tmp.c_str());
+            else LaunchLog("ModEnsure: deployed resource %d -> %ls (%lu bytes)", resId, destPath.c_str(), size);
         } else {
             DeleteFileW(tmp.c_str());
         }
         return ok;
     };
 
-    deployResource(7, modsDir + L"SummerCoop.dll");
-    deployResource(8, refDir + L"SummerCoop.Core.dll");
+    // Embedded resources are authoritative after every launcher update.
+    // Adjacent files and developer build directories may contain older DLLs.
+    bool mod = deployResource(7, modsDir + L"SummerCoop.dll");
+    bool core = deployResource(8, refDir + L"SummerCoop.Core.dll");
+    if (!mod || !core) LaunchLog("ModEnsure: embedded payload deployment failed (mod=%d, core=%d)", (int)mod, (int)core);
 
-    std::vector<std::wstring> candidates = {
-        g_dir + L"SummerCoop.dll",
-        g_dir + L"Mods\\SummerCoop.dll",
-        g_dir + L"..\\build\\SummerCoop.dll"
-    };
-    for (const auto &src : candidates) {
-        if (FileExists(src)) {
-            std::wstring dst = modsDir + L"SummerCoop.dll";
-            if (!SameFile(src, dst)) CopyFileW(src.c_str(), dst.c_str(), FALSE);
-            break;
-        }
-    }
-    std::vector<std::wstring> refCandidates = {
-        g_dir + L"SummerCoop.Core.dll",
-        g_dir + L"References\\SummerCoop.Core.dll",
-        g_dir + L"Mods\\References\\SummerCoop.Core.dll",
-        g_dir + L"..\\build\\SummerCoop.Core.dll"
-    };
-    for (const auto &src : refCandidates) {
-        if (FileExists(src)) {
-            std::wstring dst = refDir + L"SummerCoop.Core.dll";
-            if (!SameFile(src, dst)) CopyFileW(src.c_str(), dst.c_str(), FALSE);
-            break;
-        }
-    }
 }
 
 static int SyncLaunchKind();   // (modsync.inc)
@@ -7969,6 +7948,33 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
         int ac = 0;
         wchar_t **av = CommandLineToArgvW(GetCommandLineW(), &ac);
         int result = UpdateCommand(ac, av);
+        if (ac >= 3 && !_wcsicmp(av[1], L"/test-mod-resources")) {
+            std::wstring game = WithSlash(av[2]);
+            ModEnsure(game);
+            return FileExists(game + L"Mods\\SummerCoop.dll") && FileExists(game + L"Mods\\References\\SummerCoop.Core.dll") ? 0 : 1;
+        }
+        // Metadata tests must never discover a real game or install DLLs.
+        {
+            int argc = ac;
+            wchar_t **argv = av;
+        // Essai du canal : /testmaj <releases.json> <journal> <version locale> -- version choisie (Stable, Nightly) et a installer ou non
+        if (argc >= 5 && !_wcsicmp(argv[1], L"/testmaj")) {
+            std::vector<unsigned char> d;
+            ReadAll(argv[2], d);
+            std::vector<Note> rel = ParseReleases(std::string(d.begin(), d.end()));
+            std::string o;
+            for (const Note &n : rel) o += Narrow(n.ver, CP_UTF8) + (n.pre ? " pre" : "") + (n.zip.empty() ? " sans paquet" : " " + Narrow(n.zip, CP_UTF8)) + "\r\n";
+            for (int nightly = 0; nightly < 2; nightly++) {
+                const Note *p = PickRelease(rel, nightly != 0);
+                std::wstring v = p ? p->ver : L"";
+                o += std::string(nightly ? "nightly" : "stable") + " : " + Narrow(v, CP_UTF8) + (p && WantVer(v, argv[4], nightly != 0) ? " a installer" : " rien") + " ; notes " + std::to_string(ChannelNotes(rel, nightly != 0).size()) + "\r\n";
+                o += "state=" + std::to_string(CheckResult(REL_OK, p, argv[4], nightly != 0)) + " offline=" + std::to_string(CheckResult(REL_OFFLINE, p, argv[4], nightly != 0)) + " page=" + (p ? Narrow(p->page, CP_UTF8) : "") + " exe=" + (p ? Narrow(p->exeUrl, CP_UTF8) : "") + " sha=" + (p ? Narrow(p->sha256, CP_UTF8) : "") + " checksum=" + (p ? Narrow(p->checksumUrl, CP_UTF8) : "") + "\r\n";
+            }
+            HANDLE f = CreateFileW(argv[3], GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, NULL);
+            if (f != INVALID_HANDLE_VALUE) { DWORD w; WriteFile(f, o.data(), (DWORD)o.size(), &w, NULL); CloseHandle(f); }
+            return 0;
+        }
+        }
         for (int i = 1; i < ac; ++i) {
             if (!_wcsicmp(av[i], L"/skip-auto-update")) { g_skipAutoUpdate = true; continue; }
             if (!_wcsicmp(av[i], L"/update-cleanup") && i + 2 < ac) { i += 2; continue; }
@@ -8084,23 +8090,6 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
         // Steam : invitation acceptee jeu ferme, lanceur demarre par l'option de lancement ("<SummerCoop-Launcher.exe>" %command%)
         if (!_wcsicmp(argv[i], L"+connect_lobby")) { g_sConnect = _wcstoui64(argv[i + 1], NULL, 10); g_steamNet = true; }
         if (!_wcsicmp(argv[i], L"/steam")) { g_testSteamFile = argv[i + 1]; g_steamNet = true; }   // essai : /testsalon ... /steam <fichier>
-    }
-    // Essai du canal : /testmaj <releases.json> <journal> <version locale> -- version choisie (Stable, Nightly) et a installer ou non
-    if (argc >= 5 && !_wcsicmp(argv[1], L"/testmaj")) {
-        std::vector<unsigned char> d;
-        ReadAll(argv[2], d);
-        std::vector<Note> rel = ParseReleases(std::string(d.begin(), d.end()));
-        std::string o;
-        for (const Note &n : rel) o += Narrow(n.ver, CP_UTF8) + (n.pre ? " pre" : "") + (n.zip.empty() ? " sans paquet" : " " + Narrow(n.zip, CP_UTF8)) + "\r\n";
-        for (int nightly = 0; nightly < 2; nightly++) {
-            const Note *p = PickRelease(rel, nightly != 0);
-            std::wstring v = p ? p->ver : L"";
-            o += std::string(nightly ? "nightly" : "stable") + " : " + Narrow(v, CP_UTF8) + (p && WantVer(v, argv[4], nightly != 0) ? " a installer" : " rien") + " ; notes " + std::to_string(ChannelNotes(rel, nightly != 0).size()) + "\r\n";
-            o += "state=" + std::to_string(CheckResult(REL_OK, p, argv[4], nightly != 0)) + " offline=" + std::to_string(CheckResult(REL_OFFLINE, p, argv[4], nightly != 0)) + " page=" + (p ? Narrow(p->page, CP_UTF8) : "") + " exe=" + (p ? Narrow(p->exeUrl, CP_UTF8) : "") + " sha=" + (p ? Narrow(p->sha256, CP_UTF8) : "") + " checksum=" + (p ? Narrow(p->checksumUrl, CP_UTF8) : "") + "\r\n";
-        }
-        HANDLE f = CreateFileW(argv[3], GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, NULL);
-        if (f != INVALID_HANDLE_VALUE) { DWORD w; WriteFile(f, o.data(), (DWORD)o.size(), &w, NULL); CloseHandle(f); }
-        return 0;
     }
     // Un lanceur deja ouvert prend le salon (un seul lanceur, Steam s'adresse a lui ensuite)
     if (g_sConnect && g_testSalon.empty()) {

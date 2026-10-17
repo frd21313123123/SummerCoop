@@ -150,5 +150,19 @@ if ($LASTEXITCODE) { throw 'Failed-launch recovery probe compilation failed.' }
 $stream = [IO.File]::Open($probe, [IO.FileMode]::Open)
 try { $stream.SetLength(600000) } finally { $stream.Dispose() }
 HandoffTest 'new process exits before startup acknowledgement' $false $probe $true
+$payloadDir = Join-Path $testDir 'embedded payload with stale adjacent DLLs'
+New-Item -ItemType Directory -Path $payloadDir -Force | Out-Null
+$payloadLauncher = Join-Path $payloadDir 'SummerCoop-Launcher.exe'
+Copy-Item -LiteralPath $LauncherPath -Destination $payloadLauncher -Force
+foreach ($name in @('SummerCoop.dll', 'SummerCoop.Core.dll')) { 'obsolete external payload' | Set-Content -LiteralPath (Join-Path $payloadDir $name) -Encoding ASCII }
+$fakeGame = Join-Path $payloadDir 'fake game'
+New-Item -ItemType Directory -Path $fakeGame -Force | Out-Null
+RunNative $payloadLauncher ('/test-mod-resources "' + $fakeGame + '"')
+foreach ($pair in @(@('SummerCoop.dll','Mods\SummerCoop.dll'), @('SummerCoop.Core.dll','Mods\References\SummerCoop.Core.dll'))) {
+    $expected = (Get-FileHash -LiteralPath (Join-Path $root ('build\' + $pair[0])) -Algorithm SHA256).Hash
+    $actual = (Get-FileHash -LiteralPath (Join-Path $fakeGame $pair[1]) -Algorithm SHA256).Hash
+    if ($expected -ne $actual) { throw 'Stale adjacent DLL replaced the embedded release payload.' }
+}
+$results.Add('PASS embedded release DLLs take priority over stale external DLLs')
 $results.Add("ALL $($results.Count) NATIVE UPDATE TESTS PASSED")
 $results | Tee-Object -FilePath (Join-Path $testDir 'test-results.txt')
