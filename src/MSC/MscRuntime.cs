@@ -22,7 +22,7 @@ namespace MWCoop
             "Ajouts", "Kauppa", "KauppaOsto", "KauppaVideo", "KauppaFilmi", "KauppaKalusteet",
             "MuseoRakennus", "Frost", "TeimoSled", "ModSecondMachtwagen", "ModMachtwagen300D",
             "ModRam1500", "ModJonne", "ModTowCart", "ModJackStands", "ModCheatbox", "MscMods",
-            "RayTracing", "Gfx", "Vin", "TaxiCustomer", "CutterHitch", "MapRender", "MapPanel", "Clearing"
+            "RayTracing", "Gfx", "Vin", "TaxiCustomer", "CutterHitch", "MapRender", "MapPanel", "Clearing", "Parked", "PhoneKeys", "Races", "Rally", "Kartturi"
         };
         sealed class Failure { public int Count; public float Retry; public string Message; }
         static readonly Dictionary<string, Failure> failures = new Dictionary<string, Failure>();

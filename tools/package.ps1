@@ -1,8 +1,14 @@
+param([string]$Version = '', [string]$GamePath = $env:SUMMERCOOP_GAME_PATH, [switch]$RebuildMod)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $model = Get-Content -LiteralPath (Join-Path $root 'src\Core\Model.cs') -Raw
 if ($model -notmatch 'ModVersion\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)"') { throw 'Unable to read the mod version.' }
-$version = $Matches[1]
+if (!$Version) { $Version = $Matches[1] }
+if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?(?:-[0-9A-Za-z.-]+)?$') { throw 'Invalid release version.' }
+if ($RebuildMod) {
+    if (!$GamePath) { throw 'A game reference directory is required to rebuild the mod.' }
+    & (Join-Path $PSScriptRoot 'build-mwcoop.ps1') -GamePath $GamePath -SkipTests
+}
 $buildDir = Join-Path $root 'build'
 New-Item -ItemType Directory -Path $buildDir -Force | Out-Null
 $modDll = Join-Path $buildDir 'SummerCoop.dll'
@@ -38,7 +44,7 @@ $zip = Join-Path $root ('dist\SummerCoop-' + $version + '.zip')
 Compress-Archive -LiteralPath (Join-Path $release 'Mods'),(Join-Path $release 'README.md'),(Join-Path $release 'LICENSE'),(Join-Path $release 'THIRD_PARTY_NOTICES.md'),(Join-Path $release 'vendor'),(Join-Path $release 'docs'),(Join-Path $release 'install.ps1'),(Join-Path $release 'SHA256.txt') -DestinationPath $zip -Force
 Write-Output $zip
 $launcherOutput = Join-Path $root ('dist\SummerCoop-Launcher-' + $version + '.exe')
-& (Join-Path $PSScriptRoot 'build-launcher.ps1') -PackagePath $release -OutputPath $launcherOutput
+& (Join-Path $PSScriptRoot 'build-launcher.ps1') -PackagePath $release -OutputPath $launcherOutput -Version $Version
 # The launcher is the only setup tool; keep its usual alias when possible. An
 # older open launcher must not prevent packaging a separately named update.
 $aliasPath = Join-Path (Join-Path $root 'dist') 'SummerCoop-Launcher.exe'

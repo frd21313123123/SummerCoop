@@ -2,15 +2,16 @@ name: Build and Release SummerCoop
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: summercoop-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 defaults:
   run:
@@ -20,10 +21,10 @@ jobs:
   core-tests:
     name: Protocol, network and update tests
     runs-on: windows-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
       - name: Compile core and run all tests without the game
@@ -34,73 +35,57 @@ jobs:
         run: ./tools/test-installer.ps1
       - name: Test launcher arguments, settings and Windows interface
         run: ./tools/test-launcher.ps1
-      - name: Test launcher self-update detection and parsing
+      - name: Test release selection, checksums and native EXE replacement
         run: ./tools/test-native-updates.ps1
-      - name: Add test report to the workflow summary
+      - name: Add test reports to the workflow summary
         if: always()
         run: |
           $fence = [string]([char]96) * 3
-          if (Test-Path -LiteralPath build/test-results.txt) {
-            @('Core test report', '', ($fence + 'text')) + @(Get-Content -LiteralPath build/test-results.txt) + @($fence) |
-              Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding UTF8
-          }
-          if (Test-Path -LiteralPath build/installer-tests/test-results.txt) {
-            @('', 'Installer test report', '', ($fence + 'text')) + @(Get-Content -LiteralPath build/installer-tests/test-results.txt) + @($fence) |
-              Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding UTF8
-          }
-          if (Test-Path -LiteralPath build/launcher-tests/test-results.txt) {
-            @('', 'Launcher test report', '', ($fence + 'text')) + @(Get-Content -LiteralPath build/launcher-tests/test-results.txt) + @($fence) |
-              Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding UTF8
-          }
-          if (Test-Path -LiteralPath build/native-update-tests/test-results.txt) {
-            @('', 'Update tests report', '', ($fence + 'text')) + @(Get-Content -LiteralPath build/native-update-tests/test-results.txt) + @($fence) |
-              Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding UTF8
+          foreach ($report in @('build/test-results.txt','build/mwcoop-network-tests/test-results.txt','build/installer-tests/test-results.txt','build/launcher-tests/test-results.txt','build/native-update-tests/test-results.txt')) {
+            if (Test-Path -LiteralPath $report) {
+              @($report, '', ($fence + 'text')) + @(Get-Content -LiteralPath $report) + @($fence, '') |
+                Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding UTF8
+            }
           }
 
   publish-release:
-    name: Build, Package and Publish Release
+    name: Compile full mod, package and publish
     needs: [core-tests]
-    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     permissions:
       contents: write
     steps:
       - name: Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
-
-      - name: Compile core mod and package standalone launcher
-        run: |
-          ./tools/package.ps1
-
-      - name: Verify launcher update tests
-        run: |
-          ./tools/test-native-updates.ps1 -LauncherPath SummerCoop-Launcher\SummerCoop-Launcher.exe
-
-      - name: Read version
+          persist-credentials: false
+      - name: Allocate a unique launcher version for this push
         id: version
-        run: |
-          $model = Get-Content -LiteralPath 'src\Core\Model.cs' -Raw
-          if ($model -match 'ModVersion\s*=\s*"([^"]+)"') { $ver = $Matches[1] } else { $ver = '0.4.6' }
-          Write-Host "SummerCoop version: $ver"
-          "VERSION=$ver" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "TAG=v$ver" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-
-      - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        run: ./tools/release-version.ps1
+      - name: Decrypt private game compilation references
+        env:
+          SUMMERCOOP_REFS_PASSPHRASE: ${{ secrets.SUMMERCOOP_REFS_PASSPHRASE }}
+        run: ./tools/ci-references.ps1 -Mode Unpack
+      - name: Compile both mod DLLs and the standalone launcher from this commit
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.VERSION }}
+        run: ./tools/package.ps1 -RebuildMod -GamePath build/ci-game -Version $env:RELEASE_VERSION
+      - name: Test the compiled MSC adapter
+        run: ./tools/test-msc-adapter.ps1 -GamePath build/ci-game
+      - name: Verify the actual release launcher
+        run: ./tools/test-native-updates.ps1 -LauncherPath SummerCoop-Launcher/SummerCoop-Launcher.exe
+      - name: Upload all assets to a draft, verify and publish
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ steps.version.outputs.TAG }}
-          target_commitish: ${{ github.sha }}
-          name: SummerCoop ${{ steps.version.outputs.VERSION }}
-          generate_release_notes: true
-          files: |
-            SummerCoop-Launcher/SummerCoop-Launcher.exe
-            SummerCoop-Launcher/SummerCoop-Launcher.exe.sha256
-            dist/SummerCoop-${{ steps.version.outputs.VERSION }}.zip
-            dist/SummerCoop-Launcher-${{ steps.version.outputs.VERSION }}.exe
-            dist/SummerCoop-${{ steps.version.outputs.VERSION }}-source.zip
-          fail_on_unmatched_files: false
+          RELEASE_VERSION: ${{ steps.version.outputs.VERSION }}
+        run: ./tools/publish-release.ps1 -Version $env:RELEASE_VERSION
+      - name: Remove decrypted build references
+        if: always()
+        run: |
+          $target = [IO.Path]::GetFullPath((Join-Path $env:GITHUB_WORKSPACE 'build'))
+          $workspace = [IO.Path]::GetFullPath($env:GITHUB_WORKSPACE) + [IO.Path]::DirectorySeparatorChar
+          if (!$target.StartsWith($workspace, [StringComparison]::OrdinalIgnoreCase)) { throw 'Unexpected cleanup path.' }
+          if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Recurse -Force }

@@ -111,7 +111,7 @@ namespace MWCoop
         };
 
         // Logique qu'une voiture qui renverse le PNJ declenche (ragdoll, magasin ferme) : rejouee chez tous.
-        static readonly string[] HitRoots = { "STORE_AREA/TeimoInSled" };
+        static readonly string[] HitRoots = new string[0]; // The sled belongs to MWC; MSC NPC collisions use their native logic.
         static readonly string[] HitStates = { "State 2", "Accident" };
 
         class Npc

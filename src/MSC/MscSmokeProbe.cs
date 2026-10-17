@@ -33,6 +33,8 @@ namespace MWCoop
                 frames.Add(Time.unscaledDeltaTime * 1000);
                 if (Time.realtimeSinceStartup - readyAt > 6) MscToolCaseProbe.Update();
                 MscBoltPositionProbe.Update();
+                try { MscShoppingProbe.Update(); }
+                catch (Exception e) { if (actionError.Length == 0) { actionError = e.ToString(); Log.Error("MSC shopping probe: " + e); } }
                 if (!chatSent) { chatSent = true; Chat.Send("MSC smoke " + (Session.IsHost ? "host" : "guest")); }
                 if (Time.realtimeSinceStartup - readyAt > 3)
                     try { MscOptimizationProbe.Update(); }
@@ -96,6 +98,7 @@ namespace MWCoop
             report.Add("Ready=" + ready); report.Add("Players=" + Session.Players.Count); report.Add("PartsBindings=" + MscParts.Count);
             report.Add("ReadyPlayers=" + readyPlayers); report.Add("Participants=" + participants);
             report.Add("ToolCases=" + MscToolCases.Count);
+            if (ready) report.Add("ShoppingWorldItems=" + MscShoppingProbe.WorldItems());
             report.Add("Vehicles=" + VehicleSync.Count); report.Add("WorldFsms=" + WorldFsms.Count);
             report.Add("SaveReceived=" + SaveTransfer.Received); report.Add("SaveDirectory=" + MscProfile.SaveDirectory);
             report.Add("LauncherConfig=" + Config.IniPath);

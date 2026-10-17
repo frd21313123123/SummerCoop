@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using HutongGames.PlayMaker;
 using MWCoop.Net;
@@ -57,11 +57,11 @@ namespace MWCoop
         static readonly string[] HelpFr = {
             "/tp <joueur> : aller à un joueur", "/amener <joueur> : faire venir un joueur", "/lieu <nom> : appartement, maison, pub, ville, port, garage, inspection, decharge, danse, cabane, chalet",
             "/argent <montant> : du liquide pour soi", "/soin : faim, soif, fatigue, stress, vessie, saleté à zéro", "/liberer : plus recherché, sorti de prison",
-            "/heure <0-24> : l'heure de tous", "/neige oui|non : neige (ou pluie) pour tous" };
+            "/heure <0-24> : l'heure de tous", "/pluie oui|non : pluie (ou neige) pour tous" };
         static readonly string[] HelpEn = {
             "/tp <player>: go to a player", "/bring <player>: bring a player to you", "/place <name>: apartment, home, pub, town, harbor, garage, inspection, landfill, dance, cottage, cabin",
             "/money <amount>: cash for yourself", "/heal: hunger, thirst, fatigue, stress, bladder, dirt to zero", "/free: no longer wanted, out of jail",
-            "/time <0-24>: everyone's time of day", "/snow on|off: snow (or rain) for everyone" };
+            "/time <0-24>: everyone's time of day", "/rain on|off: rain (or snow) for everyone" };
 
         // Commandes anglaises -> les noms d'ici.
         static string Canon(string c)
@@ -76,7 +76,7 @@ namespace MWCoop
                 case "heal": return "soin";
                 case "free": case "nojail": return "liberer";
                 case "time": return "heure";
-                case "snow": case "rain": case "pluie": case "meteo": case "weather": return "neige";
+                case "snow": case "rain": case "pluie": case "meteo": case "weather": case "neige": case "дождь": case "снег": return "pluie";
             }
             return c;
         }
@@ -154,11 +154,12 @@ namespace MWCoop
                     if (!Session.Active || Session.IsHost) SetHour(h);   // (invite : l'hote le fait, a l'annonce)
                     return null;
                 }
+                case "pluie":
                 case "neige":
                 {
                     bool? on = OnOff(arg);
-                    if (on == null) return Lang.T("/neige oui ou /neige non", "/snow on or /snow off");
-                    if (!Session.Active || Session.IsHost) SetSnow(on.Value);
+                    if (on == null) return Lang.T("/pluie oui ou /pluie non", "/rain on or /rain off");
+                    if (!Session.Active || Session.IsHost) SetRain(on.Value);
                     return null;
                 }
             }
@@ -178,7 +179,7 @@ namespace MWCoop
             string c = Canon(a[0].TrimStart('/').ToLowerInvariant()), arg = a.Length > 1 ? string.Join(" ", a, 1, a.Length - 1) : "";
             if (Session.IsHost && !Allowed) { Log.Warn("triches : " + name + " : " + line + " refusee (coupees ici)"); return; }
             if (Session.IsHost && c == "heure") { int h; if (int.TryParse(arg, out h) && h >= 0 && h <= 24) SetHour(h); }
-            if (Session.IsHost && c == "neige") { bool? on = OnOff(arg); if (on != null) SetSnow(on.Value); }
+            if (Session.IsHost && (c == "pluie" || c == "neige")) { bool? on = OnOff(arg); if (on != null) SetRain(on.Value); }
             if (c == "amener" && from != null)
             {
                 PlayerInfo me = FindPlayer(arg);
@@ -191,8 +192,8 @@ namespace MWCoop
         static bool? OnOff(string s)
         {
             s = s.Trim().ToLowerInvariant();
-            if (s == "oui" || s == "on" || s == "1" || s == "yes") return true;
-            if (s == "non" || s == "off" || s == "0" || s == "no") return false;
+            if (s == "oui" || s == "on" || s == "1" || s == "yes" || s == "да" || s == "вкл") return true;
+            if (s == "non" || s == "off" || s == "0" || s == "no" || s == "нет" || s == "выкл") return false;
             return null;
         }
 
@@ -253,21 +254,27 @@ namespace MWCoop
             Log.Info("triches : heure " + h);
         }
 
-        // Neige (ou pluie) : ce que l'automate Forecast::Logic pose chaque jour (Fudge) -- Snowing, l'objet des nuages de
-        // precipitation, et la pluie du joueur ; l'hote l'envoie aux invites (World). Jusqu'au tirage du jour suivant.
-        public static void SetSnow(bool on)
+        // Pluie (ou neige) : ce que l'automate Forecast::Logic / Clouds::Weather pose chaque jour (Fudge) --
+        // Snowing / Raining, l'objet des nuages de precipitation, et la pluie du joueur ; l'hote l'envoie aux invites (World).
+        public static void SetRain(bool on)
         {
-            PlayMakerFSM fc = Game.FindFsm("MAP/WEATHER/Forecast", "Logic");
+            PlayMakerFSM fc = Game.FindFsm("MAP/WEATHER/Forecast", "Logic")
+                ?? Game.FindFsm("MAP/CloudSystem/Forecast", "Logic")
+                ?? Game.FindFsm("MAP/CloudSystem/Clouds", "Weather");
             FsmBool sn = fc != null ? fc.FsmVariables.FindFsmBool("Snowing") : null;
             if (sn != null) sn.Value = on;
-            GameObject co = Game.FindAny("MAP/WEATHER/Clouds/CloudObjects");
+            MscWeather.Apply(fc, on);
+            GameObject co = Game.FindAny("MAP/WEATHER/Clouds/CloudObjects")
+                ?? Game.FindAny("MAP/CloudSystem/Clouds/CloudObjects");
             if (co != null) co.SetActive(on);
             GameObject rain = Game.PlayerPart("Rain");
             PlayMakerFSM rf = rain != null ? Game.FsmOn(rain, "Rain") : null;
             FsmBool ry = rf != null ? rf.FsmVariables.FindFsmBool("RainYes") : null;
             if (ry != null) ry.Value = on;
-            Log.Info("triches : neige " + (on ? "oui" : "non") + " (Snowing " + (sn != null) + ", nuages " + (co != null) + ", pluie " + (ry != null) + ")");
+            Log.Info("triches : pluie/neige " + (on ? "oui" : "non") + " (Forecast " + (fc != null) + ", nuages " + (co != null) + ", pluie " + (ry != null) + ")");
         }
+
+        public static void SetSnow(bool on) { SetRain(on); }
 
         // ---------------------------------------------------------------- police
         static readonly string[] CrimeInts = { "AttemptedManslaughter", "ManSlaughter", "PoliceEvasion", "TrafficFatality", "DaysAttemptedManslaughter", "DaysEvasion", "DaysFines", "DaysManslaughter", "DaysTrafficFatality", "DaysInJail", "Sentence" };

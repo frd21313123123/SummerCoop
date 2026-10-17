@@ -47,17 +47,12 @@ namespace MWCoop
         const int K_Bill = 0, K_Order = 1, K_Job = 2, K_Phone = 3;
         const int H_Find = 0, H_Hangup = 1, H_Hangup2 = 2, H_Create = 3, H_CheckHand = 4;
         const int MaxMsg = 1100, NoList = 255;
-        static readonly string[] LinePaths =
-        {
-            "HOMENEW/Functions/FunctionsDisable/Telephone/Phone/KeypadPhone2",
-            "YARD/Building/LIVINGROOM/Telephone 1/Phone/KeypadPhone1",
-            "JOBS/TAXIJOB/MACHTWAGEN/TaxiFunctions/Carphone/KeypadPhone2",
-        };
-        static readonly string[] LineNames = { "appartement", "parents", "taxi" };
+        // MSC has an incoming landline, without MWC apartment/taxi keypads.
+        static readonly string[] LinePaths = new string[0], LineNames = new string[0];
         static readonly string[] SpawnerPaths = { "CARPARTS/PARTSYSTEM/OrdersSpawnerYP", "CARPARTS/PARTSYSTEM/OrdersSpawnerAMIS" };
         static readonly string[] SpawnerLists = { "Save", "Order" };   // liste copiee dans la commande : annonce / bon de commande
         const string NumbersPath = "CARPARTS/PARTSYSTEM/PhoneNumbers", AmisListPath = "CARPARTS/PARTSYSTEM/PostSystem/AMISOrderList",
-                     PostBoxPath = "PERAPORTTI/ActiveFunctions/Post Box/OrderTrigger";
+                     PostBoxPath = "STORE/LOD/Post Box/OrderTrigger";
 
         class Bill { public string Path, Fsm, Var; public FsmFloat V; public float Start; }
         class Line { public string Name; public PlayMakerFSM F; public bool Hooked, InCall; public List<Bill> Bills; }
@@ -73,7 +68,7 @@ namespace MWCoop
             }
         }
 
-        static readonly Line[] lines = new Line[3];
+        static readonly Line[] lines = new Line[LinePaths.Length];
         static readonly PlayMakerFSM[] spawners = new PlayMakerFSM[2];
         static readonly bool[] spawnerHooked = new bool[2];
         static PlayMakerFSM amisList, postBox;
@@ -546,8 +541,8 @@ namespace MWCoop
         }
 
         // ---------------------------------------------------------------- appels entrants (logique de l'hote)
-        static readonly string[] LogicPaths = { "HOMENEW/Functions/FunctionsDisable/Telephone/Logic/PhoneLogicNEW", "YARD/Building/LIVINGROOM/Telephone 1/Logic/PhoneLogicOLD" };
-        static readonly string[] LogicNames = { "appartement", "parents" };
+        static readonly string[] LogicPaths = { "YARD/Building/LIVINGROOM/Telephone/Logic/PhoneLogic" };
+        static readonly string[] LogicNames = { "maison" };
         const float TakeDist = 25f, KeepDist = 60f, WarnDist = 20f;
         class Phone
         {
@@ -586,7 +581,7 @@ namespace MWCoop
             ringCapped = true;
             Log.Info("appels : sonnerie des telephones bornee a " + RingRange + " m (" + n + " sources)");
         }
-        static readonly Phone[] phones = new Phone[2];
+        static readonly Phone[] phones = new Phone[LogicPaths.Length];
         static float nextPhone, nextPhoneSend;
         static string phoneSig = "";
 

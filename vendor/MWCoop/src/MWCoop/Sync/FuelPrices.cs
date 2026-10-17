@@ -11,7 +11,7 @@ namespace MWCoop
     // L'hote envoie les siens (@carbu) quand ils changent et toutes les 15 s (arrivants) ; l'invite les pose partout.
     public static class FuelPrices
     {
-        static readonly string[] Vars = { "PriceGasoline", "PriceDiesel", "PriceFuelOil" };
+        static readonly string[] Vars = { "Price98", "PriceDiesel", "PriceFuelOil" };
         static PlayMakerFSM pylon;
         static readonly float[] sent = new float[3];
         static float next, resend;
@@ -21,7 +21,7 @@ namespace MWCoop
 
         static PlayMakerFSM Pylon()
         {
-            if (pylon == null) { GameObject g = Game.FindAny("PERAPORTTI/FuelPylon"); if (g != null) pylon = Game.FsmOn(g, "Fuelprices"); }
+            if (pylon == null) { GameObject g = Game.FindAny("STORE"); if (g != null) pylon = Game.FsmOn(g, "Fuelprices"); }
             return pylon;
         }
 
@@ -65,22 +65,11 @@ namespace MWCoop
                 FsmString s = f.FsmVariables.FindFsmString("S" + (i + 1));
                 if (s != null) s.Value = w[i].ToString("0.00");   // (comme ConvertFloatToString du jeu)
             }
-            if (!changed) return;
-            // Pompes (ce qu'elles font payer) et ecrans du pylone.
-            foreach (string pump in new[] { "Pump1", "Pump2", "Pump3", "Pump4", "Pump5", "Pump6" })
-            {
-                FsmGameObject pg = f.FsmVariables.FindFsmGameObject(pump);
-                PlayMakerFSM pf = pg != null && pg.Value != null ? Game.FsmOn(pg.Value, "Functions") : null;
-                if (pf == null) continue;
-                for (int i = 0; i < 3; i++) { FsmFloat pv = pf.FsmVariables.FindFsmFloat(Vars[i]); if (pv != null) pv.Value = w[i]; }
-            }
-            for (int m = 1; m <= 3; m++)
-            {
-                FsmGameObject mg = f.FsmVariables.FindFsmGameObject("PriceMonitor" + m);
-                PlayMakerFSM mf = mg != null && mg.Value != null ? Game.FsmOn(mg.Value, "SetPrice") : null;
-                if (mf != null && mf.enabled && mf.gameObject.activeInHierarchy) Game.SetState(mf, "State 1");   // (relit S1-S3, comme NEWPRICE)
-            }
-            if (logs++ < 10) Log.Info("carburant : prix de l'hote poses (essence " + w[0].ToString("F2") + ", diesel " + w[1].ToString("F2") + ", fioul " + w[2].ToString("F2") + ")");
+            // MSC's own state writes its price boards and Trigger98/D/PÖ FuelPrice.
+            // World's scalar snapshot can arrive first: the price may already
+            // match while the pump still needs this native propagation step.
+            Game.SetState(f, "Set table");
+            if (changed && logs++ < 10) Log.Info("carburant : prix de l'hote poses (essence " + w[0].ToString("F2") + ", diesel " + w[1].ToString("F2") + ", fioul " + w[2].ToString("F2") + ")");
         }
 
         // [Test] Autotest=carbu (2 joueurs) : a 30 s l'hote pose ses prix a 5,55 / 4,44 / 3,33 ; a 40 s chacun note ceux du

@@ -19,7 +19,7 @@
 //    le jeu sans sa ligne de commande), lance mysummercar.exe avec les memes reglages en arguments
 //    (-mwcoop-mode ...), puis reste en ecran d'attente jusqu'a la fenetre du jeu (UnityWndClass).
 //  - Options du joueur : MWCoop\mwcoop.ini, section [Coop] (Pseudo, Adresse, Port, Apparence, CouleurVoiture).
-//  - Page VOITURE : couleur de la CORRIS pour une nouvelle partie, apercu 3D (MWCoop\cache\corris.mesh, rendu
+//  - Page VOITURE : couleur de la Satsuma pour une nouvelle partie, apercu 3D (MWCoop\cache\corris.mesh, rendu
 //    logiciel).
 //  - Page TENUE : l'apparence complete en 3D (perso.inc), une ligne par partie ; sinon la galerie des hauts (images
 //    pre-rendues par le mod dans MWCoop\cache\skins, portraits repris dans le salon).
@@ -50,6 +50,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
+#include <wincrypt.h>
 #include <winioctl.h>
 #include <mmsystem.h>
 #include <shlwapi.h>
@@ -141,6 +142,7 @@ static int g_lastLaunchMode;                        // mode du dernier lancement
 #define WM_APP_LOBBYEND (WM_APP + 3)    // invite : salon ferme (0), refuse (1) ou injoignable (2)
 #define WM_APP_LATE (WM_APP + 4)        // invite en retard (salon IP) : l'hote joue, ses mods arrivent
 #define WM_APP_LATEEND (WM_APP + 5)     // ... connexion finie
+#define WM_APP_UPDATE_READY (WM_APP + 6)
 
 // Salon : etat partage entre la fenetre et les fils reseau (sous g_lcs)
 enum { LB_NONE, LB_HOST, LB_CONNECTING, LB_GUEST };
@@ -441,7 +443,7 @@ static void LoadLocalVersion()
         if (ReadAll(g_gameDir + L"MWCoop\\version.txt", d) || ReadAll(g_gameDir + L"Mods\\version.txt", d))
             g_localVer = Trim(Widen(std::string(d.begin(), d.end())));
         // ModEnsure deploys the DLLs embedded in this launcher.
-        if (scOk) g_localVer = Widen(MWV_STR);
+        if (scOk) g_localVer = Widen(MWV_MOD_STR);
     }
 }
 
@@ -501,17 +503,21 @@ static int CmpVer(std::wstring a, std::wstring b)
     if (!a.empty() && (a[0] == L'v' || a[0] == L'V')) a.erase(0, 1);
     if (!b.empty() && (b[0] == L'v' || b[0] == L'V')) b.erase(0, 1);
     size_t i = 0, j = 0;
-    while (i < a.size() || j < b.size()) {
-        bool da = i < a.size() && iswdigit(a[i]), db = j < b.size() && iswdigit(b[j]);
-        if (!da || !db) break;
-        long na = wcstol(a.c_str() + i, NULL, 10), nb = wcstol(b.c_str() + j, NULL, 10);
+    std::vector<unsigned long> va, vb;
+    auto numbers = [](const std::wstring &s, size_t &pos, std::vector<unsigned long> &out) {
+        while (pos < s.size() && iswdigit(s[pos])) {
+            out.push_back(wcstoul(s.c_str() + pos, NULL, 10));
+            while (pos < s.size() && iswdigit(s[pos])) ++pos;
+            if (pos + 1 < s.size() && s[pos] == L'.' && iswdigit(s[pos + 1])) ++pos;
+            else break;
+        }
+    };
+    numbers(a, i, va); numbers(b, j, vb);
+    for (size_t k = 0; k < max(va.size(), vb.size()); ++k) {
+        unsigned long na = k < va.size() ? va[k] : 0, nb = k < vb.size() ? vb[k] : 0;
         if (na != nb) return na < nb ? -1 : 1;
-        while (i < a.size() && iswdigit(a[i])) i++;
-        while (j < b.size() && iswdigit(b[j])) j++;
-        if (i < a.size() && a[i] == L'.' && j < b.size() && b[j] == L'.') { i++; j++; continue; }
-        break;
     }
-    std::wstring sa = a.substr(min(i, a.size())), sb = b.substr(min(j, b.size()));
+    std::wstring sa = a.substr(i), sb = b.substr(j);
     if (sa == sb) return 0;
     if (sa.empty() != sb.empty()) return sa.empty() ? 1 : -1;
     for (size_t x = 0, y = 0; x < sa.size() && y < sb.size();) {
@@ -534,7 +540,7 @@ static int CmpVer(std::wstring a, std::wstring b)
 // Derniere erreur WinHTTP d'une requete sans reponse (12007 nom introuvable, 12029 connexion impossible, 12002 delai...).
 static DWORD g_httpErr;
 
-static bool HttpGet(const std::wstring &url, std::string *out, const std::wstring &toFile, bool progress, DWORD *status = NULL, int hops = 0)
+static bool HttpGet(const std::wstring &url, std::string *out, const std::wstring &toFile, bool progress, DWORD *status = NULL, int hops = 0, size_t maxBytes = 128u << 20)
 {
     if (hops > 7) return false;
     if (status) *status = 0;
@@ -558,7 +564,8 @@ static bool HttpGet(const std::wstring &url, std::string *out, const std::wstrin
     HINTERNET r = c ? WinHttpOpenRequest(c, L"GET", full.c_str(), NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
                                          uc.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0) : NULL;
 
-    DWORD redirectPolicy = WINHTTP_OPTION_REDIRECT_POLICY_ALWAYS;
+    // Follow redirects ourselves so Authorization never reaches an asset CDN.
+    DWORD redirectPolicy = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
     if (r) WinHttpSetOption(r, WINHTTP_OPTION_REDIRECT_POLICY, &redirectPolicy, sizeof(redirectPolicy));
 
     std::wstring customHdr;
@@ -584,7 +591,8 @@ static bool HttpGet(const std::wstring &url, std::string *out, const std::wstrin
                 if (r) { WinHttpCloseHandle(r); r = NULL; }
                 if (c) { WinHttpCloseHandle(c); c = NULL; }
                 WinHttpCloseHandle(s); s = NULL;
-                return HttpGet(loc, out, toFile, progress, status, hops + 1);
+                if (uc.nScheme == INTERNET_SCHEME_HTTPS && _wcsnicmp(loc, L"https://", 8)) return false;
+                return HttpGet(loc, out, toFile, progress, status, hops + 1, maxBytes);
             }
         }
         DWORD total = 0; len = sizeof(total);
@@ -598,6 +606,7 @@ static bool HttpGet(const std::wstring &url, std::string *out, const std::wstrin
                 DWORD n = 0;
                 if (!WinHttpReadData(r, buf.data(), (DWORD)buf.size(), &n)) { ok = false; break; }
                 if (!n) break;
+                if ((size_t)got + n > maxBytes) { ok = false; break; }
                 if (f != INVALID_HANDLE_VALUE) { DWORD w = 0; if (!WriteFile(f, buf.data(), n, &w, NULL) || w != n) ok = false; }
                 else out->append(buf.data(), n);
                 got += n;
@@ -977,7 +986,7 @@ static bool IsWritableDir(const std::wstring &dir)
 // Texte de chaque release GitHub : en francais, puis une ligne "---", puis en anglais. Gardees dans
 // <jeu>\MWCoop\notes-maj.json pour les lire hors ligne.
 // (depuis 0.92.3, demande de JD : encore une ligne "---" et en russe ; sans : l'anglais en russe)
-struct Note { std::wstring ver, date, fr, en, ru, ar, zip, page, exeUrl; bool pre = false; };
+struct Note { std::wstring ver, date, fr, en, ru, ar, zip, page, exeUrl, sha256, checksumUrl; bool pre = false; };
 static const std::wstring &NoteBody(const Note &n) { return g_fr ? n.fr : g_ru && !n.ru.empty() ? n.ru : g_ar && !n.ar.empty() ? n.ar : n.en; }
 static std::vector<Note> g_notes;
 static volatile bool g_notesDone;
@@ -1062,21 +1071,68 @@ static bool JsonFlag(const std::string &json, const char *key)
     p = json.find_first_not_of(" \t\r\n", p + 1);
     return p != std::string::npos && json.compare(p, 4, "true") == 0;
 }
+// Read only direct members. Nested authors/assets and key names inside release
+// notes must not be confused with metadata belonging to the release itself.
+static std::string JsonMember(const std::string &json, const char *key)
+{
+    size_t i = json.find('{');
+    if (i == std::string::npos) return "";
+    ++i;
+    while (i < json.size()) {
+        i = json.find_first_not_of(" \t\r\n,", i);
+        if (i == std::string::npos || json[i] != '"') break;
+        size_t start = i++;
+        bool escape = false;
+        while (i < json.size()) {
+            char c = json[i++];
+            if (escape) escape = false;
+            else if (c == '\\') escape = true;
+            else if (c == '"') break;
+        }
+        std::string name = JsonDecode(json, start);
+        i = json.find_first_not_of(" \t\r\n", i);
+        if (i == std::string::npos || json[i++] != ':') break;
+        i = json.find_first_not_of(" \t\r\n", i);
+        if (i == std::string::npos) break;
+        start = i;
+        int depth = 0;
+        bool quoted = false;
+        escape = false;
+        for (; i < json.size(); ++i) {
+            char c = json[i];
+            if (quoted) {
+                if (escape) escape = false;
+                else if (c == '\\') escape = true;
+                else if (c == '"') quoted = false;
+            } else if (c == '"') quoted = true;
+            else if (c == '{' || c == '[') ++depth;
+            else if ((c == '}' || c == ']') && depth > 0) --depth;
+            else if (depth == 0 && (c == ',' || c == '}')) break;
+        }
+        if (name == key) return json.substr(start, i - start);
+    }
+    return "";
+}
+static std::string JsonTextMember(const std::string &json, const char *key)
+{
+    std::string value = JsonMember(json, key);
+    return !value.empty() && value[0] == '"' ? JsonDecode(value, 0) : "";
+}
 static std::vector<Note> ParseReleases(const std::string &source)
 {
     std::vector<Note> list;
     for (const std::string &json : JsonObjects(source)) {
         size_t p = 0, end = json.size();
         Note n;
-        n.ver = Widen(JsonField(json, "tag_name", p, end));
+        n.ver = Widen(JsonTextMember(json, "tag_name"));
         if (!n.ver.empty() && (n.ver[0] == L'v' || n.ver[0] == L'V')) n.ver.erase(0, 1);
         // Only version tags can become download links; ignore unrelated tags.
         if (n.ver.empty() || n.ver[0] < L'0' || n.ver[0] > L'9' ||
             n.ver.find_first_not_of(L"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-+") != std::wstring::npos) continue;
-        n.page = L"https://github.com/" + g_repo + L"/releases/tag/" + Widen(JsonField(json, "tag_name", p, end));
-        std::string d = JsonField(json, "published_at", p, end);
+        n.page = L"https://github.com/" + g_repo + L"/releases/tag/" + Widen(JsonTextMember(json, "tag_name"));
+        std::string d = JsonTextMember(json, "published_at");
         if (d.size() >= 10) n.date = Widen(d.substr(8, 2) + "/" + d.substr(5, 2) + "/" + d.substr(0, 4));
-        std::wstring body = Widen(JsonField(json, "body", p, end));
+        std::wstring body = Widen(JsonTextMember(json, "body"));
         size_t sep = body.find(L"\n---");
         if (sep == std::wstring::npos) n.fr = n.en = CleanNote(body);
         else {
@@ -1099,28 +1155,35 @@ static std::vector<Note> ParseReleases(const std::string &source)
             n.en = CleanNote(rest);
             if (n.en.empty()) n.en = n.fr;
         }
-        for (size_t k = p; k < end;) {
-            size_t u = json.find("\"browser_download_url\"", k);
-            if (u == std::string::npos || u >= end) break;
-            std::string url = JsonField(json, "browser_download_url", u, end);
-            k = u + 20;
+        std::map<std::wstring, std::wstring> checksums;
+        for (const std::string &asset : JsonObjects(JsonMember(json, "assets"))) {
+            std::string url = JsonTextMember(asset, "browser_download_url");
+            std::string prefix = "https://github.com/" + Narrow(g_repo, CP_UTF8) + "/releases/download/";
+            if (url.compare(0, prefix.size(), prefix) != 0) continue;
             // Accept the assets produced by tools/package.ps1, excluding source ZIPs.
             std::string name = url.substr(url.find_last_of('/') + 1);
             std::string ver = Narrow(n.ver, CP_UTF8);
             if (name == "SummerCoop-Launcher.exe" || name == "SummerCoop-Launcher-" + ver + ".exe") {
-                if (n.exeUrl.empty() || name == "SummerCoop-Launcher.exe") n.exeUrl = Widen(url);
+                if (n.exeUrl.empty() || name == "SummerCoop-Launcher.exe") {
+                    n.exeUrl = Widen(url);
+                    std::string digest = JsonTextMember(asset, "digest");
+                    n.sha256 = digest.compare(0, 7, "sha256:") == 0 ? Widen(digest.substr(7)) : L"";
+                }
                 if (n.zip.empty()) n.zip = Widen(url);
+            } else if (name == "SummerCoop-Launcher.exe.sha256" || name == "SummerCoop-Launcher-" + ver + ".exe.sha256") {
+                checksums[Widen(name.substr(0, name.size() - 7))] = Widen(url);
             } else if (name == "SummerCoop-" + ver + ".zip") {
                 if (n.zip.empty()) n.zip = Widen(url);
             }
         }
+        if (!n.exeUrl.empty()) n.checksumUrl = checksums[n.exeUrl.substr(n.exeUrl.find_last_of(L'/') + 1)];
         if (n.exeUrl.empty() && !n.zip.empty()) {
             std::string z = Narrow(n.zip, CP_UTF8);
             size_t dot = z.rfind('.');
             if (dot != std::string::npos && !_stricmp(z.c_str() + dot, ".exe")) n.exeUrl = n.zip;
         }
-        bool draft = JsonFlag(json, "draft");
-        if (JsonFlag(json, "prerelease") || n.ver.find(L'-') != std::wstring::npos) n.pre = true;
+        bool draft = JsonMember(json, "draft").find("true") == 0;
+        if (JsonMember(json, "prerelease").find("true") == 0 || n.ver.find(L'-') != std::wstring::npos) n.pre = true;
         if (!n.ver.empty() && !draft) list.push_back(n);
     }
     return list;
@@ -1133,11 +1196,17 @@ static std::vector<Note> ParseReleases(const std::string &source)
 static DWORD g_relCode, g_relErr;
 static int FetchReleases(std::string &json)
 {
-    // The game folder may change while the background check runs. Keep its
-    // optional notes cache beside the immutable launcher settings path instead.
-    std::wstring cache = g_iniLauncher.empty() ? L"" : g_iniLauncher + L".releases.json";
+    // Keep the standalone folder limited to EXE, checksum and user settings.
+    wchar_t local[MAX_PATH] = L"";
+    GetEnvironmentVariableW(L"LOCALAPPDATA", local, MAX_PATH);
+    std::wstring cache;
+    if (local[0]) {
+        std::wstring dir = std::wstring(local) + L"\\SummerCoop";
+        CreateDirectoryW(dir.c_str(), NULL);
+        cache = dir + L"\\launcher-releases.json";
+    }
     DWORD code = 0;
-    bool got = HttpGet(L"https://api.github.com/repos/" + g_repo + L"/releases?per_page=40", &json, L"", false, &code);
+    bool got = HttpGet(L"https://api.github.com/repos/" + g_repo + L"/releases?per_page=100", &json, L"", false, &code, 0, 8u << 20);
     g_relCode = code; g_relErr = got ? 0 : g_httpErr;
     LaunchLog("versions sur GitHub : %s (code HTTP %lu, erreur WinHTTP %lu)", got ? "recues" : "pas de reponse", code, g_relErr);
     if (got && json.find("\"tag_name\"") != std::string::npos) {
@@ -1161,24 +1230,25 @@ static int FetchReleases(std::string &json)
 }
 
 // ---------------------------------------------------------------- version checks
-// Checks never install files or block play. The download button opens the exact
-// SummerCoop release; the downloaded launcher already contains the mod DLLs.
+// Check at startup and periodically. Install verified builds only while idle.
 enum { UPD_CHECK, UPD_QUIET };
 enum { CHECK_PENDING, CHECK_RUNNING, CHECK_CURRENT, CHECK_AVAILABLE, CHECK_EMPTY, CHECK_FAILED };
 static std::atomic<int> g_updState(CHECK_PENDING);
-static std::wstring g_updVer, g_updPage, g_updExeUrl; // protected by g_cs
+static std::wstring g_updVer, g_updPage, g_updExeUrl, g_updSha, g_updChecksum; // protected by g_cs
 static std::atomic<bool> g_updChecking(false);
 static DWORD g_updCheckT;
 static std::wstring LauncherVersion() { return Widen(MWV_STR); }
 static std::wstring UpdAvail() { EnterCriticalSection(&g_cs); std::wstring v = g_updVer; LeaveCriticalSection(&g_cs); return v; }
 static std::wstring UpdPage() { EnterCriticalSection(&g_cs); std::wstring p = g_updPage; LeaveCriticalSection(&g_cs); return p; }
 static std::wstring UpdExeUrl() { EnterCriticalSection(&g_cs); std::wstring u = g_updExeUrl; LeaveCriticalSection(&g_cs); return u; }
-static void UpdSet(const std::wstring &v, const std::wstring &page = L"", const std::wstring &exeUrl = L"")
+static std::wstring UpdSha() { EnterCriticalSection(&g_cs); std::wstring s = g_updSha; LeaveCriticalSection(&g_cs); return s; }
+static std::wstring UpdChecksum() { EnterCriticalSection(&g_cs); std::wstring s = g_updChecksum; LeaveCriticalSection(&g_cs); return s; }
+static void UpdSet(const std::wstring &v, const std::wstring &page = L"", const std::wstring &exeUrl = L"", const std::wstring &sha = L"", const std::wstring &checksum = L"")
 {
-    EnterCriticalSection(&g_cs); g_updVer = v; g_updPage = page; g_updExeUrl = exeUrl; LeaveCriticalSection(&g_cs);
+    EnterCriticalSection(&g_cs); g_updVer = v; g_updPage = page; g_updExeUrl = exeUrl; g_updSha = sha; g_updChecksum = checksum; LeaveCriticalSection(&g_cs);
 }
 static bool AutoCheckUpdates() { return GetPrivateProfileIntW(L"Lanceur", L"CheckUpdates", 1, g_iniLauncher.c_str()) != 0; }
-static bool AutoInstallUpdates() { return GetPrivateProfileIntW(L"Lanceur", L"AutoUpdate", 0, g_iniLauncher.c_str()) != 0; }
+static bool AutoInstallUpdates() { return GetPrivateProfileIntW(L"Lanceur", L"AutoUpdate", 1, g_iniLauncher.c_str()) != 0; }
 static bool ChannelNightly()
 {
     wchar_t b[16] = L"";
@@ -1234,83 +1304,61 @@ static bool VerifyPeBinary(const std::wstring &path)
     return true;
 }
 
+#include "updater.inc"
+
+struct UpdateParams { std::wstring ver, url, page, sha, checksumUrl, dir; };
+static std::wstring g_restartArgs;
+static bool g_skipAutoUpdate;
+static DWORD g_updAttemptT;
+
+static std::wstring UpdateChecksumHash(const std::string &text)
+{
+    size_t end = text.find_first_of(" \t\r\n");
+    std::wstring hash = Widen(text.substr(0, end));
+    return UpdateHashValid(hash) ? hash : L"";
+}
+
 static DWORD WINAPI SelfUpdateThread(void *param)
 {
-    struct UpdateParams { std::wstring ver, url, page; };
     UpdateParams *p = (UpdateParams *)param;
-    std::wstring ver = p->ver, url = p->url, page = p->page;
-    delete p;
-
-    struct Guard { ~Guard() { g_updating = false; g_busy = false; g_progress = -1.0f; } } guard;
-
-    if (url.empty()) {
-        if (page.empty()) page = L"https://github.com/" + g_repo + L"/releases";
-        ShellExecuteW(g_wnd, L"open", page.c_str(), NULL, NULL, SW_SHOWNORMAL);
+    struct Guard {
+        UpdateParams *p;
+        bool handed = false;
+        ~Guard() { if (!handed) { UpdateTempClean(p->dir); delete p; g_updating = false; g_busy = false; g_progress = -1.0f; } }
+    } guard{ p };
+    p->dir = UpdateTempDir();
+    DWORD code = 0;
+    if (p->sha.empty() && !p->checksumUrl.empty()) {
+        std::string checksum;
+        if (HttpGet(p->checksumUrl, &checksum, L"", false, &code, 0, 4096)) p->sha = UpdateChecksumHash(checksum);
+    }
+    if (!UpdateHashValid(p->sha) || p->dir.empty()) {
+        SetStatus(K_WARN, T(L"Somme de contrôle de la mise à jour indisponible", L"Update checksum is unavailable"));
         return 0;
     }
-
-    g_busy = true;
     g_progress = 0.0f;
-    SetStatus(K_NORMAL, T(L"Téléchargement de SummerCoop %s…", L"Downloading SummerCoop %s…"), ver.c_str());
-
-    std::wstring tmpFile = g_self + L".tmp";
-    std::wstring newFile = g_self + L".new";
-    std::wstring oldFile = g_self + L".old";
-    DeleteFileW(tmpFile.c_str());
-    DeleteFileW(newFile.c_str());
-
-    DWORD httpCode = 0;
-    bool ok = HttpGet(url, NULL, tmpFile, true, &httpCode);
-    if (!ok || !VerifyPeBinary(tmpFile)) {
-        DeleteFileW(tmpFile.c_str());
-        LaunchLog("echec telechargement mise a jour %s : http %lu, err %lu", Narrow(ver, CP_UTF8).c_str(), httpCode, g_httpErr);
-        SetStatus(K_WARN, T(L"Échec du téléchargement (HTTP %lu, code %lu)", L"Update download failed (HTTP %lu, code %lu)"), httpCode, g_httpErr);
+    SetStatus(K_NORMAL, T(L"Téléchargement de SummerCoop %s…", L"Downloading SummerCoop %s…"), p->ver.c_str());
+    bool ok = HttpGet(p->url, NULL, p->dir + L"download.exe", true, &code, 0, 128u << 20);
+    if (!ok || !VerifyUpdate(p->dir + L"download.exe", p->sha)) {
+        LaunchLog("update %s rejected: HTTP %lu, WinHTTP %lu, hash/PE verification %d", Narrow(p->ver, CP_UTF8).c_str(), code, g_httpErr, ok);
+        SetStatus(K_WARN, T(L"Échec du téléchargement ou du contrôle SHA-256", L"Update download or SHA-256 verification failed"));
         return 0;
     }
-
-    MoveFileExW(tmpFile.c_str(), newFile.c_str(), MOVEFILE_REPLACE_EXISTING);
     g_progress = 1.0f;
-    SetStatus(K_OK, T(L"Mise à jour prête, redémarrage…", L"Update ready, restarting…"));
-    LaunchLog("mise a jour %s telechargee, redemarrage en cours", Narrow(ver, CP_UTF8).c_str());
-    if (g_wnd) InvalidateRect(g_wnd, NULL, FALSE);
-    Sleep(500);
-
-    DeleteFileW(oldFile.c_str());
-    bool renamed = MoveFileExW(g_self.c_str(), oldFile.c_str(), MOVEFILE_REPLACE_EXISTING);
-    bool placed = false;
-    if (renamed) {
-        placed = MoveFileExW(newFile.c_str(), g_self.c_str(), MOVEFILE_REPLACE_EXISTING);
-    }
-
-    if (placed) {
-        STARTUPINFOW si = { sizeof(si) };
-        PROCESS_INFORMATION pi = {};
-        std::wstring cmd = L"\"" + g_self + L"\"";
-        std::vector<wchar_t> cmdBuf(cmd.begin(), cmd.end()); cmdBuf.push_back(0);
-        if (CreateProcessW(g_self.c_str(), cmdBuf.data(), NULL, NULL, FALSE, 0, NULL, g_dir.c_str(), &si, &pi)) {
-            CloseHandle(pi.hThread);
-            CloseHandle(pi.hProcess);
-            if (g_wnd) ShowWindow(g_wnd, SW_HIDE);
-            ExitProcess(0);
-        }
-    }
-
-    wchar_t helperCmd[2048];
-    swprintf_s(helperCmd, L"/c ping 127.0.0.1 -n 2 >nul & del /f /q \"%s\" & move /y \"%s\" \"%s\" & start \"\" \"%s\"",
-               oldFile.c_str(), newFile.c_str(), g_self.c_str(), g_self.c_str());
-    ShellExecuteW(NULL, L"open", L"cmd.exe", helperCmd, NULL, SW_HIDE);
-    ExitProcess(0);
+    if (g_wnd && PostMessageW(g_wnd, WM_APP_UPDATE_READY, 0, (LPARAM)p)) guard.handed = true;
     return 0;
 }
 
-static void StartSelfUpdate(const std::wstring &ver, const std::wstring &url, const std::wstring &page)
+static void StartSelfUpdate(const std::wstring &ver, const std::wstring &url, const std::wstring &page,
+                            const std::wstring &sha, const std::wstring &checksumUrl)
 {
-    if (g_updating.exchange(true)) return;
-    struct UpdateParams { std::wstring ver, url, page; };
-    UpdateParams *p = new UpdateParams{ ver, url, page };
+    if (!g_wnd || g_state != ST_IDLE || g_lobby != LB_NONE || g_goWait || g_updating.exchange(true)) return;
+    if (g_busy.exchange(true)) { g_updating = false; return; }
+    g_updAttemptT = GetTickCount();
+    UpdateParams *p = new UpdateParams{ ver, url, page, sha, checksumUrl, L"" };
     HANDLE t = CreateThread(NULL, 0, SelfUpdateThread, p, 0, NULL);
     if (t) CloseHandle(t);
-    else { g_updating = false; delete p; }
+    else { g_updating = false; g_busy = false; delete p; }
 }
 
 static DWORD WINAPI UpdateThread(void *param)
@@ -1331,9 +1379,10 @@ static DWORD WINAPI UpdateThread(void *param)
     g_notesDone = true;
     if (result == CHECK_AVAILABLE) {
         std::wstring exe = pick ? (!pick->exeUrl.empty() ? pick->exeUrl : (pick->zip.find(L".exe") != std::wstring::npos ? pick->zip : L"")) : L"";
-        UpdSet(pick->ver, pick->page, exe);
-        if (AutoInstallUpdates() && g_lobby == LB_NONE && !g_busy && !exe.empty()) {
-            StartSelfUpdate(pick->ver, exe, pick->page);
+        UpdSet(pick->ver, pick->page, exe, pick->sha256, pick->checksumUrl);
+        g_updState = result;
+        if (g_wnd && AutoInstallUpdates() && !g_skipAutoUpdate && g_state == ST_IDLE && g_lobby == LB_NONE && !g_busy && !exe.empty()) {
+            StartSelfUpdate(pick->ver, exe, pick->page, pick->sha256, pick->checksumUrl);
             return 0;
         }
     } else if (result != CHECK_FAILED) {
@@ -1359,11 +1408,8 @@ static void StartUpdate(bool download = false)
         std::wstring ver = UpdAvail();
         std::wstring url = UpdExeUrl();
         std::wstring page = UpdPage();
-        if (url.empty() && !ver.empty()) {
-            url = L"https://github.com/" + g_repo + L"/releases/download/v" + ver + L"/SummerCoop-Launcher.exe";
-        }
         if (!url.empty()) {
-            StartSelfUpdate(ver, url, page);
+            StartSelfUpdate(ver, url, page, UpdSha(), UpdChecksum());
         } else {
             if (page.empty()) page = L"https://github.com/" + g_repo + L"/releases";
             if ((INT_PTR)ShellExecuteW(g_wnd, L"open", page.c_str(), NULL, NULL, SW_SHOWNORMAL) <= 32)
@@ -1381,6 +1427,10 @@ static void StartUpdate(bool download = false)
 }
 static void UpdateTick()
 {
+    if (AutoCheckUpdates() && AutoInstallUpdates() && !g_skipAutoUpdate && g_updState == CHECK_AVAILABLE &&
+        g_state == ST_IDLE && !g_busy && g_lobby == LB_NONE && !g_goWait &&
+        (!g_updAttemptT || GetTickCount() - g_updAttemptT >= 5u * 60u * 1000u) && !UpdExeUrl().empty())
+        StartSelfUpdate(UpdAvail(), UpdExeUrl(), UpdPage(), UpdSha(), UpdChecksum());
     if (!AutoCheckUpdates() || g_busy || g_lobby != LB_NONE || GetTickCount() - g_updCheckT < 30u * 60u * 1000u) return;
     if (g_updChecking.exchange(true)) return;
     g_updCheckT = GetTickCount();
@@ -1447,7 +1497,7 @@ static void UpdateButtons()
     g_btn[B_NETIP].visible = g_btn[B_NETSTEAM].visible = menu && game && home && lobby == LB_NONE && !g_goWait;
     g_btn[B_NETIP].enabled = g_btn[B_NETSTEAM].enabled = !busy;
     g_btn[B_UPDATE].visible = menu && !g_goWait && (!UpdAvail().empty() || g_updating);
-    g_btn[B_UPDATE].enabled = lobby == LB_NONE && !g_updating;
+    g_btn[B_UPDATE].enabled = lobby == LB_NONE && !busy && !g_updating;
 }
 
 
@@ -2095,8 +2145,8 @@ static void BuildOptions()
         Opt o = {};
         o.tab = TAB_COOP; o.key = "ContenuEnvoye"; o.kind = O_ACTION; o.action = DR_CONTENT;
         o.fr = L"Envoy\u00E9 aux invit\u00E9s (CD, images\u2026)"; o.en = L"Sent to guests (CDs, images\u2026)"; o.suffix = L"";
-        o.dFr = L"Tes CD, ta radio, la peinture de ta CORRIS, ton drapeau, tes posters\u2026 copi\u00E9s chez les invit\u00E9s de ton salon pour ta partie.";
-        o.dEn = L"Your CDs, radio, CORRIS paint, flag, posters\u2026 copied to your lobby's guests for your game.";
+        o.dFr = L"Tes CD, ta radio, la peinture de ta Satsuma, ton drapeau, tes posters\u2026 copi\u00E9s chez les invit\u00E9s de ton salon pour ta partie.";
+        o.dEn = L"Your CDs, radio, Satsuma paint, flag, posters\u2026 copied to your lobby's guests for your game.";
         g_opts.push_back(o);
     }
     {   // Mods de l'hote (modsync.inc) : TOUT ACCEPTER une fois l'allume
@@ -2139,12 +2189,12 @@ static void BuildOptions()
         o.dEn = L"The launcher tour in a few bubbles, as on the first start.";
         g_opts.push_back(o);
     }
-    {   // Couleur de la CORRIS d'une nouvelle partie (volet)
+    {   // Couleur de la Satsuma d'une nouvelle partie (volet)
         Opt o = {};
         o.tab = TAB_COOP; o.key = "CouleurVoiture"; o.kind = O_ACTION; o.action = DR_CAR;
         o.fr = L"Couleur de la voiture"; o.en = L"Car color"; o.suffix = L"";
-        o.dFr = L"Couleur de la CORRIS pour une nouvelle partie (l'h\u00F4te la donne aux invit\u00E9s). Clic : aper\u00E7u en 3D dans le volet.";
-        o.dEn = L"CORRIS color for a new game (the host gives it to the guests). Click: 3D preview in the side panel.";
+        o.dFr = L"Couleur de la Satsuma pour une nouvelle partie (l'h\u00F4te la donne aux invit\u00E9s). Clic : aper\u00E7u en 3D dans le volet.";
+        o.dEn = L"Satsuma color for a new game (the host gives it to the guests). Click: 3D preview in the side panel.";
         g_opts.push_back(o);
     }
 }
@@ -2755,7 +2805,7 @@ static bool LogsMouseDown(float x, float y)
     return true;
 }
 
-// ---------------------------------------------------------------- onglet VOITURE (couleur de la CORRIS, apercu 3D)
+// ---------------------------------------------------------------- onglet VOITURE (couleur de la Satsuma, apercu 3D)
 // [Coop] CouleurVoiture=RRGGBB (vide : au hasard, comme le jeu). Le mod la pose sur la carrosserie a une NOUVELLE
 // partie ; l'hote la donne aux invites.
 // Apercu : <jeu>\MWCoop\cache\corris.mesh, exporte par le mod depuis le jeu du joueur (jamais livre avec le mod).
@@ -3150,7 +3200,7 @@ static int CarSwatchAt(float x, float y)
 }
 static Color CarRgb(int rgb, BYTE a = 255) { return Color(a, (BYTE)(rgb >> 16), (BYTE)(rgb >> 8), (BYTE)rgb); }
 
-// Finition de la CORRIS pour une nouvelle partie ([Coop] FinitionVoiture) : 0 au hasard, 1 L, 2 LX, 3 SLX, 4 GT.
+// Finition de la Satsuma pour une nouvelle partie ([Coop] FinitionVoiture) : 0 au hasard, 1 L, 2 LX, 3 SLX, 4 GT.
 static const char *kTrims[] = { "", "L", "LX", "SLX", "GT" };
 static RectF g_trimRect;   // (bulle du guide)
 static int CarTrimGet()
@@ -3168,7 +3218,7 @@ static void CarTrimSet(int k)
     WritePrivateProfileStringA("Coop", "FinitionVoiture", k ? kTrims[k] : NULL, ModIniA().c_str());
 }
 
-// Options de la plaque VIN de la CORRIS pour une nouvelle partie (demande de HowardCS, 12/10 : « choisir la version GT,
+// Options de la plaque VIN de la Satsuma pour une nouvelle partie (demande de HowardCS, 12/10 : « choisir la version GT,
 // l'annee... »). Valeurs possibles par finition exportees par le mod (Vin.ExportOptions : <jeu>\MWCoop\cache\vin-options.txt,
 // « finition;cle;v1,v2,... », listes du jeu) ; choix dans [Coop] Vin<cle> (vide : au hasard). Le mod ne garde que cette
 // valeur dans la liste ou le jeu tire l'option (si la finition l'a).
@@ -3265,8 +3315,8 @@ static void DrawVinOptions(Graphics &g, RectF card)
     GraphicsPath bp; RoundRect(bp, card, 20);
     SolidBrush bb(TH(card)); g.FillPath(&bb, &bp);
     Title(g, T(L"Plaque VIN", L"VIN plate"), RectF(card.X + 24, card.Y + 20, 300, 30), 22, kInk);
-    Para(g, T(L"Options de la CORRIS pour une nouvelle partie. Clique pour passer \u00E0 la valeur suivante ; Hasard : comme le jeu.",
-              L"CORRIS options for a new game. Click for the next value; Random: like the game."),
+    Para(g, T(L"Options de la Satsuma pour une nouvelle partie. Clique pour passer \u00E0 la valeur suivante ; Hasard : comme le jeu.",
+              L"Satsuma options for a new game. Click for the next value; Random: like the game."),
          RectF(card.X + 24, card.Y + 52, card.Width - 48, 40), 12.5f, kGrey);
     if (g_vinOpts.empty()) {
         Text(g, T(L"Lance une partie une fois : le mod relève alors les options possibles de chaque finition.", L"Start a game once: the mod then reads the possible options of each trim."),
@@ -3291,20 +3341,20 @@ static void DrawVinOptions(Graphics &g, RectF card)
     }
 }
 
-// ---- peinture perso de la CORRIS (suggestion de .nolly, 12/10 : « comme les visages, mais pour la Rivett, dans le
-// catalogue du garagiste comme une peinture perso »). Le jeu le fait deja : CORRIS/AssembyDatabase/PaintMaterials,
+// ---- peinture perso de la Satsuma (suggestion de .nolly, 12/10 : « comme les visages, mais pour la Satsuma, dans le
+// catalogue du garagiste comme une peinture perso »). Le jeu le fait deja : Satsuma/AssembyDatabase/PaintMaterials,
 // automate 'ImportPNG', lit <jeu>\Images\car.png (gabarit 2048 x 2048 livre avec le jeu, et son PSD en calques) dans
 // CAR_PAINT_DECAL, posee quand on achete « Custom paint made by artist » chez Fleetari. Le lanceur importe l'image du
 // joueur dans %LOCALAPPDATA%\MWCoop\peinture.png (le dossier du jeu n'est pas touche) ; [Coop] PeinturePerso=1 : le mod
 // la met a la place de car.png (hote ou solo, CustomPaint) et l'hote l'envoie a ses invites a la place de
-// Images\car.png (Contenu envoye > Peinture de la CORRIS, modsync.inc).
+// Images\car.png (Contenu envoye > Peinture de la Satsuma, modsync.inc).
 static Bitmap *LoadAnyImage(const std::wstring &file, std::wstring *why);
 static bool EncoderClsid(const wchar_t *mime, CLSID *out);
 static bool g_paintView;
 static RectF g_paintBtnRect;   // (bulle du guide)
 static RectF g_dentBtnRect;    // (bulle du guide)
 
-// Bosses des carrosseries (suggestion de « ...., », 13/10 : « pouvoir retirer les bosses de la Corris Rivett en supprimant
+// Bosses des carrosseries (suggestion de « ...., », 13/10 : « pouvoir retirer les bosses de la Corris Satsuma en supprimant
 // le fichier meshsave ») : le jeu garde la forme cabossee de chaque tole dans LocalLow\...\meshsave.txt ; sans lui, toutes
 // les voitures repartent lisses. Le fichier est renomme (meshsave.txt.bak-<date>), pas supprime : on peut le remettre.
 // Jeu ferme seulement (il le reecrit a la sauvegarde). En coop, la sauvegarde est celle de l'hote : c'est lui qui le fait.
@@ -3422,8 +3472,8 @@ static void DrawPaintView(Graphics &g, RectF card)
     GraphicsPath bp; RoundRect(bp, card, 20);
     SolidBrush bb(TH(card)); g.FillPath(&bb, &bp);
     Title(g, T(L"Peinture perso", L"Custom paint"), RectF(card.X + 24, card.Y + 20, 300, 30), 22, kInk);
-    Para(g, T(L"Ta propre peinture sur la CORRIS, peinte sur le gabarit du jeu. L'hôte l'envoie à ses invités.",
-              L"Your own paint on the CORRIS, painted on the game's template. The host sends it to their guests."),
+    Para(g, T(L"Ta propre peinture sur la Satsuma, peinte sur le gabarit du jeu. L'hôte l'envoie à ses invités.",
+              L"Your own paint on the Satsuma, painted on the game's template. The host sends it to their guests."),
          RectF(card.X + 24, card.Y + 56, card.Width - 48, 40), 12.5f, kGrey);
     bool has = PaintHas(), on = PaintOn();
     RectF th(card.X + 24, card.Y + 104, 300, 300);
@@ -3599,13 +3649,11 @@ static void DrawCar(Graphics &g)
         if (sel < 0) { SolidBrush db(CarRgb(g_carColor)); g.FillEllipse(&db, dot); } else DrawCarWheel(g, dot);
         Text(g, T(L"Autre couleur\u2026", L"Other color\u2026"), RectF(dot.X + 34, b.r.Y, b.r.Width - 60, b.r.Height), 13.5f, FontStyleBold, kInk, StringAlignmentNear);
     }
-    {   // Finition ([Coop] FinitionVoiture : L, LX, SLX, GT ; vide : au hasard) : imposee au tirage d'une nouvelle partie (Vin.cs)
+    {   // MSC's Satsuma has no MWC VIN/trim generator.
         float ty = ny + 128;
-        Title(g, T(L"Finition", L"Trim"), RectF(pn.X + 24, ty, 200, 24), 17, kInk);
-        g_vinBtnRect = RectF(pn.X + pn.Width - 24 - 168, ty - 5, 168, 32);   // (options de la plaque VIN : a droite du titre)
-        UiButton(g, g_vinBtnRect, g_vinView ? T(L"Voir la voiture", L"Show the car") : T(L"Plaque VIN\u2026", L"VIN plate\u2026"), UI_CAR_VIN, g_vinView, -1, true, 10);
-        g_trimRect = RectF(pn.X + 24, ty, pn.Width - 48, 70);
-        UiSeg(g, RectF(pn.X + 24, ty + 32, pn.Width - 48, 38), { T(L"Hasard", L"Random"), L"L", L"LX", L"SLX", L"GT" }, CarTrimGet(), UI_CAR_TRIM, 12);
+        g_vinBtnRect = g_trimRect = RectF();
+        Title(g, L"Satsuma", RectF(pn.X + 24, ty, 200, 24), 17, kInk);
+        Para(g, L"Двигатель, кузов и тюнинг Satsuma собираются в самой игре.", RectF(pn.X + 24, ty + 30, pn.Width - 48, 58), 12.5f, kGrey);
     }
     float bw = (pn.Width - 60) / 2;
     UiButton(g, RectF(pn.X + 24, pn.Y + pn.Height - 68, bw, 48), T(L"ANNULER", L"CANCEL"), UI_PAGE_CANCEL, false);
@@ -5734,7 +5782,7 @@ static std::wstring SkinLabel(const std::string &look)
     return skin.empty() ? L"?" : Widen(skin, CP_UTF8);
 }
 static const char *PartieName(int p) { return p == PARTIE_NOUVELLE ? "nouvelle" : "continuer"; }
-// Couleur de la CORRIS choisie dans l'onglet VOITURE (pour la note "nouvelle partie").
+// Couleur de la Satsuma choisie dans l'onglet VOITURE (pour la note "nouvelle partie").
 static std::wstring CarColorName()
 {
     int sel = CarSwatchSel();
@@ -7851,6 +7899,17 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         SetForegroundWindow(h);
         return TRUE;
     }
+    case WM_APP_UPDATE_READY: {
+        UpdateParams *p = (UpdateParams *)lp;
+        bool idle = g_state == ST_IDLE && g_lobby == LB_NONE && !g_goWait;
+        bool ready = idle && UpdateHandoff(p->dir, p->sha, g_restartArgs);
+        if (ready) { delete p; DestroyWindow(h); return 0; }
+        UpdateTempClean(p->dir);
+        delete p;
+        g_updating = false; g_busy = false; g_progress = -1.0f;
+        SetStatus(K_WARN, T(L"Mise à jour différée : réessaie quand le lanceur est libre", L"Update postponed: retry when the launcher is idle"));
+        return 0;
+    }
     case WM_APP_RELAUNCH: {
         STARTUPINFOW si = { sizeof(si) };
         PROCESS_INFORMATION pi;
@@ -7906,6 +7965,20 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
     g_self = self;
     g_dir = DirOf(g_self);
     g_iniLauncher = g_dir + L"summercoop-launcher.ini";
+    {
+        int ac = 0;
+        wchar_t **av = CommandLineToArgvW(GetCommandLineW(), &ac);
+        int result = UpdateCommand(ac, av);
+        for (int i = 1; i < ac; ++i) {
+            if (!_wcsicmp(av[i], L"/skip-auto-update")) { g_skipAutoUpdate = true; continue; }
+            if (!_wcsicmp(av[i], L"/update-cleanup") && i + 2 < ac) { i += 2; continue; }
+            if (!_wcsicmp(av[i], L"/update-started") && i + 1 < ac) { ++i; continue; }
+            if (!g_restartArgs.empty()) g_restartArgs += L' ';
+            g_restartArgs += UpdateQuote(av[i]);
+        }
+        LocalFree(av);
+        if (result >= 0) return result;
+    }
     {   // Steam met ses variables dans l'environnement du programme qu'il lance (avant tout SteamAPI_Init d'ici)
         wchar_t v[64];
         const wchar_t *vars[] = { L"SteamGameId", L"SteamOverlayGameId", L"SteamClientLaunch", L"SteamAppId" };
@@ -8023,7 +8096,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
             const Note *p = PickRelease(rel, nightly != 0);
             std::wstring v = p ? p->ver : L"";
             o += std::string(nightly ? "nightly" : "stable") + " : " + Narrow(v, CP_UTF8) + (p && WantVer(v, argv[4], nightly != 0) ? " a installer" : " rien") + " ; notes " + std::to_string(ChannelNotes(rel, nightly != 0).size()) + "\r\n";
-            o += "state=" + std::to_string(CheckResult(REL_OK, p, argv[4], nightly != 0)) + " offline=" + std::to_string(CheckResult(REL_OFFLINE, p, argv[4], nightly != 0)) + " page=" + (p ? Narrow(p->page, CP_UTF8) : "") + " exe=" + (p ? Narrow(p->exeUrl, CP_UTF8) : "") + "\r\n";
+            o += "state=" + std::to_string(CheckResult(REL_OK, p, argv[4], nightly != 0)) + " offline=" + std::to_string(CheckResult(REL_OFFLINE, p, argv[4], nightly != 0)) + " page=" + (p ? Narrow(p->page, CP_UTF8) : "") + " exe=" + (p ? Narrow(p->exeUrl, CP_UTF8) : "") + " sha=" + (p ? Narrow(p->sha256, CP_UTF8) : "") + " checksum=" + (p ? Narrow(p->checksumUrl, CP_UTF8) : "") + "\r\n";
         }
         HANDLE f = CreateFileW(argv[3], GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, NULL);
         if (f != INVALID_HANDLE_VALUE) { DWORD w; WriteFile(f, o.data(), (DWORD)o.size(), &w, NULL); CloseHandle(f); }
@@ -8562,6 +8635,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
 
     Present();
     ShowWindow(g_wnd, SW_SHOW);
+    UpdateSignalStarted();
     SetTimer(g_wnd, 1, 16, NULL);
     if (!g_gameDir.empty() && !g_sConnect) TutoAtStartup();   // visite guidee : complete la 1re fois, puis les nouveautes
     if (AutoCheckUpdates()) StartUpdate();

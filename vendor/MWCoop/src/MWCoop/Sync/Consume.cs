@@ -217,6 +217,7 @@ namespace MWCoop
 
         static void HookSpawners()
         {
+            if (MscRuntime.Enabled) return; // MSC ProductNameList and both bag tables belong to MscShop.
             if (spawnersHooked || Time.realtimeSinceStartup < nextSpawnerLook) return;
             nextSpawnerLook = Time.realtimeSinceStartup + 5f;
             int n = 0;
@@ -626,6 +627,8 @@ namespace MWCoop
 
         static bool TryHook(PlayMakerFSM f, bool created = false)
         {
+            bool mscBag = MscShop.IsBag(f);
+            if (mscBag) MscShop.Track(f);
             FsmString idv = f.FsmVariables.FindFsmString("ID");
             if (idv == null || idv.Value.Length == 0) return false;
             bool any = false;
@@ -633,7 +636,7 @@ namespace MWCoop
             {
                 try
                 {
-                    if (!Tracked(s)) continue;
+                    if (!Tracked(s) || mscBag && IsBag(s.Name)) continue;
                     var list = new List<FsmStateAction>(s.Actions);
                     list.Insert(0, new Hook { Id = idv.Value, StateName = s.Name });
                     s.Actions = list.ToArray();

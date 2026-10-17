@@ -14,6 +14,7 @@ enum { WF_FOLDER, WF_FOOTER, WF_START, WF_NET, WF_LOBBY, WF_MSC, WF_SHARE, WF_AC
 
 static const int kWikiCats = (int)(sizeof(kWikiCat) / sizeof(kWikiCat[0]));
 static const int kWikiArts = (int)(sizeof(kWikiArt) / sizeof(kWikiArt[0]));
+static bool WikiSupported(int article) { return article != WA_VIDEO && article != WA_IMPORT && article != WA_MONTAGE && article != WA_MUSEO && article != WA_KARTTURI; }
 static const RectF kWikiList(264, 88, 300, 656), kWikiBody(580, 88, 684, 656);
 static int g_wikiSel;
 static unsigned g_wikiClosed = ~1u;           // categories pliees (bit par categorie) : au depart, seule la premiere est ouverte
@@ -293,7 +294,7 @@ static void DrawWikiList(Graphics &g)
     float total = 0;
     for (int c = 0; c < kWikiCats; c++) {
         total += 46;
-        if (!(g_wikiClosed & (1u << c))) for (int a = 0; a < kWikiArts; a++) if (kWikiArt[a].cat == c) total += 38;
+        if (!(g_wikiClosed & (1u << c))) for (int a = 0; a < kWikiArts; a++) if (WikiSupported(a) && kWikiArt[a].cat == c) total += 38;
     }
     g_wikiListScroll = min(max(g_wikiListScroll, 0.0f), max(0.0f, total - lr.Height));
     GraphicsState st = g.Save();
@@ -302,7 +303,7 @@ static void DrawWikiList(Graphics &g)
     for (int c = 0; c < kWikiCats; c++) {
         bool open = !(g_wikiClosed & (1u << c)), hot = g_uiHot == UI_WIKI_CAT + c;
         int n = 0;
-        for (int a = 0; a < kWikiArts; a++) if (kWikiArt[a].cat == c) n++;
+        for (int a = 0; a < kWikiArts; a++) if (WikiSupported(a) && kWikiArt[a].cat == c) n++;
         RectF r(lr.X, y, lr.Width, 42);
         if (hot) { GraphicsPath p; RoundRect(p, r, 12); SolidBrush b(TH(card)); g.FillPath(&b, &p); }
         Icon(g, open ? IC_CHEVD : IC_CHEVR, r.X + 16, r.Y + 21, 14, kGrey, 2.2f);
@@ -315,7 +316,7 @@ static void DrawWikiList(Graphics &g)
         y += 46;
         if (!open) continue;
         for (int a = 0; a < kWikiArts; a++) {
-            if (kWikiArt[a].cat != c) continue;
+            if (!WikiSupported(a) || kWikiArt[a].cat != c) continue;
             RectF ar(lr.X + 26, y, lr.Width - 26, 34);
             bool on = a == g_wikiSel, ah = g_uiHot == UI_WIKI_ART + a;
             if (on || ah) { GraphicsPath p; RoundRect(p, ar, 10); SolidBrush b(on ? TH(cardSel) : TH(card)); g.FillPath(&b, &p); }
@@ -333,7 +334,7 @@ static void DrawWikiPage(Graphics &g)
 {
     Glass(kWikiList);
     Glass(kWikiBody);
-    if (g_wikiSel < 0 || g_wikiSel >= kWikiArts) g_wikiSel = 0;
+    if (g_wikiSel < 0 || g_wikiSel >= kWikiArts || !WikiSupported(g_wikiSel)) g_wikiSel = 0;
     DrawWikiList(g);
     const WikiArticle &art = kWikiArt[g_wikiSel];
     RectF b = kWikiBody;

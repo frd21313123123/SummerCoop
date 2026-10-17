@@ -36,12 +36,12 @@ namespace MWCoop
             at = Time.realtimeSinceStartup + (target != null ? 5f : 1f);
             if (Session.Active && !Session.IsHost) { at = -1; return; }
             if (!Wanted) { at = -1; return; }
-            GameObject pm = Game.FindAny("CORRIS/AssembyDatabase/PaintMaterials");
-            PlayMakerFSM f = pm != null ? Game.FsmOn(pm, "ImportPNG") : null;
+            GameObject pm = Game.FindAny("Systems/ImportCarTexture");
+            PlayMakerFSM f = pm != null ? Game.FsmOn(pm, "Get") : null;
             if (f == null) { if (Time.realtimeSinceStartup > until) { at = -1; Log.Warn("peinture perso : ImportPNG introuvable"); } return; }
             string st = f.ActiveStateName;
-            if (st != "State 3" && st != "State 2" && Time.realtimeSinceStartup < until) return;   // (le jeu charge encore car.png)
-            FsmMaterial fm = f.FsmVariables.FindFsmMaterial("Mat");
+            if (st != "State 11" && st != "State 2" && Time.realtimeSinceStartup < until) return;
+            FsmMaterial fm = f.FsmVariables.FindFsmMaterial("Material");
             Material mat = fm != null ? fm.Value : null;
             if (mat == null) { at = -1; Log.Warn("peinture perso : matiere CAR_PAINT_DECAL introuvable"); return; }
             Texture2D cur = mat.mainTexture as Texture2D;
@@ -61,8 +61,9 @@ namespace MWCoop
             if (fresh)
             {
                 mat.mainTexture = t;
-                FsmTexture v = f.FsmVariables.FindFsmTexture("CarCustomPaint") ?? FsmVariables.GlobalVariables.FindFsmTexture("CarCustomPaint");
+                FsmTexture v = f.FsmVariables.FindFsmTexture("CarTexture");
                 if (v != null) v.Value = t;
+                Game.SetState(f, "State 4"); // Native MSC applies the texture to all currently painted body panels.
             }
             target = t;
             if (logs++ < 5) Log.Info("peinture perso : " + t.width + "x" + t.height + " posee sur CAR_PAINT_DECAL (" + (fresh ? "nouvelle texture" : "dans celle de car.png") + ", ImportPNG [" + st + "])");

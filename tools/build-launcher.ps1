@@ -6,16 +6,11 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 
-if (!$Version) {
-    $modelFile = Join-Path $root 'src\Core\Model.cs'
-    if (Test-Path -LiteralPath $modelFile) {
-        $model = Get-Content -LiteralPath $modelFile -Raw
-        if ($model -match 'ModVersion\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)"') {
-            $Version = $Matches[1]
-        }
-    }
-    if (!$Version) { $Version = '0.4.1' }
-}
+$model = Get-Content -LiteralPath (Join-Path $root 'src\Core\Model.cs') -Raw
+if ($model -notmatch 'ModVersion\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)"') { throw 'Cannot read the mod version.' }
+$modVersion = $Matches[1]
+if (!$Version) { $Version = $modVersion }
+if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?(?:-[0-9A-Za-z.-]+)?$') { throw 'Invalid launcher version.' }
 
 if (!$OutputPath) {
     $OutputPath = Join-Path $root 'SummerCoop-Launcher\SummerCoop-Launcher.exe'
@@ -42,11 +37,13 @@ if (!(Test-Path -LiteralPath $coreDll)) {
 
 # Generate mwversion.h
 $parts = $Version.Split('-')[0].Split('.')
-while ($parts.Count -lt 3) { $parts += '0' }
-$mwvNum = "$($parts[0]),$($parts[1]),$($parts[2]),0"
+while ($parts.Count -lt 4) { $parts += '0' }
+foreach ($part in $parts) { if ([long]$part -gt 65535) { throw 'Windows version components cannot exceed 65535.' } }
+$mwvNum = $parts -join ','
 $versionHeader = @"
 #define MWV_NUM $mwvNum
 #define MWV_STR "$Version"
+#define MWV_MOD_STR "$modVersion"
 "@
 $versionHeader | Set-Content -LiteralPath (Join-Path $buildDir 'mwversion.h') -Encoding ascii
 $versionHeader | Set-Content -LiteralPath (Join-Path (Join-Path $root 'launcher') 'mwversion.h') -Encoding ascii
@@ -94,9 +91,11 @@ $deployExe = {
     if (Test-Path -LiteralPath $old) { Remove-Item -LiteralPath $old -Force -ErrorAction SilentlyContinue }
     try {
         Copy-Item -LiteralPath $intermediateExe -Destination $target -Force -ErrorAction Stop
-    } catch {
-        Move-Item -LiteralPath $target -Destination $old -Force -ErrorAction SilentlyContinue
-        Copy-Item -LiteralPath $intermediateExe -Destination $target -Force -ErrorAction SilentlyContinue
+    } catch [IO.IOException] {
+        Move-Item -LiteralPath $target -Destination $old -Force -ErrorAction Stop
+        try { Copy-Item -LiteralPath $intermediateExe -Destination $target -Force -ErrorAction Stop }
+        catch { Move-Item -LiteralPath $old -Destination $target -Force; throw }
+        Remove-Item -LiteralPath $old -Force -ErrorAction SilentlyContinue
     }
     if (Test-Path -LiteralPath $target) {
         $h = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash
@@ -113,10 +112,10 @@ if ($OutputPath -ne $standalonePath) {
     & $deployExe $standalonePath
 }
 
-# Keep dist alias updated when dist exists
+# Keep the dist backup updated as well.
 $distDir = Join-Path $root 'dist'
 $distPath = Join-Path $distDir 'SummerCoop-Launcher.exe'
-if ($OutputPath -ne $distPath -and (Test-Path -LiteralPath $distDir)) {
+if ($OutputPath -ne $distPath) {
     & $deployExe $distPath
 }
 

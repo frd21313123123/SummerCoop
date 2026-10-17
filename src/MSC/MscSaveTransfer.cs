@@ -21,9 +21,11 @@ namespace MWCoop
                     case Msg.SaveBegin:
                         if (incoming != null || PlayerSync.InGame) throw new ProtocolException("Overlapping MSC save transfer");
                         int count = reader.U8(); if (count > NativeSaveBundle.Names.Length) throw new ProtocolException("MSC save file count exceeded");
+                        int shopSequence = reader.I32(); if (shopSequence < 0) throw new ProtocolException("Invalid MSC shop save sequence");
                         string[] names = new string[count], hashes = new string[count]; int[] sizes = new int[count];
                         for (int i = 0; i < count; i++) { names[i] = reader.Str(); sizes[i] = reader.I32(); hashes[i] = reader.Str(); }
                         if (reader.More) throw new ProtocolException("Trailing MSC save manifest data");
+                        MscShop.ReceiveSaveSequence(shopSequence);
                         incoming = new NativeSaveBundle(names, sizes, hashes); SaveTransfer.Done = SaveTransfer.Received = false;
                         SaveTransfer.HostHasSave = count > 0; SaveTransfer.Progress = 0;
                         break;

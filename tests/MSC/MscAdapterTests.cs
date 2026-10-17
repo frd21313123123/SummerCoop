@@ -52,6 +52,29 @@ class MscAdapterTests
         try
         {
 #if !MWCOOP_NETWORK_ONLY
+            Test("MSC checkout and extraction preserve both bag tables and native identities within one UDP packet", delegate {
+                var expected = new MWCoop.MscShopMessage { Op = MWCoop.MscShopMessage.Extract, Ticket = 9, Sequence = 4, Actor = 1,
+                    Bag = "shoppingbagx123", Index = 13, Spray = true, Condition = 73.5f, Items = new int[18], Cans = new int[14], Counters = new int[44] };
+                expected.Items[0] = 2; expected.Items[7] = 1; expected.Cans[13] = 3; expected.Counters[43] = 500;
+                var writer = new NetWriter(Msg.Purchase); expected.Write(writer); byte[] bytes = writer.ToArray();
+                Assert(bytes.Length + 2 < Transport.MaxPayload, "Native shop operation exceeds reliable UDP payload");
+                var actual = MWCoop.MscShopMessage.Read(new NetReader(bytes, 1, bytes.Length - 1));
+                Assert(actual.Items[0] == 2 && actual.Items[7] == 1 && actual.Cans[13] == 3 && actual.Counters[43] == 500, "Bag contents/counter changed in transit");
+                Assert(actual.Index == 13 && actual.Spray && actual.Bag == expected.Bag && actual.Condition == 73.5f, "Selected product/freshness lost");
+                var native = new MWCoop.MscShopMessage { Op = MWCoop.MscShopMessage.Extract, Ticket = 8, Sequence = 5, Bag = "shoppingbagx1", Spray = true, Index = 12, Items = new int[18], Cans = new int[13] };
+                native.Cans[12] = 1; var nativeWriter = new NetWriter(Msg.Purchase); native.Write(nativeWriter); byte[] nativeBytes = nativeWriter.ToArray();
+                Assert(MWCoop.MscShopMessage.Read(new NetReader(nativeBytes, 1, nativeBytes.Length - 1)).Cans.Length == 13, "MSC's real thirteen-slot spray list rejected");
+                Assert(!MWCoop.MscShopMessage.AcceptSequence(4, 4) && !MWCoop.MscShopMessage.AcceptSequence(3, 4)
+                    && MWCoop.MscShopMessage.AcceptSequence(5, 4), "Duplicate/reordered command can create a second item");
+                byte[] truncated = new byte[bytes.Length - 1]; Array.Copy(bytes, truncated, truncated.Length);
+                Reject(delegate { MWCoop.MscShopMessage.Read(new NetReader(truncated, 1, truncated.Length - 1)); });
+                byte[] extra = new byte[bytes.Length + 1]; Array.Copy(bytes, extra, bytes.Length);
+                Reject(delegate { MWCoop.MscShopMessage.Read(new NetReader(extra, 1, extra.Length - 1)); });
+                expected.Index = 14; writer = new NetWriter(Msg.Purchase); expected.Write(writer); bytes = writer.ToArray();
+                Reject(delegate { MWCoop.MscShopMessage.Read(new NetReader(bytes, 1, bytes.Length - 1)); });
+                expected.Index = 13; expected.Items[0] = -1; writer = new NetWriter(Msg.Purchase); expected.Write(writer); bytes = writer.ToArray();
+                Reject(delegate { MWCoop.MscShopMessage.Read(new NetReader(bytes, 1, bytes.Length - 1)); });
+            });
             Test("tool case snapshots preserve both native types and deletion without reusing identities", delegate {
                 var born = ReadCases(CaseSnapshot(3, new[] { 0, 1, 2 }, new[] { 0, 0, 1 }));
                 Assert(born.Revision == 3 && born.Entries.Count == 3 && born.Entries[2].Kind == 1, "Ratchet type lost");

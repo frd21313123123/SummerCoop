@@ -1,0 +1,67 @@
+SummerCoop 0.4.8 - native MSC checkout / bag verification
+Run: shop-final-10
+
+host tested SHA256 03AAC35DFE3664139FAA460B63CD231CA389564BEB71ACF6675CF9F643E7DC0A SummerCoop.dll
+host tested SHA256 E2ECDD8210162CD7946ADDBF89B13A84E2733731DB1994F07E22C9ABD7061E08 References/SummerCoop.Core.dll
+
+host:
+ModMvid=e13be5a4-4b15-43b1-8f71-bb3d13bc01c7
+ShoppingWorldItems=alternator belt2,battery0,battery1,beercase0,beercase1,booze1,brakefluid1,brakefluid2,brakefluid3,coolant1,fuse package1,light bulb box1,light bulb box2,light bulb1,light bulb10,light bulb11,light bulb12,light bulb13,light bulb14,light bulb15,light bulb2,light bulb3,light bulb4,light bulb5,light bulb6,light bulb7,light bulb8,light bulb9,macaronboxx1,macaronboxx2,milkx1,motoroil1,oil filter1,oil filter2,oil filter3,oilfilter0,pizzax1,pizzax2,pizzax3,potatochips1,potatochips2,potatochips4,potatochips5,sausagesx1,sausagesx2,sausagesx3,sausagesx4,sausagesx5,sausagesx6,sausagesx7,sausagesx8,spraycan011,spraycan012,spraycan021,sugar1,sugar2,sugar3,sugar4,sugar5,sugar6,sugar7,sugar8,sugar9,twostroke1,wheel_steel1,wheel_steel2,wheel_steel3,wheel_steel4,wheel_steel5,yeast1,yeast2,yeast3,yeast4,yeast5,yeast6,yeast7,yeast8
+Regression=shopping-native-references;Pass=True;Missing=
+Regression=shopping-payment;Pass=True;Before=2105.806;After=2105.806
+Regression=shopping-cart;Pass=True;Pizza=3;Price=72
+Regression=shopping-contents;Pass=True;Count=7;Bags=shoppingbagx6:Items=2,0,1,0,0,0,0,0,0,0,1,0,1,0,0,0,0,0/Spraycans=2,0,0,0,0,0,0,0,0,0,0,0,0/;
+Regression=shopping-guest-pick;Pass=True;Count=6;Bags=shoppingbagx6:Items=2,0,1,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0/Spraycans=2,0,0,0,0,0,0,0,0,0,0,0,0/;
+Regression=shopping-host-pick;Pass=True;Count=5;Bags=shoppingbagx6:Items=2,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0/Spraycans=2,0,0,0,0,0,0,0,0,0,0,0,0/;
+Regression=shopping-concurrent-pick;Pass=True;Count=3;Bags=shoppingbagx6:Items=1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0/Spraycans=2,0,0,0,0,0,0,0,0,0,0,0,0/;
+Regression=shopping-empty;Pass=True;Count=0;Bags=shoppingbagx6:Items=0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0/Spraycans=0,0,0,0,0,0,0,0,0,0,0,0,0/;
+Regression=shopping-concurrent-purchase;Pass=True;FullBags=2
+Regression=shopping-all-bags-empty;Pass=True;Remaining=0
+Regression=shopping-spawned-objects;Pass=True;Ids=beercase1,milkx1,mscitem:alternator belt2,mscitem:oil filter2,mscitem:oil filter3,pizzax3,potatochips5,sausagesx7,sausagesx8,spraycan011,spraycan012,spraycan021
+Regression=shopping-filters-created;Pass=True;Count=2;Id=mscitem:oil filter2
+Regression=shopping-filter-installed;Pass=True;Id=oil filter2;Installed=True;Stage=0;Tightness=0;Current=True
+Regression=shopping-filter-tightened;Pass=True;Id=oil filter2;Installed=True;Stage=2;Tightness=2;Current=True
+Regression=shopping-filter-unscrewed;Pass=True;Id=oil filter2;Installed=True;Stage=1;Tightness=1;Current=True
+Regression=shopping-filter-removed;Pass=True;Id=oil filter2;Installed=False;Stage=0;Tightness=0;Current=True
+Regression=shopping-fuel-price-reference;Pass=True;Price=5.55;Pump=5.55
+client tested SHA256 03AAC35DFE3664139FAA460B63CD231CA389564BEB71ACF6675CF9F643E7DC0A SummerCoop.dll
+client tested SHA256 E2ECDD8210162CD7946ADDBF89B13A84E2733731DB1994F07E22C9ABD7061E08 References/SummerCoop.Core.dll
+
+client:
+ModMvid=e13be5a4-4b15-43b1-8f71-bb3d13bc01c7
+ShoppingWorldItems=alternator belt2,battery0,battery1,beercase0,beercase1,booze1,brakefluid1,brakefluid2,brakefluid3,coolant1,fuse package1,light bulb box1,light bulb box2,light bulb1,light bulb10,light bulb11,light bulb12,light bulb13,light bulb14,light bulb15,light bulb2,light bulb3,light bulb4,light bulb5,light bulb6,light bulb7,light bulb8,light bulb9,macaronboxx1,macaronboxx2,milkx1,motoroil1,oil filter1,oil filter2,oil filter3,oilfilter0,pizzax1,pizzax2,pizzax3,potatochips1,potatochips2,potatochips4,potatochips5,sausagesx1,sausagesx2,sausagesx3,sausagesx4,sausagesx5,sausagesx6,sausagesx7,sausagesx8,spraycan011,spraycan012,spraycan021,sugar1,sugar2,sugar3,sugar4,sugar5,sugar6,sugar7,sugar8,sugar9,twostroke1,wheel_steel1,wheel_steel2,wheel_steel3,wheel_steel4,wheel_steel5,yeast1,yeast2,yeast3,yeast4,yeast5,yeast6,yeast7,yeast8
+Regression=shopping-native-references;Pass=True;Missing=
+Regression=shopping-payment;Pass=True;Before=2105.806;After=2005.806
+Regression=shopping-contents;Pass=True;Count=7;Bags=shoppingbagx6:Items=2,0,1,0,0,0,0,0,0,0,1,0,1,0,0,0,0,0/Spraycans=2,0,0,0,0,0,0,0,0,0,0,0,0/;
+Regression=shopping-guest-pick;Pass=True;Count=6;Bags=shoppingbagx6:Items=2,0,1,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0/Spraycans=2,0,0,0,0,0,0,0,0,0,0,0,0/;
+Regression=shopping-host-pick;Pass=True;Count=5;Bags=shoppingbagx6:Items=2,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0/Spraycans=2,0,0,0,0,0,0,0,0,0,0,0,0/;
+Regression=shopping-concurrent-pick;Pass=True;Count=3;Bags=shoppingbagx6:Items=1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0/Spraycans=2,0,0,0,0,0,0,0,0,0,0,0,0/;
+Regression=shopping-empty;Pass=True;Count=0;Bags=shoppingbagx6:Items=0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0/Spraycans=0,0,0,0,0,0,0,0,0,0,0,0,0/;
+Regression=shopping-concurrent-purchase;Pass=True;FullBags=2
+Regression=shopping-all-bags-empty;Pass=True;Remaining=0
+Regression=shopping-spawned-objects;Pass=True;Ids=beercase1,milkx1,mscitem:alternator belt2,mscitem:oil filter2,mscitem:oil filter3,pizzax3,potatochips5,sausagesx7,sausagesx8,spraycan011,spraycan012,spraycan021
+Regression=shopping-filters-created;Pass=True;Count=2;Id=mscitem:oil filter2
+Regression=shopping-filter-installed;Pass=True;Id=oil filter2;Installed=True;Stage=0;Tightness=0;Current=True
+Regression=shopping-filter-tightened;Pass=True;Id=oil filter2;Installed=True;Stage=2;Tightness=2;Current=True
+Regression=shopping-filter-unscrewed;Pass=True;Id=oil filter2;Installed=True;Stage=1;Tightness=1;Current=True
+Regression=shopping-filter-removed;Pass=True;Id=oil filter2;Installed=False;Stage=0;Tightness=0;Current=True
+Regression=shopping-fuel-price-reference;Pass=True;Price=5.55;Pump=5.55
+
+Late join: PASS - verified save, no missing/duplicate item identities.
+ShoppingWorldItems=alternator belt2,battery0,battery1,beercase0,beercase1,booze1,brakefluid1,brakefluid2,brakefluid3,coolant1,fuse package1,light bulb box1,light bulb box2,light bulb1,light bulb10,light bulb11,light bulb12,light bulb13,light bulb14,light bulb15,light bulb2,light bulb3,light bulb4,light bulb5,light bulb6,light bulb7,light bulb8,light bulb9,macaronboxx1,macaronboxx2,milkx1,motoroil1,oil filter1,oil filter2,oil filter3,oilfilter0,pizzax1,pizzax2,pizzax3,potatochips1,potatochips2,potatochips4,potatochips5,sausagesx1,sausagesx2,sausagesx3,sausagesx4,sausagesx5,sausagesx6,sausagesx7,sausagesx8,spraycan011,spraycan012,spraycan021,sugar1,sugar2,sugar3,sugar4,sugar5,sugar6,sugar7,sugar8,sugar9,twostroke1,wheel_steel1,wheel_steel2,wheel_steel3,wheel_steel4,wheel_steel5,yeast1,yeast2,yeast3,yeast4,yeast5,yeast6,yeast7,yeast8
+
+Native extraction order:
+MSC shop: extract 2;bag=shoppingbagx6;product=Alternatorbelt;object=alternator belt2
+MSC shop: extract 3;bag=shoppingbagx6;product=Oilfilter;object=oil filter2
+MSC shop: extract 4;bag=shoppingbagx6;product=Pizza;object=pizzax3
+MSC shop: extract 5;bag=shoppingbagx6;product=Sausages;object=sausagesx7
+MSC shop: extract 6;bag=shoppingbagx6;product=Sausages;object=sausagesx8
+MSC shop: extract 7;bag=shoppingbagx6;product=Can01;object=spraycan011
+MSC shop: extract 8;bag=shoppingbagx6;product=Can01;object=spraycan012
+MSC shop: extract 11;bag=shoppingbagx8;product=Chips;object=potatochips5
+MSC shop: extract 12;bag=shoppingbagx8;product=Milk;object=milkx1
+MSC shop: extract 13;bag=shoppingbagx7;product=Oilfilter;object=oil filter3
+MSC shop: extract 14;bag=shoppingbagx7;product=Can02;object=spraycan021
+
+Original single-player saves changed: 0
+Scope: actual native MSC processes over local UDP on a hidden desktop. No WAN/two-account Steam or full playthrough claim.

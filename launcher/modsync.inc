@@ -16,7 +16,7 @@
 //    morceau) ; salon Steam, les memes en pair-a-pair Steam (canal 5, fiable), la liste demandee (M_MODSREQ) quand
 //    la donnee "mods" du salon (empreinte de la liste) change.
 //  - Contenu personnalisable du jeu (0.37, demande de JD) : CD1-3 (musiques, jaquette), Radio, Images (peinture de la
-//    CORRIS car.png, mobylette, drapeau du garage, posters, autocollant, tissu, photo d'identite) et Extra (hockey).
+//    Satsuma car.png, mobylette, drapeau du garage, posters, autocollant, tissu, photo d'identite) et Extra (hockey).
 //    L'hote coche ce qu'il envoie (volet "Contenu envoye aux invites" : COOP, ou CHOISIR dans le salon ; [Contenu]
 //    de summercoop-launcher.ini). Meme liste que les mods, chemins "<dossier>\..." ("Mods\..." pour les mods). L'invite
 //    les recoit dans %LOCALAPPDATA%\MWCoop\contenu-invite\ ; sa copie de lancement relie CD1-3, Radio et Extra a ceux
@@ -147,7 +147,7 @@ static std::string g_offerBlob;           // (sous g_lcs) message M_MODS pret a 
 static std::vector<std::string> g_offerExtra;   // (sous g_lcs) suite de la liste (M_MODSX), envoyee juste apres
 static std::wstring g_offerDir;           // (sous g_lcs) dossier Mods de l'hote
 static std::wstring g_offerGame;          // (sous g_lcs) dossier du jeu de l'hote (contenu)
-static std::wstring g_offerPaint;         // (sous g_lcs) peinture perso de la CORRIS envoyee a la place de Images\car.png (vide : celle du jeu)
+static std::wstring g_offerPaint;         // (sous g_lcs) peinture perso de la Satsuma envoyee a la place de Images\car.png (vide : celle du jeu)
 static bool IsCarPng(const std::wstring &rel) { return !_wcsicmp(rel.c_str(), L"Images\\car.png"); }
 static std::atomic<int> g_offerBusy(0);
 static std::atomic<bool> g_offerNew(false);
@@ -194,7 +194,7 @@ static const ContentCat kContent[] = {
     { "cd2", L"CD 2", L"CD 2", L"CD2", NULL, true },
     { "cd3", L"CD 3", L"CD 3", L"CD3", NULL, true },
     { "radio", L"Radio", L"Radio", L"Radio", NULL, true },
-    { "peinture", L"Peinture de la CORRIS", L"CORRIS paint", L"Images", L"car.png", true },
+    { "peinture", L"Peinture de la Satsuma", L"Satsuma paint", L"Images", L"car.png", true },
     { "mobylette", L"Peinture de la mobylette", L"Moped paint", L"Images", L"jonnez_template.png", true },
     { "drapeau", L"Drapeau du garage", L"Garage flag", L"Images", L"flag_garage.png", true },
     { "posters", L"Posters", L"Posters", L"Images", L"poster1.png|poster2.png|poster3.png", true },

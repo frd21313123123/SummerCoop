@@ -43,6 +43,7 @@ namespace MWCoop
                     if (!MscToolCases.Generated(mesh.transform) && !string.IsNullOrEmpty(mesh.saveFile) && !string.IsNullOrEmpty(mesh.uniqueTag)) mesh.Save();
                 SleepingBags.OnGameSave();
                 MscSaveGuard.End();
+                MscShop.MarkSaved();
                 Log.Info("MSC saved without switching native FSM states: " + count + " actions");
             }
             catch { MscSaveGuard.Rollback(); throw; }

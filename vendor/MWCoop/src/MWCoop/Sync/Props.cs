@@ -142,9 +142,8 @@ namespace MWCoop
 
         static bool censusDone, worldLogged;
         static readonly Dictionary<GameObject, string> worldKeys = new Dictionary<GameObject, string>();
-        static readonly HashSet<string> WorldRoots = new HashSet<string> { "EQUIPMENTS", "ITEMS", "Systems", "YARD", "COTTAGE", "CABIN", "MISC",
-            "JOBS", "STORE_AREA", "SOCCER", "MAP", "PERAJARVI", "HOMENEW",
-            "Cutter" };   // (fendeur de bois du KEKMET : detele, il n'etait suivi par personne -- chacun le sien, 08/10)   // plaques de puits, mobilier du pub, buts, abribus...
+        static readonly HashSet<string> WorldRoots = new HashSet<string> { "ITEMS", "Systems", "YARD", "COTTAGE", "MISC",
+            "JOBS", "STORE", "REPAIRSHOP", "DANCEHALL", "LANDFILL", "MAP", "PERAJARVI" };
 
         public static string WorldKeyOf(Rigidbody rb) { return WorldKey(rb); }   // (Fluids : bidons)
 

@@ -29,8 +29,7 @@ namespace MWCoop
         static readonly List<Ev> evs = new List<Ev>();
         static readonly Dictionary<string, Ev> byKey = new Dictionary<string, Ev>();
         static readonly HashSet<PlayMakerFSM> seen = new HashSet<PlayMakerFSM>();
-        static readonly string[] Places = { "JOBS", "PERAJARVI", "STORE_AREA", "PERAPORTTI", "REPAIRSHOP", "DANCEHALL", "WATERFACILITY", "LANDFILL",
-                                            "FleaMarket", "CABIN", "COTTAGE", "SOCCER" };
+        static readonly string[] Places = { "JOBS", "PERAJARVI", "STORE", "REPAIRSHOP", "DANCEHALL", "WATERFACILITY", "LANDFILL", "COTTAGE" };
         // (Anims : gestes d'un PNJ -- le proprio d'une fosse (JOBS/HouseShitN/LOD/ShitNPC/Man::Anims) mesure la distance au
         // joueur et tend l'argent en allumant PayMoney ; decide par l'hote, il ne le tendait chez l'invite que si l'hote etait
         // pres de la maison, l'invite qui avait vide la fosse n'etait jamais paye -- retour de gamereggo, 11/10)

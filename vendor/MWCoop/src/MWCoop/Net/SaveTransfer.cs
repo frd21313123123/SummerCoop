@@ -75,12 +75,12 @@ namespace MWCoop.Net
                 foreach (Peer p in Session.T.Peers) if (Session.AuthenticatedForSave(p)) Queue(p);
             }
             // Nouvelle partie : 13 s pour que les pieces se posent et que la couleur choisie soit appliquee.
-            if (waiting.Count == 0 || newGame && now - inGameSince < 13f) return;
+            if (waiting.Count == 0 || MscShop.Busy || newGame && now - inGameSince < 13f) return;
             if (sendAt < 0)
             {
                 // Partie qui vient d'etre chargee (Continuer) : la sauvegarde du disque EST le monde, envoi
                 // tout de suite. Sinon (nouvelle partie, invite arrive en cours de route) : on sauve d'abord.
-                bool fresh = !newGame && now - inGameSince < 60f && File.Exists(Path.Combine(SaveDir, "defaultES2File.txt"));
+                bool fresh = !newGame && !MscShop.Unsaved && now - inGameSince < 60f && File.Exists(Path.Combine(SaveDir, "defaultES2File.txt"));
                 if (!fresh)
                 {
                     newGame = false;
@@ -195,7 +195,7 @@ namespace MWCoop.Net
             var data = new List<byte[]>();
             long total = 0;
             foreach (string f in list) { byte[] b = File.ReadAllBytes(f); data.Add(b); total += b.Length; }
-            var w = new NetWriter(Msg.SaveBegin).U8(list.Count);
+            var w = new NetWriter(Msg.SaveBegin).U8(list.Count).I32(MscShop.SavedSequence);
             for (int i = 0; i < list.Count; i++) w.Str(Path.GetFileName(list[i])).I32(data[i].Length).Str(SummerCoop.Core.Codec.Hash(data[i]));
             Session.T.SendReliable(p, w.ToArray());
             outgoing.Add(new Outgoing { P = p, Data = data, Total = total });
@@ -604,6 +604,7 @@ namespace MWCoop.Net
 
         static void HostCoop(float now)
         {
+            if (MscShop.Busy) return;
             if (coopPhase == 0) return;
             if (!PlayerSync.InGame) { coopPhase = 0; Log.Warn("sauvegarde coop #" + coopSeq + " abandonnee : l'hote n'est plus en jeu"); return; }
             if (now < coopAt || Game.Saving) return;
@@ -765,6 +766,7 @@ namespace MWCoop.Net
         // ------------------------------------------------------------ invite
         static void GuestCoop(float now)
         {
+            if (MscShop.Busy) return;
             if (guestCmpSeq == 0 || now < guestCmpAt || Game.Saving) return;
             if (!PlayerSync.InGame) { guestCmpSeq = 0; return; }
             if (!Settled()) { guestCmpAt = now + 0.5f; return; }

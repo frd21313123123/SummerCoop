@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using MWCoop.Net;
 using UnityEngine;
 
@@ -112,10 +112,10 @@ namespace MWCoop
             for (int i = 0; i < hours.Length; i++)
                 if (Button(new Rect(ix + Style.Px(90) + i * (hw + gap), cy, hw, bh), hours[i] + " h", false, e, ok)) Do("/heure " + hours[i], Lang.T("Il est ", "It's ") + hours[i] + " h");
             cy += bh + gap;
-            Style.Text(new Rect(ix, cy, Style.Px(90), bh), Lang.T("Neige", "Snow"), 15, TextAnchor.MiddleLeft, Style.White, false);
+            Style.Text(new Rect(ix, cy, Style.Px(90), bh), Lang.T("Pluie", "Rain"), 15, TextAnchor.MiddleLeft, Style.White, false);
             float sw = Style.Px(140);
-            if (Button(new Rect(ix + Style.Px(90), cy, sw, bh), Lang.T("OUI", "ON"), false, e, ok)) Do("/neige oui", Lang.T("Il neige", "It's snowing"));
-            if (Button(new Rect(ix + Style.Px(90) + sw + gap, cy, sw, bh), Lang.T("NON", "OFF"), false, e, ok)) Do("/neige non", Lang.T("Temps sec", "Dry weather"));
+            if (Button(new Rect(ix + Style.Px(90), cy, sw, bh), Lang.T("OUI", "ON"), false, e, ok)) Do("/pluie oui", Lang.T("Il pleut", "It's raining"));
+            if (Button(new Rect(ix + Style.Px(90) + sw + gap, cy, sw, bh), Lang.T("NON", "OFF"), false, e, ok)) Do("/pluie non", Lang.T("Temps sec", "Dry weather"));
             cy += bh + gap;
             // bas : resultat, ou rappel du tchat
             Rect foot = new Rect(ix, y + h - Style.Px(44), iw, Style.Px(30));

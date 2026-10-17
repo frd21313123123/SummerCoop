@@ -1277,7 +1277,7 @@ static void DrawSettings(Graphics &g)
     {
         RectF row(up.X + 20, up.Y + 176, up.Width - 40, 50);
         bool on = AutoInstallUpdates();
-        SetRowText(g, RectF(row.X, row.Y, row.Width - 70, row.Height), T(L"Mettre à jour automatiquement", L"Auto-install updates"), T(L"Télécharger et redémarrer dès qu'une version sort", L"Download and restart when a new version is released"));
+        SetRowText(g, RectF(row.X, row.Y, row.Width - 70, row.Height), T(L"Mettre à jour automatiquement", L"Auto-install updates"), T(L"Au repos ; conserve tes réglages", L"When idle; keeps your settings"));
         UiToggle(g, RectF(row.X + row.Width - 50, row.Y + 11, 50, 28), on, g_uiHot == UI_SET_AUTOINSTALL);
         HotZone(row, UI_SET_AUTOINSTALL);
     }

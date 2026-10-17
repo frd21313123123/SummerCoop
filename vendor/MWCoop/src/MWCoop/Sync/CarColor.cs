@@ -109,7 +109,7 @@ namespace MWCoop
         static IEnumerator ExportSteps()
         {
             Rigidbody mscCar = VehicleSync.Body("SATSUMA");
-            GameObject car = mscCar != null ? mscCar.gameObject : GameObject.Find("CORRIS");
+            GameObject car = mscCar != null ? mscCar.gameObject : Game.FindAny("SATSUMA(557kg, 248)");
             if (car == null) throw new System.IO.IOException("Satsuma preview: car not loaded");
             bool msc = mscCar != null;
             Transform root = car.transform;
@@ -494,7 +494,7 @@ namespace MWCoop
                 foreach (PlayMakerFSM f in car.GetComponentsInChildren<PlayMakerFSM>(true))
                     if (f.FsmName == "Paint" && IsBodyPaint(f)) { TryOverride(f); return; }
             }
-            GameObject body = Game.FindAny("CORRIS/BODY/car body(xxxxx)");
+            GameObject body = Game.FindAny("SATSUMA(557kg, 248)/Body/car body(xxxxx)");
             PlayMakerFSM paint = body != null ? Game.FsmOn(body, "Paint") : null;
             if (paint == null) { Log.Warn("voiture : carrosserie introuvable"); return; }
             TryOverride(paint);
@@ -513,7 +513,7 @@ namespace MWCoop
             col.Value = c;
             FsmInt type = paint.FsmVariables.FindFsmInt("PaintType");
             if (type != null && type.Value > 2) type.Value = 1;   // couleur speciale tiree : brillant
-            Log.Info("voiture : couleur choisie " + c + " appliquee a la nouvelle CORRIS");
+            Log.Info("voiture : couleur choisie " + c + " appliquee a la Satsuma");
             paint.SendEvent("REPAINT");
             return true;
         }
@@ -521,7 +521,7 @@ namespace MWCoop
         static bool IsBodyPaint(PlayMakerFSM paint)
         {
             string root = paint.transform.root.name;
-            return (root == "CORRIS" || root.StartsWith("SATSUMA")) && paint.name.ToLowerInvariant().Contains("body");
+            return root.StartsWith("SATSUMA") && paint.name.ToLowerInvariant().Contains("body");
         }
 
         public static bool Parse(string hex, out Color c)

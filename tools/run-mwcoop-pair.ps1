@@ -3,7 +3,7 @@ param([ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9_-]{0,48}$')][string]$Run = ('mwco
     [ValidateRange(320,7680)][int]$Width = 640, [ValidateRange(240,4320)][int]$Height = 480,
     [ValidateSet('Local','Host','Client')][string]$Role = 'Local', [string]$JoinAddress = '127.0.0.1',
     [ValidatePattern('^[a-zA-Z0-9_-]+$')][string[]]$ExtraClientGames,
-    [string]$BuildDirectory, [string]$SeedProfile, [switch]$Optimization, [switch]$PartsProfile, [switch]$ToolCases, [switch]$ToolCaseMenu, [switch]$BoltPositions, [ValidateSet('Host','Guest')][string]$ActionActor = 'Host')
+    [string]$BuildDirectory, [string]$SeedProfile, [switch]$Optimization, [switch]$PartsProfile, [switch]$ToolCases, [switch]$ToolCaseMenu, [switch]$BoltPositions, [switch]$Shopping, [ValidateSet('Host','Guest')][string]$ActionActor = 'Host')
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $local = Join-Path $root '.local'
@@ -12,7 +12,7 @@ $BuildDirectory = (Resolve-Path -LiteralPath $BuildDirectory).Path
 if ($SeedProfile) { $SeedProfile = (Resolve-Path -LiteralPath $SeedProfile).Path }
 if ($PartsProfile -and !$Performance) { throw 'Parts profiling requires passive performance mode.' }
 if ($Performance) {
-    if ($Actions -or $Vehicles -or $Garage -or $Workshop -or $Platforms -or $Activities -or $Regression -or $Assembly -or $Carrier -or $Optimization -or $BoltPositions) { throw 'Performance mode cannot run functional probes.' }
+    if ($Actions -or $Vehicles -or $Garage -or $Workshop -or $Platforms -or $Activities -or $Regression -or $Assembly -or $Carrier -or $Optimization -or $BoltPositions -or $Shopping) { throw 'Performance mode cannot run functional probes.' }
     if (!$PSBoundParameters.ContainsKey('Duration')) { $Duration = 600 }
     if (!$PSBoundParameters.ContainsKey('Width')) { $Width = 2560 }
     if (!$PSBoundParameters.ContainsKey('Height')) { $Height = 1440 }
@@ -42,6 +42,7 @@ if ($Activities -and !$PSBoundParameters.ContainsKey('Duration')) { $Duration = 
 if ($Regression -and !$PSBoundParameters.ContainsKey('Duration')) { $Duration = 295 }
 if ($Assembly -and !$PSBoundParameters.ContainsKey('Duration')) { $Duration = 180 }
 if ($Carrier -and !$Assembly -and !$PSBoundParameters.ContainsKey('Duration')) { $Duration = 135 }
+if ($Shopping -and !$PSBoundParameters.ContainsKey('Duration')) { $Duration = 140 }
 $vehicleChannel = Join-Path $local ($Run + '-vehicles')
 $garageChannel = Join-Path $local ($Run + '-garage')
 $workshopChannel = Join-Path $local ($Run + '-workshop')
@@ -50,6 +51,7 @@ $regressionChannel = Join-Path $local ($Run + '-regression')
 $activitiesChannel = Join-Path $local ($Run + '-activities')
 $assemblyChannel = Join-Path $local ($Run + '-assembly')
 $carrierChannel = Join-Path $local ($Run + '-carrier')
+$shoppingChannel = Join-Path $local ($Run + '-shopping')
 if ($Port -lt 1024 -or $Port -gt 65535 -or $Duration -lt 10 -or $Duration -gt $(if ($Performance) { 3600 } else { 900 })) { throw 'Invalid test port or duration.' }
 foreach ($instance in $instances) {
     if (Test-Path -LiteralPath (Join-Path $local ($Run + '-' + $instance.Name))) { throw 'Use a fresh test run name.' }
@@ -91,6 +93,7 @@ if ($Activities) {
 }
 if ($Assembly) { New-Item -ItemType Directory -Path $assemblyChannel | Out-Null }
 if ($Carrier) { New-Item -ItemType Directory -Path $carrierChannel | Out-Null }
+if ($Shopping) { New-Item -ItemType Directory -Path $shoppingChannel | Out-Null }
 $original = Join-Path $env:USERPROFILE 'AppData\LocalLow\Amistech\My Summer Car'
 $before = @(Get-ChildItem -LiteralPath $original -File -ErrorAction SilentlyContinue | Where-Object Name -in @('defaultES2File.txt','items.txt','meshsave.txt','graveyard.txt','trophies.txt','carparts.txt') | Get-FileHash -Algorithm SHA256 | Select-Object Path,Hash)
 $before | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $local ($Run + '-original-before.json')) -Encoding utf8
@@ -123,6 +126,7 @@ foreach ($instance in $instances) {
     if ($ActionActor -eq 'Guest') { $arguments += ' --summercoop-test-action-actor guest' }
     if ($Assembly) { $arguments += ' --summercoop-test-assembly-channel "' + $assemblyChannel + '"' }
     if ($Carrier) { $arguments += ' --summercoop-test-carrier-channel "' + $carrierChannel + '"' }
+    if ($Shopping) { $arguments += ' --summercoop-test-shopping-channel "' + $shoppingChannel + '"' }
     if ($Garage) { $arguments += ' --summercoop-test-garage-channel "' + $garageChannel + '"' }
     if ($Workshop) { $arguments += ' --summercoop-test-workshop-channel "' + $workshopChannel + '"' }
     if ($Vehicles) { $arguments += ' --summercoop-test-vehicle-channel "' + $vehicleChannel + '"' }

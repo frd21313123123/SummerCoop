@@ -2,7 +2,7 @@
 // Demande de JD (07/10, et d'un joueur sur Nexus) : corpulence, pantalon, visage, chapeau, lunettes, cheveux, en plus du
 // haut. Le mod releve tout chez les PNJ du jeu et l'exporte (Sync\Looks.cs) : <jeu>\MWCoop\cache\perso.mesh (corps poses
 // debout, accessoires, listes des matieres) et cache\perso\<matiere>.png (textures, 256 px au plus) + couleurs.txt.
-// Ici : apercu 3D texture (meme rendu logiciel que la CORRIS : perspective, profondeur, Gouraud, rendu 2x reduit), et
+// Ici : apercu 3D texture (meme rendu logiciel que la Satsuma : perspective, profondeur, Gouraud, rendu 2x reduit), et
 // une ligne par partie avec ses fleches, rangees comme le corps (tete en haut, jambes en bas).
 // Reglages : [Coop] du mwcoop.ini (Apparence = le haut, deja la ; Pantalon, Visage, Corps, Chapeau, Lunettes,
 // Cheveux ; vide = celui du modele / aucun). Le mod les assemble en "haut|pantalon|visage|corps|chapeau|lunettes|cheveux".

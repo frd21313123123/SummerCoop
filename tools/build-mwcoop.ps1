@@ -22,7 +22,11 @@ $refs = $required | ForEach-Object { '-r:' + (Join-Path $managed $_) }
 $refs += '-r:' + (Join-Path $build 'SummerCoop.Core.dll')
 $upstream = Join-Path $root 'vendor\MWCoop'
 $buildText = Get-Content -LiteralPath (Join-Path $upstream 'build.cmd') -Raw
-$resources = @([regex]::Matches($buildText, '-resource:([^\s,]+),([^\s]+)') | ForEach-Object { '-resource:' + (Join-Path $upstream $_.Groups[1].Value) + ',' + $_.Groups[2].Value })
+$resources = @([regex]::Matches($buildText, '-resource:([^\s,]+),([^\s]+)') | ForEach-Object {
+    $resourcePath = Join-Path $upstream $_.Groups[1].Value
+    if ($_.Groups[2].Value -eq 'MWCoop.logo-titre.png') { $resourcePath = Join-Path $root 'launcher\logo-titre.png' }
+    '-resource:' + $resourcePath + ',' + $_.Groups[2].Value
+})
 & $dotnet (Join-Path $sdk.FullName 'Roslyn\bincore\csc.dll') -nologo -noconfig -nostdlib -target:library -optimize -langversion:7.3 '-nowarn:1701,1702,0108,0618,0169,0414,0649,0219' ('-out:' + (Join-Path $build 'SummerCoop.dll')) $refs $resources $sources
 if ($LASTEXITCODE) { throw 'MWCoop MSC adapter build failed' }
 if (!$SkipTests) {
