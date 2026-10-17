@@ -69,13 +69,14 @@ if (!(Test-Path -LiteralPath $vcvars)) {
 $launcherDir = Join-Path $root 'launcher'
 $resFile = Join-Path $buildDir 'launcher.res'
 $cmdScript = Join-Path $buildDir 'compile-launcher.cmd'
+$intermediateExe = Join-Path $buildDir 'SummerCoop-Launcher.exe'
 
 $batch = @"
 @echo off
 call "$vcvars" >nul || exit /b 1
 cd /d "$launcherDir"
 rc /nologo /i "$buildDir" /i "$launcherDir" /fo "$resFile" launcher.rc || exit /b 1
-cl /nologo /O2 /MT /W3 /EHsc /utf-8 /std:c++17 /DUNICODE /D_UNICODE /D_CRT_SECURE_NO_WARNINGS /Fo"$buildDir\\" launcher.cpp "$resFile" /Fe"$OutputPath" /link /SUBSYSTEM:WINDOWS user32.lib gdi32.lib gdiplus.lib winhttp.lib comdlg32.lib shell32.lib ole32.lib advapi32.lib shlwapi.lib ws2_32.lib winmm.lib oleaut32.lib uuid.lib delayimp.lib /DELAYLOAD:winhttp.dll /DELAYLOAD:winmm.dll || exit /b 1
+cl /nologo /O2 /MT /W3 /EHsc /utf-8 /std:c++17 /DUNICODE /D_UNICODE /D_CRT_SECURE_NO_WARNINGS /Fo"$buildDir\\" launcher.cpp "$resFile" /Fe"$intermediateExe" /link /SUBSYSTEM:WINDOWS user32.lib gdi32.lib gdiplus.lib winhttp.lib comdlg32.lib shell32.lib ole32.lib advapi32.lib shlwapi.lib ws2_32.lib winmm.lib oleaut32.lib uuid.lib delayimp.lib /DELAYLOAD:winhttp.dll /DELAYLOAD:winmm.dll || exit /b 1
 "@
 
 $batch | Set-Content -LiteralPath $cmdScript -Encoding ascii
@@ -84,28 +85,39 @@ if ($LASTEXITCODE -ne 0) {
     throw "Native launcher compilation failed with exit code $LASTEXITCODE"
 }
 
-$hash = (Get-FileHash -LiteralPath $OutputPath -Algorithm SHA256).Hash
-("$hash  " + [IO.Path]::GetFileName($OutputPath)) | Set-Content -LiteralPath ($OutputPath + '.sha256') -Encoding ASCII
+$deployExe = {
+    param([string]$target)
+    if (!$target) { return }
+    $dir = Split-Path -Parent $target
+    New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    $old = $target + '.old'
+    if (Test-Path -LiteralPath $old) { Remove-Item -LiteralPath $old -Force -ErrorAction SilentlyContinue }
+    try {
+        Copy-Item -LiteralPath $intermediateExe -Destination $target -Force -ErrorAction Stop
+    } catch {
+        Move-Item -LiteralPath $target -Destination $old -Force -ErrorAction SilentlyContinue
+        Copy-Item -LiteralPath $intermediateExe -Destination $target -Force -ErrorAction SilentlyContinue
+    }
+    if (Test-Path -LiteralPath $target) {
+        $h = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash
+        ("$h  " + [IO.Path]::GetFileName($target)) | Set-Content -LiteralPath ($target + '.sha256') -Encoding ASCII
+    }
+}
+
+& $deployExe $OutputPath
 
 # Ensure SummerCoop-Launcher folder stays updated
 $standaloneDir = Join-Path $root 'SummerCoop-Launcher'
 $standalonePath = Join-Path $standaloneDir 'SummerCoop-Launcher.exe'
 if ($OutputPath -ne $standalonePath) {
-    New-Item -ItemType Directory -Path $standaloneDir -Force | Out-Null
-    try {
-        Copy-Item -LiteralPath $OutputPath -Destination $standalonePath -Force -ErrorAction Stop
-        ("$hash  SummerCoop-Launcher.exe") | Set-Content -LiteralPath ($standalonePath + '.sha256') -Encoding ASCII
-    } catch {}
+    & $deployExe $standalonePath
 }
 
 # Keep dist alias updated when dist exists
 $distDir = Join-Path $root 'dist'
 $distPath = Join-Path $distDir 'SummerCoop-Launcher.exe'
 if ($OutputPath -ne $distPath -and (Test-Path -LiteralPath $distDir)) {
-    try {
-        Copy-Item -LiteralPath $OutputPath -Destination $distPath -Force -ErrorAction Stop
-        ("$hash  SummerCoop-Launcher.exe") | Set-Content -LiteralPath ($distPath + '.sha256') -Encoding ASCII
-    } catch {}
+    & $deployExe $distPath
 }
 
 Write-Output "Successfully built native launcher: $OutputPath"

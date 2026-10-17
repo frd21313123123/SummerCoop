@@ -479,13 +479,30 @@ static void DrawRail(Graphics &g)
         GraphicsPath gp; RoundRect(gp, RectF(b.r.X - 3, b.r.Y - 3, b.r.Width + 6, b.r.Height + 6), 15);
         SolidBrush glow(WithA(kAcc, 0.10f + 0.14f * pulse * (1 - b.hover))); g.FillPath(&glow, &gp);
         GraphicsPath p; RoundRect(p, b.r, 12);
-        SolidBrush fb(WithA(kAcc, b.enabled ? 1.0f : 0.45f)); g.FillPath(&fb, &p);
+        SolidBrush fb(WithA(kAcc, b.enabled ? 1.0f : 0.70f)); g.FillPath(&fb, &p);
         if (b.hover > 0.01f) { SolidBrush hb(Color((BYTE)(60 * b.hover), 255, 255, 255)); g.FillPath(&hb, &p); }
-        std::wstring v = UpdAvail();
-        size_t dash = v.find(L'-');
-        if (dash != std::wstring::npos) v.resize(dash);
-        Icon(g, IC_DOWNLOAD, b.r.X + 20, b.r.Y + b.r.Height / 2, 17, kOnAcc, 2.2f);
-        Text(g, std::wstring(T(L"Mettre à jour · ", L"Update · ")) + v, RectF(b.r.X + 34, b.r.Y, b.r.Width - 40, b.r.Height), 13, FontStyleBold, kOnAcc, StringAlignmentNear);
+        if (g_updating) {
+            float pr = (float)g_progress;
+            if (pr < 0.0f) pr = 0.0f;
+            if (pr > 1.0f) pr = 1.0f;
+            if (pr > 0.0f) {
+                GraphicsPath pp; RoundRect(pp, RectF(b.r.X + 2, b.r.Y + 2, (b.r.Width - 4) * pr, b.r.Height - 4), 10);
+                SolidBrush pb(Color(70, 255, 255, 255)); g.FillPath(&pb, &pp);
+            }
+            int pct = (int)(pr * 100.0f + 0.5f);
+            wchar_t progText[64];
+            if (pct >= 100) swprintf_s(progText, L"%s", T(L"Redémarrage…", L"Restarting…"));
+            else if (pct > 0) swprintf_s(progText, L"%s %d%%", T(L"Téléchargement…", L"Downloading…"), pct);
+            else swprintf_s(progText, L"%s", T(L"Téléchargement…", L"Downloading…"));
+            Icon(g, IC_DOWNLOAD, b.r.X + 20, b.r.Y + b.r.Height / 2, 17, kOnAcc, 2.2f);
+            Text(g, progText, RectF(b.r.X + 34, b.r.Y, b.r.Width - 40, b.r.Height), 13, FontStyleBold, kOnAcc, StringAlignmentNear);
+        } else {
+            std::wstring v = UpdAvail();
+            size_t dash = v.find(L'-');
+            if (dash != std::wstring::npos) v.resize(dash);
+            Icon(g, IC_DOWNLOAD, b.r.X + 20, b.r.Y + b.r.Height / 2, 17, kOnAcc, 2.2f);
+            Text(g, std::wstring(T(L"Mettre à jour · ", L"Update · ")) + v, RectF(b.r.X + 34, b.r.Y, b.r.Width - 40, b.r.Height), 13, FontStyleBold, kOnAcc, StringAlignmentNear);
+        }
         y0 = 180;
     }
     // groupes jusqu'a Reglages (674) : lignes de 44 px, ou de 40 quand le bouton de mise a jour prend de la place

@@ -601,7 +601,10 @@ static bool HttpGet(const std::wstring &url, std::string *out, const std::wstrin
                 if (f != INVALID_HANDLE_VALUE) { DWORD w = 0; if (!WriteFile(f, buf.data(), n, &w, NULL) || w != n) ok = false; }
                 else out->append(buf.data(), n);
                 got += n;
-                if (progress && total) g_progress = (float)got / total;
+                if (progress && total) {
+                    g_progress = (float)got / total;
+                    if (g_wnd) InvalidateRect(g_wnd, NULL, FALSE);
+                }
             }
             if (ok && total && got != total) ok = false;
         }
@@ -1175,7 +1178,7 @@ static void UpdSet(const std::wstring &v, const std::wstring &page = L"", const 
     EnterCriticalSection(&g_cs); g_updVer = v; g_updPage = page; g_updExeUrl = exeUrl; LeaveCriticalSection(&g_cs);
 }
 static bool AutoCheckUpdates() { return GetPrivateProfileIntW(L"Lanceur", L"CheckUpdates", 1, g_iniLauncher.c_str()) != 0; }
-static bool AutoInstallUpdates() { return GetPrivateProfileIntW(L"Lanceur", L"AutoUpdate", 1, g_iniLauncher.c_str()) != 0; }
+static bool AutoInstallUpdates() { return GetPrivateProfileIntW(L"Lanceur", L"AutoUpdate", 0, g_iniLauncher.c_str()) != 0; }
 static bool ChannelNightly()
 {
     wchar_t b[16] = L"";
@@ -1269,6 +1272,7 @@ static DWORD WINAPI SelfUpdateThread(void *param)
     g_progress = 1.0f;
     SetStatus(K_OK, T(L"Mise à jour prête, redémarrage…", L"Update ready, restarting…"));
     LaunchLog("mise a jour %s telechargee, redemarrage en cours", Narrow(ver, CP_UTF8).c_str());
+    if (g_wnd) InvalidateRect(g_wnd, NULL, FALSE);
     Sleep(500);
 
     DeleteFileW(oldFile.c_str());
@@ -1286,6 +1290,7 @@ static DWORD WINAPI SelfUpdateThread(void *param)
         if (CreateProcessW(g_self.c_str(), cmdBuf.data(), NULL, NULL, FALSE, 0, NULL, g_dir.c_str(), &si, &pi)) {
             CloseHandle(pi.hThread);
             CloseHandle(pi.hProcess);
+            if (g_wnd) ShowWindow(g_wnd, SW_HIDE);
             ExitProcess(0);
         }
     }
@@ -1354,6 +1359,9 @@ static void StartUpdate(bool download = false)
         std::wstring ver = UpdAvail();
         std::wstring url = UpdExeUrl();
         std::wstring page = UpdPage();
+        if (url.empty() && !ver.empty()) {
+            url = L"https://github.com/" + g_repo + L"/releases/download/v" + ver + L"/SummerCoop-Launcher.exe";
+        }
         if (!url.empty()) {
             StartSelfUpdate(ver, url, page);
         } else {
@@ -1438,8 +1446,8 @@ static void UpdateButtons()
     g_btn[B_LOGDIR].enabled = g_btn[B_LOGZIP].enabled = true;
     g_btn[B_NETIP].visible = g_btn[B_NETSTEAM].visible = menu && game && home && lobby == LB_NONE && !g_goWait;
     g_btn[B_NETIP].enabled = g_btn[B_NETSTEAM].enabled = !busy;
-    g_btn[B_UPDATE].visible = menu && !busy && !g_goWait && !UpdAvail().empty();
-    g_btn[B_UPDATE].enabled = lobby == LB_NONE;   // (pendant un salon : on finit d'abord la partie)
+    g_btn[B_UPDATE].visible = menu && !g_goWait && (!UpdAvail().empty() || g_updating);
+    g_btn[B_UPDATE].enabled = lobby == LB_NONE && !g_updating;
 }
 
 
