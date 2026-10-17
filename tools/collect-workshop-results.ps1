@@ -49,7 +49,8 @@ foreach ($test in $testFiles) {
 $rows += @('',
     'Fixture limits: native FSM actions replace mouse input; prerequisite parts are mounted by the fixture.',
     'Wiring Status gates are disabled to expose unmounted connectors; the belt is spawned natively on both peers.',
-    'Physics steps are paused before inspection; the fifth phase tightens fully loose fasteners as the guest.',
+    'Physics is paused only for the five workshop phases and resumed for native wiring/belt timers.',
+    'The fifth phase tightens fully loose fasteners as the guest; the belt fixture then releases the alternator pivot natively.',
     'Delayed pre-turn repair packets are injected explicitly in QA mode; LostTurns must remain zero.',
     'No complete Satsuma build, running-engine electrical circuit, shop purchase or two-account Steam/WAN test.',
     'See WORKSHOP.md for reproduction and scope. This report covers the tested scenarios, not every gameplay path.')

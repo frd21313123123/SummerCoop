@@ -23,7 +23,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@v4
         with:
           persist-credentials: false
       - name: Compile core and run all tests without the game
@@ -63,9 +63,11 @@ jobs:
     if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     timeout-minutes: 15
+    permissions:
+      contents: write
     steps:
       - name: Checkout source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -86,37 +88,31 @@ jobs:
           "VERSION=$ver" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "TAG=v$ver" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
-      - name: Publish GitHub Release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          $tag = "${{ steps.version.outputs.TAG }}"
-          $ver = "${{ steps.version.outputs.VERSION }}"
-          $standaloneExe = "SummerCoop-Launcher\SummerCoop-Launcher.exe"
-          $standaloneSha = "SummerCoop-Launcher\SummerCoop-Launcher.exe.sha256"
-          $distZip = "dist\SummerCoop-$ver.zip"
-          $distExe = "dist\SummerCoop-Launcher-$ver.exe"
-          $distSource = "dist\SummerCoop-$ver-source.zip"
-
-          $assets = @($standaloneExe, $standaloneSha, $distZip, $distExe, $distSource) | Where-Object { Test-Path -LiteralPath $_ }
-
-          Write-Host "Publishing release $tag ($ver) with assets:"
-          $assets | ForEach-Object { Write-Host " - $_" }
-
-          $viewOut = & gh release view $tag 2>&1
-          if ($LASTEXITCODE -eq 0) {
-              Write-Host "Release $tag already exists, updating assets..."
-              & gh release upload $tag $assets --clobber
-          } else {
-              Write-Host "Creating release $tag..."
-              & gh release create $tag $assets --title "SummerCoop $ver" --generate-notes
-          }
-
       - name: Upload Launcher Artifact
-        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
           name: SummerCoop-Launcher-${{ steps.version.outputs.VERSION }}
           path: |
             SummerCoop-Launcher/SummerCoop-Launcher.exe
             SummerCoop-Launcher/SummerCoop-Launcher.exe.sha256
             dist/SummerCoop-${{ steps.version.outputs.VERSION }}.zip
+            dist/SummerCoop-Launcher-${{ steps.version.outputs.VERSION }}.exe
+            dist/SummerCoop-${{ steps.version.outputs.VERSION }}-source.zip
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.version.outputs.TAG }}
+          target_commitish: ${{ github.sha }}
+          name: SummerCoop ${{ steps.version.outputs.VERSION }}
+          generate_release_notes: true
+          files: |
+            SummerCoop-Launcher/SummerCoop-Launcher.exe
+            SummerCoop-Launcher/SummerCoop-Launcher.exe.sha256
+            dist/SummerCoop-${{ steps.version.outputs.VERSION }}.zip
+            dist/SummerCoop-Launcher-${{ steps.version.outputs.VERSION }}.exe
+            dist/SummerCoop-${{ steps.version.outputs.VERSION }}-source.zip
+          fail_on_unmatched_files: false

@@ -1,61 +1,76 @@
-SummerCoop 0.4.2 - native workshop verification
-Recorded: 2026-10-16 11:59:05 +05:00
-Run: msc-workshop-042-release
+SummerCoop 0.4.6 - native workshop verification
+Recorded: 2026-10-17 17:14:38 +05:00
+Run: bolt-final-04
 
-host SHA256 D4D70171D41F22701B70E0352D7E1808496D7C1AA821068F1AC90A67A36BD804  SummerCoop.dll
-host SHA256 6C5D0363754D5A8F08A5D7616C665A11452821A5049EB25435DE86DDA293E00C  References/SummerCoop.Core.dll
+host SHA256 3F912C2FCE76C433A685BFB6410D4BE60CC4CB1208F80A763CFD024FB0DC46F9  SummerCoop.dll
+host SHA256 8FCB81902D5F5817112D6DC6C94DBA7D848D15209E111069279CD05ACEB63119  References/SummerCoop.Core.dll
 
 host report:
 Engine=MWCoop 0.95.3 / MSC adapter 1
 Level=GAME
-ModVersion=0.4.2
-NetVersion=1046
-Ready=False
-Players=1
+ModVersion=0.4.6
+NetVersion=1047
+Ready=True
+Players=2
 SaveReceived=False
-Workshop=0;Role=observer;Tuners=22;Bolts=57;Fields=364;Mismatches=0;WrongStages=0
-Workshop=1;Role=actor;Tuners=22;Bolts=57;Fields=364;Mismatches=0;WrongStages=0
-Workshop=2;Role=actor;Tuners=22;Bolts=57;Fields=364;Mismatches=0;WrongStages=0
-Workshop=3;Role=observer;Tuners=22;Bolts=57;Fields=364;Mismatches=0;WrongStages=0
+Workshop=0;Role=observer;Tuners=22;Bolts=87;Fields=685;Mismatches=0;WrongStages=0;WrongBolted=0
+BoltRepairRace=0;Attempts=0;LostTurns=0
+Workshop=1;Role=actor;Tuners=22;Bolts=87;Fields=685;Mismatches=0;WrongStages=0;WrongBolted=0
+BoltRepairRace=1;Attempts=0;LostTurns=0
+Workshop=2;Role=actor;Tuners=22;Bolts=87;Fields=685;Mismatches=0;WrongStages=0;WrongBolted=0
+BoltRepairRace=2;Attempts=0;LostTurns=0
+Workshop=3;Role=observer;Tuners=22;Bolts=87;Fields=685;Mismatches=0;WrongStages=0;WrongBolted=0
+BoltRepairRace=3;Attempts=0;LostTurns=0
+Workshop=4;Role=observer;Tuners=22;Bolts=87;Fields=685;Mismatches=0;WrongStages=0;WrongBolted=0
+BoltRepairRace=4;Attempts=0;LostTurns=0
 Wiring=0;Role=observer;Connections=13;Installed=24;Databases=29;Fields=87;Mismatches=0;Failed=0;TerminalBolts=3;LooseTerminals=0
 Wiring=1;Role=actor;Connections=13;Installed=29;Databases=29;Fields=87;Mismatches=0;Failed=0;TerminalBolts=3;LooseTerminals=0
 WorkshopSave=Floats=28;WireFlags=56;BeltFlags=2;Mismatches=0
-Belt=blocked;Role=observer;Installed=0;Rotation=6.00000572;Locked=False;Fields=11;Mismatches=0;StateErrors=0
-Belt=mounted;Role=observer;Installed=1;Rotation=6.00001;Locked=True;Fields=11;Mismatches=0;StateErrors=0
-Belt=removed;Role=actor;Installed=0;Rotation=2.500012;Locked=False;Fields=11;Mismatches=0;StateErrors=0
-FrameP95ms=34.52
-FrameMaxms=15448.19
-client SHA256 D4D70171D41F22701B70E0352D7E1808496D7C1AA821068F1AC90A67A36BD804  SummerCoop.dll
-client SHA256 6C5D0363754D5A8F08A5D7616C665A11452821A5049EB25435DE86DDA293E00C  References/SummerCoop.Core.dll
+Belt=blocked;Role=observer;Installed=0;Rotation=6.00000668;Locked=False;Fields=11;Mismatches=0;StateErrors=0
+Belt=mounted;Role=observer;Installed=1;Rotation=6.000011;Locked=True;Fields=11;Mismatches=0;StateErrors=0
+Belt=removed;Role=actor;Installed=0;Rotation=2.50001287;Locked=False;Fields=11;Mismatches=0;StateErrors=0
+FrameP95ms=27.65
+FrameMaxms=24272.89
+client SHA256 3F912C2FCE76C433A685BFB6410D4BE60CC4CB1208F80A763CFD024FB0DC46F9  SummerCoop.dll
+client SHA256 8FCB81902D5F5817112D6DC6C94DBA7D848D15209E111069279CD05ACEB63119  References/SummerCoop.Core.dll
 
 client report:
 Engine=MWCoop 0.95.3 / MSC adapter 1
 Level=GAME
-ModVersion=0.4.2
-NetVersion=1046
+ModVersion=0.4.6
+NetVersion=1047
 Ready=True
 Players=2
 SaveReceived=True
-Workshop=0;Role=actor;Tuners=22;Bolts=57;Fields=364;Mismatches=0;WrongStages=0
-Workshop=1;Role=observer;Tuners=22;Bolts=57;Fields=364;Mismatches=0;WrongStages=0
-Workshop=2;Role=observer;Tuners=22;Bolts=57;Fields=364;Mismatches=0;WrongStages=0
-Workshop=3;Role=actor;Tuners=22;Bolts=57;Fields=364;Mismatches=0;WrongStages=0
+Workshop=0;Role=actor;Tuners=22;Bolts=87;Fields=685;Mismatches=0;WrongStages=0;WrongBolted=0
+BoltRepairRace=0;Attempts=21;LostTurns=0
+Workshop=1;Role=observer;Tuners=22;Bolts=87;Fields=685;Mismatches=0;WrongStages=0;WrongBolted=0
+BoltRepairRace=1;Attempts=21;LostTurns=0
+Workshop=2;Role=observer;Tuners=22;Bolts=87;Fields=685;Mismatches=0;WrongStages=0;WrongBolted=0
+BoltRepairRace=2;Attempts=21;LostTurns=0
+Workshop=3;Role=actor;Tuners=22;Bolts=87;Fields=685;Mismatches=0;WrongStages=0;WrongBolted=0
+BoltRepairRace=3;Attempts=87;LostTurns=0
+Workshop=4;Role=actor;Tuners=22;Bolts=87;Fields=685;Mismatches=0;WrongStages=0;WrongBolted=0
+BoltRepairRace=4;Attempts=174;LostTurns=0
 Wiring=0;Role=actor;Connections=13;Installed=24;Databases=29;Fields=87;Mismatches=0;Failed=0;TerminalBolts=3;LooseTerminals=0
 Wiring=1;Role=observer;Connections=13;Installed=29;Databases=29;Fields=87;Mismatches=0;Failed=0;TerminalBolts=3;LooseTerminals=0
-Belt=blocked;Role=actor;Installed=0;Rotation=6.00000572;Locked=False;Fields=11;Mismatches=0;StateErrors=0
-Belt=mounted;Role=actor;Installed=1;Rotation=6.00001;Locked=True;Fields=11;Mismatches=0;StateErrors=0
-Belt=removed;Role=observer;Installed=0;Rotation=2.500012;Locked=False;Fields=11;Mismatches=0;StateErrors=0
-FrameP95ms=40.92
-FrameMaxms=8551.73
+Belt=blocked;Role=actor;Installed=0;Rotation=6.00000668;Locked=False;Fields=11;Mismatches=0;StateErrors=0
+Belt=mounted;Role=actor;Installed=1;Rotation=6.000011;Locked=True;Fields=11;Mismatches=0;StateErrors=0
+Belt=removed;Role=observer;Installed=0;Rotation=2.50001287;Locked=False;Fields=11;Mismatches=0;StateErrors=0
+FrameP95ms=33.94
+FrameMaxms=9269.66
 
 Original single-player save files checked: 5; changed: 0
 
-Automated checks (121 component regressions are not 121 native MWCoop gameplay tests):
-build/test-results.txt: ALL 121 TESTS PASSED
-build/msc-tests/test-results.txt: ALL 18 MSC ADAPTER TESTS PASSED
-build/mwcoop-network-tests/test-results.txt: ALL 12 MSC ADAPTER TESTS PASSED
+Automated checks (component test counts are not counts of native gameplay scenarios):
+build/test-results.txt: ALL 126 TESTS PASSED
+build/msc-tests/test-results.txt: ALL 35 MSC ADAPTER TESTS PASSED
+build/mwcoop-network-tests/test-results.txt: ALL 15 MSC ADAPTER TESTS PASSED
 
 Fixture limits: native FSM actions replace mouse input; prerequisite parts are mounted by the fixture.
 Wiring Status gates are disabled to expose unmounted connectors; the belt is spawned natively on both peers.
+Physics is paused only for the five workshop phases and resumed for native wiring/belt timers.
+The fifth phase tightens fully loose fasteners as the guest; the belt fixture then releases the alternator pivot natively.
+Delayed pre-turn repair packets are injected explicitly in QA mode; LostTurns must remain zero.
 No complete Satsuma build, running-engine electrical circuit, shop purchase or two-account Steam/WAN test.
 See WORKSHOP.md for reproduction and scope. This report covers the tested scenarios, not every gameplay path.
