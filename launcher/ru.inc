@@ -1,5 +1,6 @@
 // Genere par ru_gen.py (traduction russe du lanceur, 13/10/2026) : texte anglais tel qu'ecrit dans T(), russe.
 static const wchar_t *const kRu[][2] = {
+    { L"Launcher v", L"Лаунчер v" },
     { L"Update checksum is unavailable", L"Не удалось получить контрольную сумму обновления" },
     { L"Update download or SHA-256 verification failed", L"Не удалось скачать обновление или проверить SHA-256" },
     { L"Update postponed: retry when the launcher is idle", L"Обновление отложено: повторите, когда лаунчер будет свободен" },

@@ -468,7 +468,7 @@ static void DrawRail(Graphics &g)
         g.DrawImage(g_logo, RectF(kRail.X + (kRail.Width - lw) / 2, 24.0f + (maxH - lh) / 2.0f, lw, lh));
     }
     // version (plus de pastille PRE-ALPHA depuis 0.75.35, demande de JD ; un ancien suffixe "-prealpha" n'est pas montre)
-    std::wstring ver = L"v" + LauncherVersion();
+    std::wstring ver = std::wstring(T(L"Lanceur v", L"Launcher v")) + LauncherVersion();
     float vw = ver.empty() ? 0 : PillW(ver, 10.5f), x = kRail.X + (kRail.Width - vw) / 2;
     if (vw > 0) Pill(g, RectF(x, 104, vw, 20), TH(cardSel), ver, kInk, 10.5f);
     float y0 = 132;
