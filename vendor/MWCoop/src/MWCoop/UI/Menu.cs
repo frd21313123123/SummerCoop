@@ -242,7 +242,7 @@ namespace MWCoop
             else if (tab == TabChat) ChatTab();
             else if (tab == 3) SyncTab();
             else if (tab == 4) GfxTab();
-            else ToolCasesTab();
+            else CheatsTab();
             GUI.EndGroup();
             contentH = cy;
             items = idx;
@@ -487,6 +487,23 @@ namespace MWCoop
             }
             if (MscToolCases.Count > 1 && Item(Lang.R("Delete all extra cases"), "×", false, null, false) == 2)
                 ToolCaseResult(MscToolCases.RemoveAll(), Lang.R("Extra cases deleted for all players."));
+        }
+
+        static void CheatsTab()
+        {
+            Header(Lang.T("TRICHES", "CHEATS"));
+            bool allowed = Cheats.Allowed;
+            if (!Session.Active || Session.IsHost)
+            {
+                if (Item(Lang.T("Autoriser les triches", "Allow cheats"), Lang.T(allowed ? "OUI" : "NON", allowed ? "ON" : "OFF"), true,
+                         Lang.T("Autoriser les triches pour tous dans cette partie.", "Allow cheats for everyone in this session."), false) != 0)
+                    Cheats.SetAllowed(!allowed);
+            }
+            else
+                Para(Lang.T("Autoriser les triches", "Allow cheats") + ": " + Lang.T(allowed ? "OUI" : "NON", allowed ? "ON" : "OFF"), allowed ? Style.Good : Style.Warn);
+            Para(Lang.T("Seul l'hôte peut changer ce réglage. Chaque triche est annoncée dans le tchat.", "Only the host can change this setting. Every cheat is announced in chat."), Style.Dim);
+            Para(Lang.T("Panneau des triches", "Cheat panel") + ": " + Keys.Label(Keys.Cheats), Style.Dim);
+            ToolCasesTab();
         }
 
         class PRow { public PlayerInfo P; public string Label, Value; }

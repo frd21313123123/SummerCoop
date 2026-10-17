@@ -66,7 +66,7 @@ namespace MWCoop
             string state = ok ? (Session.Active && !Session.IsHost ? Lang.T("Autorisées par l'hôte. Chaque triche est annoncée à tous.", "Allowed by the host. Every cheat is announced to everyone.")
                                                                     : Lang.T("Autorisées. Chaque triche est annoncée à tous.", "Allowed. Every cheat is announced to everyone."))
                               : (Session.Active && !Session.IsHost ? Lang.T("Coupées par l'hôte.", "Turned off by the host.")
-                                                                    : Lang.T("Coupées : lanceur, Options du jeu > Partie et partage > Autoriser les triches.", "Off: launcher, Game options > Game and sharing > Allow cheats."));
+                                                                    : Lang.T("Coupées : F10 > TRICHES > Autoriser les triches.", "Off: F10 > CHEATS > Allow cheats."));
             Style.Text(new Rect(ix, cy, iw, Style.Px(26)), state, 15, TextAnchor.MiddleLeft, ok ? Style.Good : Style.Warn, false);
             cy += Style.Px(40);
             if (Button(new Rect(ix, cy, iw, bh), Lang.R("Tool cases"), true, e)) Menu.ShowToolCases();

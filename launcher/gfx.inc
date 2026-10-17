@@ -183,7 +183,6 @@ static const std::vector<GfxRow> &GfxRows()
         { "VoirVisages", L"Voir les images importées des autres", L"See others' imported images", 1, {}, {}, {}, 0, 7, "Coop" },
         { "ModsAuto", L"Accepter les fichiers de l'hôte", L"Accept the host's files", 0, {}, {}, {}, 0, 8, "Opt" },
         { "ArgentDepart", L"Argent de départ des invités", L"Guests' starting money", 1, {}, {}, {}, 0, 8, "Coop" },
-        { "Triches", L"Autoriser les triches (hôte)", L"Allow cheats (host)", 0, {}, {}, {}, 0, 8, "Coop" },
         { "Renverser", L"Les voitures renversent les joueurs (amis, PNJ)", L"Cars run players over (friends, NPCs)", 1, {}, {}, {}, 0, 8, "Coop" },
         // (suggestion de квазарик, 13/10 : « tuer les autres a coups de poing, option de l'hote ») -- Sync/Pvp.cs
         { "PvP", L"Coups de poing entre joueurs (hôte)", L"Punches between players (host)", 0, {}, {}, {}, 0, 8, "Coop" },

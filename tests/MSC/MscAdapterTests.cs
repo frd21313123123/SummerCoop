@@ -117,6 +117,48 @@ class MscAdapterTests
                 Assert(!MWCoop.MscToolCases.Ready(new PlayerInfo { Level = 1, StateTime = 80 }, 100), "Stale disconnected peer duplicated a reconnect case");
                 Assert(MWCoop.MscToolCases.Ready(new PlayerInfo { Level = 1, StateTime = 99 }, 100), "Ready guest was not counted");
             });
+            Test("in-game cheat permission persists and guests cannot override the host", delegate {
+                string folder = Path.Combine(Path.GetTempPath(), "summercoop-cheats-" + Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(folder);
+                string previous = MWCoop.Config.IniPath;
+                string oldSetting = MWCoop.Config.Get("Coop", "Triches", "0");
+                bool active = Session.Active, host = Session.IsHost;
+                var hostAllows = typeof(MWCoop.Cheats).GetField("hostAllows", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+                bool oldAllowed = (bool)hostAllows.GetValue(null);
+                try {
+                    string path = Path.Combine(folder, "mwcoop.ini");
+                    MWCoop.Config.IniPath = path;
+                    File.WriteAllText(path, "[Coop]\nTriches=0\nPort=27842\n[Other]\nValue=keep\n");
+                    Session.Active = Session.IsHost = false;
+                    MWCoop.Config.Override("Coop", "Triches", "0");
+                    Assert(!MWCoop.Cheats.Allowed, "Cheats unexpectedly enabled");
+                    MWCoop.Cheats.SetAllowed(true);
+                    string saved = File.ReadAllText(path);
+                    Assert(MWCoop.Cheats.Allowed && saved.Contains("Triches=1"), "Enabling did not persist");
+                    Assert(saved.Contains("Port=27842") && saved.Contains("Value=keep"), "Unrelated settings lost");
+                    Session.Active = true;
+                    MWCoop.Cheats.OnAllowed(false);
+                    Assert(!MWCoop.Cheats.Allowed, "Guest used local setting instead of host permission");
+                    MWCoop.Cheats.SetAllowed(true);
+                    Assert(!MWCoop.Cheats.Allowed && File.ReadAllText(path) == saved, "Guest changed host permission or local INI");
+                    MWCoop.Cheats.OnAllowed(true);
+                    Assert(MWCoop.Cheats.Allowed, "Guest ignored host enabling cheats");
+                    MWCoop.Cheats.SetAllowed(false);
+                    Assert(MWCoop.Cheats.Allowed && File.ReadAllText(path) == saved, "Guest disabled host permission");
+                    MWCoop.Cheats.OnAllowed(false);
+                    Assert(!MWCoop.Cheats.Allowed, "Guest ignored host disabling cheats");
+                    Session.Active = false;
+                    MWCoop.Cheats.SetAllowed(false);
+                    Assert(!MWCoop.Cheats.Allowed && File.ReadAllText(path).Contains("Triches=0"), "Disabling did not persist");
+                    Assert(MWCoop.LangRu.Table["Off: F10 > CHEATS > Allow cheats."].Contains("F10 > ЧИТЫ"), "Russian F7 hint does not point to the in-game setting");
+                } finally {
+                    Session.Active = active; Session.IsHost = host;
+                    hostAllows.SetValue(null, oldAllowed);
+                    MWCoop.Config.Override("Coop", "Triches", oldSetting);
+                    MWCoop.Config.IniPath = previous;
+                    Directory.Delete(folder, true);
+                }
+            });
             Test("launcher customization reload keeps connection and world settings", delegate {
                 string folder = Path.Combine(Path.GetTempPath(), "summercoop-looks-" + Guid.NewGuid().ToString("N"));
                 Directory.CreateDirectory(folder);

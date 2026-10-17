@@ -8,7 +8,7 @@ namespace MWCoop
 {
     // Triches (proposition d'un joueur, 10/10 : « des commandes dans le tchat, avec une option pour les couper, comme
     // Minecraft » ; JD : en plus un petit panneau cliquable, touche reglable, tout synchronise). L'hote les autorise
-    // ([Coop] Triches, lanceur : Options du jeu > Partie et partage ; coupees d'origine) et le dit aux invites (@triches).
+    // ([Coop] Triches, menu F10 > TRICHES ; coupees d'origine) et le dit aux invites (@triches).
     // Commandes : dans le tchat ("/aide") ou par le panneau (CheatPanel, touche Keys.Cheats). Chaque triche est annoncee
     // a tous (@triche + la ligne : « [Triche] JD : /heure 12 »). Celles du monde (heure, neige) sont faites par l'hote
     // (le monde suit l'hote : World) ; « amener » est faite par le joueur vise ; les autres chez celui qui triche.
@@ -37,6 +37,14 @@ namespace MWCoop
 
         // Autorisees ici ? (hote ou solo : son reglage ; invite : celui de l'hote, recu)
         public static bool Allowed { get { return !Session.Active || Session.IsHost ? Config.GetInt("Coop", "Triches", 0) != 0 : hostAllows; } }
+
+        public static void SetAllowed(bool on)
+        {
+            if (Session.Active && !Session.IsHost) return;
+            Config.Save("Coop", "Triches", on ? "1" : "0");
+            nextAnnounce = 0f;
+            if (Session.Active) Update();
+        }
 
         public static void Update()
         {
@@ -93,7 +101,7 @@ namespace MWCoop
             if (!Allowed)
             {
                 string no = Session.Active && !Session.IsHost ? Lang.T("Triches coupées par l'hôte.", "Cheats are off (host's choice).")
-                                                              : Lang.T("Triches coupées : lanceur, Options du jeu > Partie et partage > Autoriser les triches.", "Cheats are off: launcher, Game options > Game and sharing > Allow cheats.");
+                                                              : Lang.T("Triches coupées : F10 > TRICHES > Autoriser les triches.", "Cheats are off: F10 > CHEATS > Allow cheats.");
                 Say(no);
                 return no;
             }
