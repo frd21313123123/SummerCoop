@@ -3,8 +3,21 @@ $root = Split-Path -Parent $PSScriptRoot
 $model = Get-Content -LiteralPath (Join-Path $root 'src\Core\Model.cs') -Raw
 if ($model -notmatch 'ModVersion\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)"') { throw 'Unable to read the mod version.' }
 $version = $Matches[1]
+$buildDir = Join-Path $root 'build'
+New-Item -ItemType Directory -Path $buildDir -Force | Out-Null
+$modDll = Join-Path $buildDir 'SummerCoop.dll'
+if (!(Test-Path -LiteralPath $modDll)) {
+    $vendorDll = Join-Path $root 'vendor\bin\SummerCoop.dll'
+    if (Test-Path -LiteralPath $vendorDll) {
+        Copy-Item -LiteralPath $vendorDll -Destination $modDll -Force
+    }
+}
+$coreDll = Join-Path $buildDir 'SummerCoop.Core.dll'
+if (!(Test-Path -LiteralPath $coreDll)) {
+    & (Join-Path $root 'tools\build.ps1') -TestsOnly
+}
 foreach ($dll in @('SummerCoop.dll','SummerCoop.Core.dll')) {
-    if (!(Test-Path -LiteralPath (Join-Path $root ('build\' + $dll)))) { throw 'Build both mod DLLs before packaging.' }
+    if (!(Test-Path -LiteralPath (Join-Path $buildDir $dll))) { throw 'Build both mod DLLs before packaging.' }
 }
 $release = Join-Path $root ('dist\SummerCoop-' + $version)
 New-Item -ItemType Directory -Path (Join-Path $release 'Mods\References') -Force | Out-Null
@@ -29,6 +42,7 @@ $launcherOutput = Join-Path $root ('dist\SummerCoop-Launcher-' + $version + '.ex
 # The launcher is the only setup tool; keep its usual alias when possible. An
 # older open launcher must not prevent packaging a separately named update.
 $aliasPath = Join-Path (Join-Path $root 'dist') 'SummerCoop-Launcher.exe'
+$standalonePath = Join-Path (Join-Path $root 'SummerCoop-Launcher') 'SummerCoop-Launcher.exe'
 try {
     Copy-Item -LiteralPath $launcherOutput -Destination $aliasPath -Force -ErrorAction Stop
     ((Get-FileHash -LiteralPath $aliasPath -Algorithm SHA256).Hash + '  SummerCoop-Launcher.exe') | Set-Content -LiteralPath ($aliasPath + '.sha256') -Encoding ASCII
@@ -36,6 +50,14 @@ try {
     Write-Warning ('Open EXE retained: ' + $aliasPath + '. Use ' + $launcherOutput)
 } catch [UnauthorizedAccessException] {
     Write-Warning ('EXE alias unavailable: ' + $aliasPath + '. Use ' + $launcherOutput)
+}
+try {
+    Copy-Item -LiteralPath $launcherOutput -Destination $standalonePath -Force -ErrorAction Stop
+    ((Get-FileHash -LiteralPath $standalonePath -Algorithm SHA256).Hash + '  SummerCoop-Launcher.exe') | Set-Content -LiteralPath ($standalonePath + '.sha256') -Encoding ASCII
+} catch [IO.IOException] {
+    Write-Warning ('Open EXE retained in standalone folder: ' + $standalonePath)
+} catch [UnauthorizedAccessException] {
+    Write-Warning ('Standalone EXE alias unavailable: ' + $standalonePath)
 }
 $sourceZip = Join-Path $root ('dist\SummerCoop-' + $version + '-source.zip')
 Compress-Archive -LiteralPath (Join-Path $root 'src'),(Join-Path $root 'vendor'),(Join-Path $root 'tests'),(Join-Path $root 'tools'),(Join-Path $root 'launcher'),(Join-Path $root 'docs'),(Join-Path $root '.github'),(Join-Path $root 'README.md'),(Join-Path $root 'LICENSE'),(Join-Path $root 'THIRD_PARTY_NOTICES.md'),(Join-Path $root '.gitignore'),(Join-Path $root '.gitattributes') -DestinationPath $sourceZip -Force

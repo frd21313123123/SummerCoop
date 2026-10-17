@@ -118,6 +118,7 @@ namespace MWCoop
         static string ItemId(GameObject go, out PlayMakerFSM use)
         {
             use = null;
+            string toolCase = MscToolCases.IdOf(go); if (toolCase.Length > 0) return toolCase;
             string mscPart = MscParts.IdOf(go); if (mscPart.Length > 0) return mscPart;
             foreach (PlayMakerFSM f in go.GetComponents<PlayMakerFSM>())
             {
@@ -799,6 +800,13 @@ namespace MWCoop
             p.Body = null;
             p.GoneAt = -1f;
             return true;
+        }
+
+        public static bool InUse(string id)
+        {
+            Prop p;
+            return props.TryGetValue(id, out p) && (p == held || p.Body != null && Game.UnderPlayer(p.Body.transform)
+                || p.RemoteBy >= 0 && Time.realtimeSinceStartup - p.LastRemote < 2);
         }
 
         // ---------------------------------------------------------------- objets transportes

@@ -1,4 +1,5 @@
-param([Parameter(Mandatory=$true)][ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9_-]{0,48}$')][string]$Run, [switch]$ModOnly)
+param([Parameter(Mandatory=$true)][ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9_-]{0,48}$')][string]$Run, [switch]$ModOnly,
+    [ValidatePattern('^[a-zA-Z0-9_-]+$')][string]$HostGame = 'game', [ValidatePattern('^[a-zA-Z0-9_-]+$')][string]$ClientGame = 'game-client')
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $model = [IO.File]::ReadAllText((Join-Path $root 'src/Core/Model.cs'))
@@ -13,16 +14,18 @@ foreach ($role in @('host','client')) {
     $report = @(Get-Content -LiteralPath $reportPath -Encoding UTF8)
     if ($report -notcontains ('ModVersion=' + $version) -or $report -notcontains ('NetVersion=' + $networkVersion) -or $report -notcontains 'Level=GAME') { throw ('Wrong native build or level: ' + $role) }
     if ($role -eq 'client' -and $report -notcontains 'SaveReceived=True') { throw 'Guest did not receive the native save.' }
-    foreach ($kind in @(@{Pattern='^Workshop=';Count=4},@{Pattern='^Wiring=';Count=2},@{Pattern='^Belt=';Count=3})) {
+    foreach ($kind in @(@{Pattern='^Workshop=';Count=5},@{Pattern='^Wiring=';Count=2},@{Pattern='^Belt=';Count=3})) {
         $results = @($report | Where-Object { $_ -match $kind.Pattern })
         if ($results.Count -ne $kind.Count) { throw ('Incomplete ' + $kind.Pattern + ' checks: ' + $role) }
-        foreach ($line in $results) { if ($line -notmatch ';Mismatches=0(?:;|$)' -or $line -match '(?:WrongStages|StateErrors|Failed|LooseTerminals)=[1-9]') { throw ('Native mismatch: ' + $role + ' ' + $line) } }
+        foreach ($line in $results) { if ($line -notmatch ';Mismatches=0(?:;|$)' -or $line -match '(?:WrongStages|WrongBolted|StateErrors|Failed|LooseTerminals)=[1-9]') { throw ('Native mismatch: ' + $role + ' ' + $line) } }
     }
+    $races = @($report | Where-Object { $_ -match '^BoltRepairRace=' })
+    if ($races.Count -ne 5 -or $races -match 'LostTurns=[1-9]' -or $role -eq 'client' -and !($races -match 'Attempts=[1-9]')) { throw ('Missing or failed bolt repair race checks: ' + $role) }
     if ($report -match '^(ActionError|ModuleError)=') { throw ('Native probe/module error: ' + $role) }
     $log = [IO.File]::ReadAllText((Join-Path $root ('.local/' + $Run + '-' + $role + '/mwcoop/logs/mwcoop.log')))
     if ($log -match 'ERREUR message (?:Part|Bolt|Setting)\b|MSC (?:workshop|belt|wiring) probe:') { throw ('Native message error: ' + $role) }
     if ($role -eq 'host' -and !($report -match '^WorkshopSave=Floats=[1-9][0-9]*;WireFlags=[1-9][0-9]*;BeltFlags=[1-9][0-9]*;Mismatches=0$')) { throw 'Missing native ES2 persistence check.' }
-    $game = Join-Path $root $(if ($role -eq 'host') { '.local/game' } else { '.local/game-client' })
+    $game = Join-Path (Join-Path $root '.local') $(if ($role -eq 'host') { $HostGame } else { $ClientGame })
     foreach ($dll in @('SummerCoop.dll','References/SummerCoop.Core.dll')) {
         $tested = (Get-FileHash -LiteralPath (Join-Path $game ('Mods/' + $dll)) -Algorithm SHA256).Hash
         $built = (Get-FileHash -LiteralPath (Join-Path $root ('build/' + [IO.Path]::GetFileName($dll))) -Algorithm SHA256).Hash
@@ -30,12 +33,12 @@ foreach ($role in @('host','client')) {
         $rows += $role + ' SHA256 ' + $tested + '  ' + $dll
     }
     $rows += @('', ($role + ' report:'))
-    $rows += @($report | Where-Object { $_ -match '^(Engine|ModVersion|NetVersion|Level|Ready|Players|SaveReceived|Workshop|Wiring|Belt|WorkshopSave|FrameP95ms|FrameMaxms)=' })
+    $rows += @($report | Where-Object { $_ -match '^(Engine|ModVersion|NetVersion|Level|Ready|Players|SaveReceived|Workshop|BoltRepairRace|Wiring|Belt|WorkshopSave|FrameP95ms|FrameMaxms)=' })
 }
 $before = @(Get-Content -LiteralPath (Join-Path $root ('.local/' + $Run + '-original-before.json')) -Raw | ConvertFrom-Json)
 foreach ($file in $before) { if ((Get-FileHash -LiteralPath $file.Path -Algorithm SHA256).Hash -ne $file.Hash) { throw 'An original single-player save changed.' } }
 $rows += @('', ('Original single-player save files checked: ' + $before.Count + '; changed: 0'), '',
-    'Automated checks (121 component regressions are not 121 native MWCoop gameplay tests):')
+    'Automated checks (component test counts are not counts of native gameplay scenarios):')
 $testFiles = @('build/test-results.txt','build/msc-tests/test-results.txt','build/mwcoop-network-tests/test-results.txt')
 if (!$ModOnly) { $testFiles += @('build/installer-tests/test-results.txt','build/launcher-tests/test-results.txt') }
 foreach ($test in $testFiles) {
@@ -46,6 +49,8 @@ foreach ($test in $testFiles) {
 $rows += @('',
     'Fixture limits: native FSM actions replace mouse input; prerequisite parts are mounted by the fixture.',
     'Wiring Status gates are disabled to expose unmounted connectors; the belt is spawned natively on both peers.',
+    'Physics steps are paused before inspection; the fifth phase tightens fully loose fasteners as the guest.',
+    'Delayed pre-turn repair packets are injected explicitly in QA mode; LostTurns must remain zero.',
     'No complete Satsuma build, running-engine electrical circuit, shop purchase or two-account Steam/WAN test.',
     'See WORKSHOP.md for reproduction and scope. This report covers the tested scenarios, not every gameplay path.')
 $output = Join-Path $root 'docs/WORKSHOP-RESULTS.txt'

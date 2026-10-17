@@ -1,68 +1,51 @@
 SummerCoop 0.4.2 - native car assembly verification
-Recorded: 2026-10-16 11:59:13 +05:00
-Run: msc-assembly-15
+Recorded: 2026-10-17 14:09:36 +05:00
+Run: rotation-fixed
 
-host SHA256 D4D70171D41F22701B70E0352D7E1808496D7C1AA821068F1AC90A67A36BD804  SummerCoop.dll
-host SHA256 6C5D0363754D5A8F08A5D7616C665A11452821A5049EB25435DE86DDA293E00C  References/SummerCoop.Core.dll
+host SHA256 61227822E3EE67B32BEC77533A717C8B87A6AC55D690E0B4EFD2A93223EE2CC1  SummerCoop.dll
+host SHA256 D3041AA1060810B0C029BE7C8537BC02ECA205D2036EE1017E45DF540F766590  References/SummerCoop.Core.dll
 
 host report:
 Engine=MWCoop 0.95.3 / MSC adapter 1
 Level=GAME
 ModVersion=0.4.2
 NetVersion=1046
-ModMvid=9b232e90-84fc-40ff-905d-761040476c92
+ModMvid=643ffc60-8369-416f-9648-cb0eeeaa2027
 Ready=False
 Players=1
 SaveReceived=False
-Assembly=0;Role=observer;Parts=130;Fields=262;Mismatches=0;WrongInstalled=0;WrongJoints=0
-Assembly=1;Role=observer;Parts=130;Fields=1045;Mismatches=0;WrongInstalled=0;WrongJoints=0
-Assembly=2;Role=actor;Parts=130;Fields=262;Mismatches=0;WrongInstalled=0;WrongJoints=0
-Assembly=3;Role=actor;Parts=130;Fields=1045;Mismatches=0;WrongInstalled=0;WrongJoints=0
-Carrier=host-stationary-add;Count=1;Visible=1;Pass=True
-Carrier=guest-take;Count=0;Visible=0;Pass=True
-Carrier=guest-stationary-add;Count=1;Visible=1;Pass=True
-Carrier=host-take;Count=0;Visible=0;Pass=True
-Carrier=concurrent-add;Count=2;Visible=2;Pass=True
-Carrier=both-take;Count=0;Visible=0;Pass=True
-Carrier=capacity-nine;Count=9;Visible=9;Pass=True
-Carrier=full-preserves-wood;Count=9;Visible=9;Pass=True
-Carrier=refill-after-full;Count=9;Visible=9;Pass=True
-FrameP95ms=28.83
-FrameMaxms=516.07
-client SHA256 D4D70171D41F22701B70E0352D7E1808496D7C1AA821068F1AC90A67A36BD804  SummerCoop.dll
-client SHA256 6C5D0363754D5A8F08A5D7616C665A11452821A5049EB25435DE86DDA293E00C  References/SummerCoop.Core.dll
+Assembly=0;Role=observer;Parts=130;Fields=262;Mismatches=0;WrongInstalled=0;WrongJoints=0;WrongRotation=0;Tilted=0
+Assembly=1;Role=observer;Parts=130;Fields=1045;Mismatches=0;WrongInstalled=0;WrongJoints=0;WrongRotation=0;Tilted=0
+Assembly=2;Role=actor;Parts=130;Fields=262;Mismatches=0;WrongInstalled=0;WrongJoints=0;WrongRotation=0;Tilted=0
+Assembly=3;Role=actor;Parts=130;Fields=1045;Mismatches=0;WrongInstalled=0;WrongJoints=0;WrongRotation=0;Tilted=5
+FrameP95ms=14.15
+FrameMaxms=641.40
+client SHA256 61227822E3EE67B32BEC77533A717C8B87A6AC55D690E0B4EFD2A93223EE2CC1  SummerCoop.dll
+client SHA256 D3041AA1060810B0C029BE7C8537BC02ECA205D2036EE1017E45DF540F766590  References/SummerCoop.Core.dll
 
 client report:
 Engine=MWCoop 0.95.3 / MSC adapter 1
 Level=GAME
 ModVersion=0.4.2
 NetVersion=1046
-ModMvid=9b232e90-84fc-40ff-905d-761040476c92
+ModMvid=643ffc60-8369-416f-9648-cb0eeeaa2027
 Ready=True
 Players=2
 SaveReceived=True
-Assembly=0;Role=actor;Parts=130;Fields=262;Mismatches=0;WrongInstalled=0;WrongJoints=0
-Assembly=1;Role=actor;Parts=130;Fields=1045;Mismatches=0;WrongInstalled=0;WrongJoints=0
-Assembly=2;Role=observer;Parts=130;Fields=262;Mismatches=0;WrongInstalled=0;WrongJoints=0
-Assembly=3;Role=observer;Parts=130;Fields=1045;Mismatches=0;WrongInstalled=0;WrongJoints=0
-Carrier=host-stationary-add;Count=1;Visible=1;Pass=True
-Carrier=guest-take;Count=0;Visible=0;Pass=True
-Carrier=guest-stationary-add;Count=1;Visible=1;Pass=True
-Carrier=host-take;Count=0;Visible=0;Pass=True
-Carrier=concurrent-add;Count=2;Visible=2;Pass=True
-Carrier=both-take;Count=0;Visible=0;Pass=True
-Carrier=capacity-nine;Count=9;Visible=9;Pass=True
-Carrier=full-preserves-wood;Count=9;Visible=9;Pass=True
-Carrier=refill-after-full;Count=9;Visible=9;Pass=True
-FrameP95ms=40.73
-FrameMaxms=7388.17
+Assembly=0;Role=actor;Parts=130;Fields=262;Mismatches=0;WrongInstalled=0;WrongJoints=0;WrongRotation=0;Tilted=0
+Assembly=1;Role=actor;Parts=130;Fields=1045;Mismatches=0;WrongInstalled=0;WrongJoints=0;WrongRotation=0;Tilted=5
+Assembly=2;Role=observer;Parts=130;Fields=262;Mismatches=0;WrongInstalled=0;WrongJoints=0;WrongRotation=0;Tilted=0
+Assembly=3;Role=observer;Parts=130;Fields=1045;Mismatches=0;WrongInstalled=0;WrongJoints=0;WrongRotation=0;Tilted=0
+FrameP95ms=18.01
+FrameMaxms=7899.98
 
 Original single-player save files checked: 5; changed: 0
-build/test-results.txt: ALL 121 TESTS PASSED
-build/msc-tests/test-results.txt: ALL 18 MSC ADAPTER TESTS PASSED
+build/test-results.txt: ALL 126 TESTS PASSED
+build/msc-tests/test-results.txt: ALL 30 MSC ADAPTER TESTS PASSED
 
 Scope: native assembly/removal actions over the real MWCoop UDP transport, both actor directions.
 Timing: native camshaft Adjust actions; absolute angle, stored database angle and mounted pose compared.
+Rotation: four pistons and oilpan tilted after native parenting in both actor directions; checked against native zero local rotation.
 Fixture: physics steps paused with stationary rigidbodies; inactive assembly triggers enabled and joint setup follows native transitions.
 Carrier (when included): stationary deposits by both actors, both withdrawals, concurrent deposits, capacity nine, excess log preserved and refill.
 Limits: not a manual playthrough, road/crash physics, running-engine validation or two-account Steam/WAN test.

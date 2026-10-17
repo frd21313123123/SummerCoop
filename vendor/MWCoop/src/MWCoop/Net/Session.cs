@@ -31,7 +31,7 @@ namespace MWCoop.Net
     // Session coop : l'hote fait autorite et relaie tout. [Coop] Mode=solo|hote|invite.
     public static class Session
     {
-        public const int NetVersion = 1046;   // MSC: versioned assembly, chassis replacement parts and timing marks.
+        public const int NetVersion = 1047;   // MSC: acknowledge guest bolt turns before applying host repairs.
         static readonly HashSet<int> authenticated = new HashSet<int>();
         internal static bool AuthenticatedForSave(Peer peer) { return peer != null && peer.Accepted && authenticated.Contains(peer.Id); }
         public static Transport T;

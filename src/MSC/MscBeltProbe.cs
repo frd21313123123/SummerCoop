@@ -67,8 +67,16 @@ namespace MWCoop
             }
             string clock = Path.Combine(channel, "start.txt"); long ticks;
             if (!File.Exists(clock) || !long.TryParse(MscProbeFiles.ReadAllText(clock), out ticks)) return;
-            float elapsed = (float)TimeSpan.FromTicks(DateTime.UtcNow.Ticks - ticks).TotalSeconds;
+            // Start after the additional guest-tightening workshop phase.
+            float elapsed = (float)TimeSpan.FromTicks(DateTime.UtcNow.Ticks - ticks).TotalSeconds - 22;
             bool actor = !Session.IsHost;
+            // The added workshop phase leaves every bolt tight. Release the
+            // alternator pivot natively before testing the belt's angle gate.
+            if (actor && elapsed >= 145 && elapsed < 151 && pivotBolt != null && Time.realtimeSinceStartup >= nextStep)
+            {
+                nextStep = Time.realtimeSinceStartup + .3f;
+                if (pivotBolt.ActiveStateName == "Idle" && pivotBolt.FsmVariables.FindFsmInt("Stage").Value > 0) Game.SetState(pivotBolt, "Unscrew 2");
+            }
             if (actor && elapsed >= 153 && elapsed < 158 && Time.realtimeSinceStartup >= nextStep)
             {
                 nextStep = Time.realtimeSinceStartup + .3f;

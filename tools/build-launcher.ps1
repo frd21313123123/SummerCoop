@@ -18,7 +18,7 @@ if (!$Version) {
 }
 
 if (!$OutputPath) {
-    $OutputPath = Join-Path $root 'dist\SummerCoop-Launcher.exe'
+    $OutputPath = Join-Path $root 'SummerCoop-Launcher\SummerCoop-Launcher.exe'
 }
 $OutputPath = [IO.Path]::GetFullPath($OutputPath)
 $outputDir = Split-Path -Parent $OutputPath
@@ -26,6 +26,19 @@ New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
 
 $buildDir = Join-Path $root 'build'
 New-Item -ItemType Directory -Path $buildDir -Force | Out-Null
+
+# Ensure mod DLLs are present for PE resources
+$modDll = Join-Path $buildDir 'SummerCoop.dll'
+if (!(Test-Path -LiteralPath $modDll)) {
+    $vendorDll = Join-Path $root 'vendor\bin\SummerCoop.dll'
+    if (Test-Path -LiteralPath $vendorDll) {
+        Copy-Item -LiteralPath $vendorDll -Destination $modDll -Force
+    }
+}
+$coreDll = Join-Path $buildDir 'SummerCoop.Core.dll'
+if (!(Test-Path -LiteralPath $coreDll)) {
+    & (Join-Path $root 'tools\build.ps1') -TestsOnly
+}
 
 # Generate mwversion.h
 $parts = $Version.Split('-')[0].Split('.')
@@ -73,5 +86,26 @@ if ($LASTEXITCODE -ne 0) {
 
 $hash = (Get-FileHash -LiteralPath $OutputPath -Algorithm SHA256).Hash
 ("$hash  " + [IO.Path]::GetFileName($OutputPath)) | Set-Content -LiteralPath ($OutputPath + '.sha256') -Encoding ASCII
+
+# Ensure SummerCoop-Launcher folder stays updated
+$standaloneDir = Join-Path $root 'SummerCoop-Launcher'
+$standalonePath = Join-Path $standaloneDir 'SummerCoop-Launcher.exe'
+if ($OutputPath -ne $standalonePath) {
+    New-Item -ItemType Directory -Path $standaloneDir -Force | Out-Null
+    try {
+        Copy-Item -LiteralPath $OutputPath -Destination $standalonePath -Force -ErrorAction Stop
+        ("$hash  SummerCoop-Launcher.exe") | Set-Content -LiteralPath ($standalonePath + '.sha256') -Encoding ASCII
+    } catch {}
+}
+
+# Keep dist alias updated when dist exists
+$distDir = Join-Path $root 'dist'
+$distPath = Join-Path $distDir 'SummerCoop-Launcher.exe'
+if ($OutputPath -ne $distPath -and (Test-Path -LiteralPath $distDir)) {
+    try {
+        Copy-Item -LiteralPath $OutputPath -Destination $distPath -Force -ErrorAction Stop
+        ("$hash  SummerCoop-Launcher.exe") | Set-Content -LiteralPath ($distPath + '.sha256') -Encoding ASCII
+    } catch {}
+}
 
 Write-Output "Successfully built native launcher: $OutputPath"

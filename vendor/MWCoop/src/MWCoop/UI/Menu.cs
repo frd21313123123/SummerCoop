@@ -17,7 +17,7 @@ namespace MWCoop
         static readonly List<string> skinLabels = new List<string>();
         static readonly List<Behaviour> blocked = new List<Behaviour>();
         static bool focusChat, testDone;
-        static readonly string[] tabsFr = { "JOUEURS", "APPARENCE", "TCHAT", "SYNCHRO", "GRAPHISMES" }, tabsEn = { "PLAYERS", "APPEARANCE", "CHAT", "SYNC", "GRAPHICS" };
+        static readonly string[] tabsFr = { "JOUEURS", "APPARENCE", "TCHAT", "SYNCHRO", "GRAPHISMES", "TRICHES" }, tabsEn = { "PLAYERS", "APPEARANCE", "CHAT", "SYNC", "GRAPHICS", "CHEATS" };
         static string[] tabs { get { return Lang.A(tabsFr, tabsEn); } }
         const int TabChat = 2;
         const string ChatField = "mwcoop-chat2";
@@ -241,7 +241,8 @@ namespace MWCoop
             else if (tab == 1) Skins();
             else if (tab == TabChat) ChatTab();
             else if (tab == 3) SyncTab();
-            else GfxTab();
+            else if (tab == 4) GfxTab();
+            else ToolCasesTab();
             GUI.EndGroup();
             contentH = cy;
             items = idx;
@@ -441,6 +442,46 @@ namespace MWCoop
         }
 
         // ---- Onglets ----
+
+        public static void ShowToolCases()
+        {
+            Open = true; ChatOpen = false; CheatPanel.Open = WalletPanel.Open = MapPanel.Open = false;
+            openedAt = Time.realtimeSinceStartup; SetTab(5); sel = 0;
+        }
+        static string toolCaseNote;
+        static bool toolCaseNoteBad;
+        static void ToolCaseResult(string error, string success)
+        {
+            toolCaseNote = error ?? success; toolCaseNoteBad = error != null;
+        }
+        static void ToolCasesTab()
+        {
+            Header(Lang.R("Tool cases"));
+            Para(Lang.R("Spawn cases in front of you. Everyone in the session sees them."), Style.Dim);
+            Para(Lang.R("Cases in this session: ") + MscToolCases.Count, Style.Dim);
+            if (toolCaseNote != null) Para(toolCaseNote, toolCaseNoteBad ? Style.Warn : Style.Good);
+            if (!MscToolCases.CanManage(Session.Active, Session.IsHost, PlayerSync.InGame))
+            {
+                Para(Lang.R("Only the host can spawn and delete cases in game."), Style.Warn); return;
+            }
+            if (Item(Lang.R("Spawn spanner case"), "+", false, null, false) == 2)
+                ToolCaseResult(MscToolCases.Spawn(0), Lang.R("Spanner case spawned in front of you."));
+            if (Item(Lang.R("Spawn ratchet case"), "+", false, null, false) == 2)
+                ToolCaseResult(MscToolCases.Spawn(1), Lang.R("Ratchet case spawned in front of you."));
+            Header(Lang.R("Delete extra cases"));
+            Para(Lang.R("The original case and purchased sets are preserved. Put carried cases down first."), Style.Dim);
+            for (int i = 1; i < MscToolCases.Count; i++)
+            {
+                int id = MscToolCases.IdAt(i);
+                string name = Lang.R(MscToolCases.KindAt(i) == 0 ? "Spanner case" : "Ratchet case") + " #" + id;
+                if (Item(name, Lang.R("Delete case"), false, null, false) == 2)
+                {
+                    ToolCaseResult(MscToolCases.Remove(id), Lang.R("Case deleted for all players.")); return;
+                }
+            }
+            if (MscToolCases.Count > 1 && Item(Lang.R("Delete all extra cases"), "×", false, null, false) == 2)
+                ToolCaseResult(MscToolCases.RemoveAll(), Lang.R("Extra cases deleted for all players."));
+        }
 
         class PRow { public PlayerInfo P; public string Label, Value; }
         static readonly List<PRow> prows = new List<PRow>();

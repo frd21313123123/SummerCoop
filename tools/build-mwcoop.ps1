@@ -38,4 +38,7 @@ if (!$SkipTests) {
         & (Join-Path $PSScriptRoot 'test-msc-adapter.ps1') -GamePath $GamePath
     } finally { $env:TEMP = $oldTemp; $env:TMP = $oldTmp }
 }
+$vendorBin = Join-Path $root 'vendor\bin'
+New-Item -ItemType Directory -Path $vendorBin -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $build 'SummerCoop.dll') -Destination (Join-Path $vendorBin 'SummerCoop.dll') -Force
 Write-Output ('MWCoop engine for My Summer Car built: ' + (Join-Path $build 'SummerCoop.dll'))

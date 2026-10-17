@@ -534,8 +534,9 @@ static int CmpVer(std::wstring a, std::wstring b)
 // Derniere erreur WinHTTP d'une requete sans reponse (12007 nom introuvable, 12029 connexion impossible, 12002 delai...).
 static DWORD g_httpErr;
 
-static bool HttpGet(const std::wstring &url, std::string *out, const std::wstring &toFile, bool progress, DWORD *status = NULL)
+static bool HttpGet(const std::wstring &url, std::string *out, const std::wstring &toFile, bool progress, DWORD *status = NULL, int hops = 0)
 {
+    if (hops > 7) return false;
     if (status) *status = 0;
     g_httpErr = 0;
     URL_COMPONENTS uc = { sizeof(uc) };
@@ -547,22 +548,42 @@ static bool HttpGet(const std::wstring &url, std::string *out, const std::wstrin
     if (!WinHttpCrackUrl(url.c_str(), 0, 0, &uc)) return false;
     std::wstring full = std::wstring(path) + extra;
 
-    HINTERNET s = WinHttpOpen(L"MWCoop-Launcher", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, NULL, NULL, 0);
-    if (!s) s = WinHttpOpen(L"MWCoop-Launcher", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, NULL, NULL, 0);
+    HINTERNET s = WinHttpOpen(L"SummerCoop-Launcher", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, NULL, NULL, 0);
+    if (!s) s = WinHttpOpen(L"SummerCoop-Launcher", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, NULL, NULL, 0);
     if (!s) return false;
-    WinHttpSetTimeouts(s, 8000, 8000, 15000, 30000);
+    WinHttpSetTimeouts(s, 8000, 8000, 15000, 45000);
     bool ok = false;
     HANDLE f = INVALID_HANDLE_VALUE;
     HINTERNET c = WinHttpConnect(s, host, uc.nPort, 0);
     HINTERNET r = c ? WinHttpOpenRequest(c, L"GET", full.c_str(), NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
                                          uc.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0) : NULL;
-    // en-tete de l'API seulement pour l'API (le zip : requete nue, comme un navigateur)
-    const wchar_t *hdr = toFile.empty() ? L"Accept: application/vnd.github+json\r\n" : WINHTTP_NO_ADDITIONAL_HEADERS;
-    if (r && WinHttpSendRequest(r, hdr, toFile.empty() ? (DWORD)-1 : 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0)
+
+    DWORD redirectPolicy = WINHTTP_OPTION_REDIRECT_POLICY_ALWAYS;
+    if (r) WinHttpSetOption(r, WINHTTP_OPTION_REDIRECT_POLICY, &redirectPolicy, sizeof(redirectPolicy));
+
+    std::wstring customHdr;
+    if (toFile.empty()) customHdr += L"Accept: application/vnd.github+json\r\n";
+    wchar_t tok[256] = L"";
+    if (!g_iniLauncher.empty()) GetPrivateProfileStringW(L"Lanceur", L"GitHubToken", L"", tok, 256, g_iniLauncher.c_str());
+    if (!tok[0]) GetEnvironmentVariableW(L"GITHUB_TOKEN", tok, 256);
+    if (tok[0]) customHdr += L"Authorization: Bearer " + std::wstring(tok) + L"\r\n";
+    const wchar_t *hdr = customHdr.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : customHdr.c_str();
+
+    if (r && WinHttpSendRequest(r, hdr, customHdr.empty() ? 0 : (DWORD)-1, WINHTTP_NO_REQUEST_DATA, 0, 0, 0)
           && WinHttpReceiveResponse(r, NULL)) {
         DWORD code = 0, len = sizeof(code);
         WinHttpQueryHeaders(r, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &code, &len, WINHTTP_NO_HEADER_INDEX);
         if (status) *status = code;
+        if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) {
+            wchar_t loc[2048] = {};
+            DWORD locLen = sizeof(loc);
+            if (WinHttpQueryHeaders(r, WINHTTP_QUERY_LOCATION, WINHTTP_HEADER_NAME_BY_INDEX, loc, &locLen, WINHTTP_NO_HEADER_INDEX)) {
+                if (r) { WinHttpCloseHandle(r); r = NULL; }
+                if (c) { WinHttpCloseHandle(c); c = NULL; }
+                WinHttpCloseHandle(s); s = NULL;
+                return HttpGet(loc, out, toFile, progress, status, hops + 1);
+            }
+        }
         DWORD total = 0; len = sizeof(total);
         if (!WinHttpQueryHeaders(r, WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &total, &len, WINHTTP_NO_HEADER_INDEX)) total = 0;
         if (code == 200) {
@@ -950,7 +971,7 @@ static bool IsWritableDir(const std::wstring &dir)
 // Texte de chaque release GitHub : en francais, puis une ligne "---", puis en anglais. Gardees dans
 // <jeu>\MWCoop\notes-maj.json pour les lire hors ligne.
 // (depuis 0.92.3, demande de JD : encore une ligne "---" et en russe ; sans : l'anglais en russe)
-struct Note { std::wstring ver, date, fr, en, ru, ar, zip, page; bool pre = false; };
+struct Note { std::wstring ver, date, fr, en, ru, ar, zip, page, exeUrl; bool pre = false; };
 static const std::wstring &NoteBody(const Note &n) { return g_fr ? n.fr : g_ru && !n.ru.empty() ? n.ru : g_ar && !n.ar.empty() ? n.ar : n.en; }
 static std::vector<Note> g_notes;
 static volatile bool g_notesDone;
@@ -1080,7 +1101,17 @@ static std::vector<Note> ParseReleases(const std::string &source)
             // Accept the assets produced by tools/package.ps1, excluding source ZIPs.
             std::string name = url.substr(url.find_last_of('/') + 1);
             std::string ver = Narrow(n.ver, CP_UTF8);
-            if (name == "SummerCoop-Launcher.exe" || name == "SummerCoop-Launcher-" + ver + ".exe" || name == "SummerCoop-" + ver + ".zip") { n.zip = Widen(url); break; }
+            if (name == "SummerCoop-Launcher.exe" || name == "SummerCoop-Launcher-" + ver + ".exe") {
+                if (n.exeUrl.empty() || name == "SummerCoop-Launcher.exe") n.exeUrl = Widen(url);
+                if (n.zip.empty()) n.zip = Widen(url);
+            } else if (name == "SummerCoop-" + ver + ".zip") {
+                if (n.zip.empty()) n.zip = Widen(url);
+            }
+        }
+        if (n.exeUrl.empty() && !n.zip.empty()) {
+            std::string z = Narrow(n.zip, CP_UTF8);
+            size_t dot = z.rfind('.');
+            if (dot != std::string::npos && !_stricmp(z.c_str() + dot, ".exe")) n.exeUrl = n.zip;
         }
         bool draft = JsonFlag(json, "draft");
         if (JsonFlag(json, "prerelease") || n.ver.find(L'-') != std::wstring::npos) n.pre = true;
@@ -1129,16 +1160,19 @@ static int FetchReleases(std::string &json)
 enum { UPD_CHECK, UPD_QUIET };
 enum { CHECK_PENDING, CHECK_RUNNING, CHECK_CURRENT, CHECK_AVAILABLE, CHECK_EMPTY, CHECK_FAILED };
 static std::atomic<int> g_updState(CHECK_PENDING);
-static std::wstring g_updVer, g_updPage; // protected by g_cs
+static std::wstring g_updVer, g_updPage, g_updExeUrl; // protected by g_cs
 static std::atomic<bool> g_updChecking(false);
 static DWORD g_updCheckT;
 static std::wstring LauncherVersion() { return Widen(MWV_STR); }
 static std::wstring UpdAvail() { EnterCriticalSection(&g_cs); std::wstring v = g_updVer; LeaveCriticalSection(&g_cs); return v; }
-static void UpdSet(const std::wstring &v, const std::wstring &page = L"")
+static std::wstring UpdPage() { EnterCriticalSection(&g_cs); std::wstring p = g_updPage; LeaveCriticalSection(&g_cs); return p; }
+static std::wstring UpdExeUrl() { EnterCriticalSection(&g_cs); std::wstring u = g_updExeUrl; LeaveCriticalSection(&g_cs); return u; }
+static void UpdSet(const std::wstring &v, const std::wstring &page = L"", const std::wstring &exeUrl = L"")
 {
-    EnterCriticalSection(&g_cs); g_updVer = v; g_updPage = page; LeaveCriticalSection(&g_cs);
+    EnterCriticalSection(&g_cs); g_updVer = v; g_updPage = page; g_updExeUrl = exeUrl; LeaveCriticalSection(&g_cs);
 }
 static bool AutoCheckUpdates() { return GetPrivateProfileIntW(L"Lanceur", L"CheckUpdates", 1, g_iniLauncher.c_str()) != 0; }
+static bool AutoInstallUpdates() { return GetPrivateProfileIntW(L"Lanceur", L"AutoUpdate", 1, g_iniLauncher.c_str()) != 0; }
 static bool ChannelNightly()
 {
     wchar_t b[16] = L"";
@@ -1169,6 +1203,108 @@ static std::vector<Note> ChannelNotes(const std::vector<Note> &rel, bool nightly
     for (const Note &n : rel) if (!n.pre) out.push_back(n);
     return out;
 }
+
+static std::atomic<bool> g_updating(false);
+
+static bool VerifyPeBinary(const std::wstring &path)
+{
+    HANDLE f = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
+    if (f == INVALID_HANDLE_VALUE) return false;
+    LARGE_INTEGER sz = {};
+    if (!GetFileSizeEx(f, &sz) || sz.QuadPart < 500000LL) { CloseHandle(f); return false; }
+    IMAGE_DOS_HEADER dos = {};
+    DWORD rd = 0;
+    if (!ReadFile(f, &dos, sizeof(dos), &rd, NULL) || rd != sizeof(dos) || dos.e_magic != IMAGE_DOS_SIGNATURE) {
+        CloseHandle(f); return false;
+    }
+    if (SetFilePointer(f, dos.e_lfanew, NULL, FILE_BEGIN) == INVALID_SET_FILE_POINTER) {
+        CloseHandle(f); return false;
+    }
+    DWORD ntSig = 0;
+    if (!ReadFile(f, &ntSig, sizeof(ntSig), &rd, NULL) || rd != sizeof(ntSig) || ntSig != IMAGE_NT_SIGNATURE) {
+        CloseHandle(f); return false;
+    }
+    CloseHandle(f);
+    return true;
+}
+
+static DWORD WINAPI SelfUpdateThread(void *param)
+{
+    struct UpdateParams { std::wstring ver, url, page; };
+    UpdateParams *p = (UpdateParams *)param;
+    std::wstring ver = p->ver, url = p->url, page = p->page;
+    delete p;
+
+    struct Guard { ~Guard() { g_updating = false; g_busy = false; g_progress = -1.0f; } } guard;
+
+    if (url.empty()) {
+        if (page.empty()) page = L"https://github.com/" + g_repo + L"/releases";
+        ShellExecuteW(g_wnd, L"open", page.c_str(), NULL, NULL, SW_SHOWNORMAL);
+        return 0;
+    }
+
+    g_busy = true;
+    g_progress = 0.0f;
+    SetStatus(K_NORMAL, T(L"Téléchargement de SummerCoop %s…", L"Downloading SummerCoop %s…"), ver.c_str());
+
+    std::wstring tmpFile = g_self + L".tmp";
+    std::wstring newFile = g_self + L".new";
+    std::wstring oldFile = g_self + L".old";
+    DeleteFileW(tmpFile.c_str());
+    DeleteFileW(newFile.c_str());
+
+    DWORD httpCode = 0;
+    bool ok = HttpGet(url, NULL, tmpFile, true, &httpCode);
+    if (!ok || !VerifyPeBinary(tmpFile)) {
+        DeleteFileW(tmpFile.c_str());
+        LaunchLog("echec telechargement mise a jour %s : http %lu, err %lu", Narrow(ver, CP_UTF8).c_str(), httpCode, g_httpErr);
+        SetStatus(K_WARN, T(L"Échec du téléchargement (HTTP %lu, code %lu)", L"Update download failed (HTTP %lu, code %lu)"), httpCode, g_httpErr);
+        return 0;
+    }
+
+    MoveFileExW(tmpFile.c_str(), newFile.c_str(), MOVEFILE_REPLACE_EXISTING);
+    g_progress = 1.0f;
+    SetStatus(K_OK, T(L"Mise à jour prête, redémarrage…", L"Update ready, restarting…"));
+    LaunchLog("mise a jour %s telechargee, redemarrage en cours", Narrow(ver, CP_UTF8).c_str());
+    Sleep(500);
+
+    DeleteFileW(oldFile.c_str());
+    bool renamed = MoveFileExW(g_self.c_str(), oldFile.c_str(), MOVEFILE_REPLACE_EXISTING);
+    bool placed = false;
+    if (renamed) {
+        placed = MoveFileExW(newFile.c_str(), g_self.c_str(), MOVEFILE_REPLACE_EXISTING);
+    }
+
+    if (placed) {
+        STARTUPINFOW si = { sizeof(si) };
+        PROCESS_INFORMATION pi = {};
+        std::wstring cmd = L"\"" + g_self + L"\"";
+        std::vector<wchar_t> cmdBuf(cmd.begin(), cmd.end()); cmdBuf.push_back(0);
+        if (CreateProcessW(g_self.c_str(), cmdBuf.data(), NULL, NULL, FALSE, 0, NULL, g_dir.c_str(), &si, &pi)) {
+            CloseHandle(pi.hThread);
+            CloseHandle(pi.hProcess);
+            ExitProcess(0);
+        }
+    }
+
+    wchar_t helperCmd[2048];
+    swprintf_s(helperCmd, L"/c ping 127.0.0.1 -n 2 >nul & del /f /q \"%s\" & move /y \"%s\" \"%s\" & start \"\" \"%s\"",
+               oldFile.c_str(), newFile.c_str(), g_self.c_str(), g_self.c_str());
+    ShellExecuteW(NULL, L"open", L"cmd.exe", helperCmd, NULL, SW_HIDE);
+    ExitProcess(0);
+    return 0;
+}
+
+static void StartSelfUpdate(const std::wstring &ver, const std::wstring &url, const std::wstring &page)
+{
+    if (g_updating.exchange(true)) return;
+    struct UpdateParams { std::wstring ver, url, page; };
+    UpdateParams *p = new UpdateParams{ ver, url, page };
+    HANDLE t = CreateThread(NULL, 0, SelfUpdateThread, p, 0, NULL);
+    if (t) CloseHandle(t);
+    else { g_updating = false; delete p; }
+}
+
 static DWORD WINAPI UpdateThread(void *param)
 {
     bool quiet = (int)(INT_PTR)param == UPD_QUIET;
@@ -1185,8 +1321,16 @@ static DWORD WINAPI UpdateThread(void *param)
     LeaveCriticalSection(&g_cs);
     g_relState = rs;
     g_notesDone = true;
-    if (result == CHECK_AVAILABLE) UpdSet(pick->ver, pick->page);
-    else if (result != CHECK_FAILED) UpdSet(L"");
+    if (result == CHECK_AVAILABLE) {
+        std::wstring exe = pick ? (!pick->exeUrl.empty() ? pick->exeUrl : (pick->zip.find(L".exe") != std::wstring::npos ? pick->zip : L"")) : L"";
+        UpdSet(pick->ver, pick->page, exe);
+        if (AutoInstallUpdates() && g_lobby == LB_NONE && !g_busy && !exe.empty()) {
+            StartSelfUpdate(pick->ver, exe, pick->page);
+            return 0;
+        }
+    } else if (result != CHECK_FAILED) {
+        UpdSet(L"", L"", L"");
+    }
     g_updState = result;
     if (quiet && !changed) return 0;
     if (result == CHECK_AVAILABLE)
@@ -1204,10 +1348,16 @@ static DWORD WINAPI UpdateThread(void *param)
 static void StartUpdate(bool download = false)
 {
     if (download) {
-        EnterCriticalSection(&g_cs); std::wstring page = g_updPage; LeaveCriticalSection(&g_cs);
-        if (page.empty()) page = L"https://github.com/" + g_repo + L"/releases";
-        if ((INT_PTR)ShellExecuteW(g_wnd, L"open", page.c_str(), NULL, NULL, SW_SHOWNORMAL) <= 32)
-            SetStatus(K_WARN, T(L"Impossible d'ouvrir la page de téléchargement", L"Could not open the download page"));
+        std::wstring ver = UpdAvail();
+        std::wstring url = UpdExeUrl();
+        std::wstring page = UpdPage();
+        if (!url.empty()) {
+            StartSelfUpdate(ver, url, page);
+        } else {
+            if (page.empty()) page = L"https://github.com/" + g_repo + L"/releases";
+            if ((INT_PTR)ShellExecuteW(g_wnd, L"open", page.c_str(), NULL, NULL, SW_SHOWNORMAL) <= 32)
+                SetStatus(K_WARN, T(L"Impossible d'ouvrir la page de téléchargement", L"Could not open the download page"));
+        }
         return;
     }
     if (g_updChecking.exchange(true)) return;
@@ -1256,8 +1406,8 @@ static void Layout()
     g_fields[0].maxLen = 23; g_fields[0].address = false;
     g_fields[1].maxLen = 63; g_fields[1].address = true;
     // (les autres boutons sont places par leur page en se dessinant : ui.inc)
-    g_btn[B_GITHUB].r = RectF(28, 726, 48, 44);     // GitHub et Ko-fi (logos)
-    g_btn[B_KOFI].r = RectF(80, 726, 48, 44);
+    g_btn[B_GITHUB].r = RectF();
+    g_btn[B_KOFI].r = RectF();
 }
 
 static void UpdateButtons()
@@ -1271,7 +1421,8 @@ static void UpdateButtons()
     g_btn[B_SOLO].enabled = can;
     g_btn[B_EXE].enabled = menu && !busy;
     g_btn[B_CLOSE].enabled = g_btn[B_MIN].enabled = g_btn[B_BUY].enabled = g_btn[B_THEME].enabled = g_btn[B_LANG].enabled = true;
-    g_btn[B_GITHUB].enabled = g_btn[B_KOFI].enabled = true;
+    g_btn[B_GITHUB].enabled = g_btn[B_KOFI].enabled = false;
+    g_btn[B_GITHUB].visible = g_btn[B_KOFI].visible = false;
     g_btn[B_BUY].visible = false;
     g_btn[B_LOGS].visible = false;
     bool home = g_tab == TAB_HOME;
@@ -7802,6 +7953,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
         LocalFree(av);
     }
     DeleteFileW((g_self + L".old").c_str());   // reste d'une mise a jour du lanceur
+    DeleteFileW((g_self + L".tmp").c_str());
+    DeleteFileW((g_self + L".new").c_str());
     DeleteFileW((g_dir + L"version.dll.old").c_str());   // (chargeur verrouille pendant une mise a jour : plus utilise, sauf jeu ouvert)
     // Langue : francais, russe ou arabe si Windows l'est, anglais pour toute autre langue ; Langue=fr|en|ru|ar pour forcer.
     wchar_t lang[8] = L"";
@@ -7859,7 +8012,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
             const Note *p = PickRelease(rel, nightly != 0);
             std::wstring v = p ? p->ver : L"";
             o += std::string(nightly ? "nightly" : "stable") + " : " + Narrow(v, CP_UTF8) + (p && WantVer(v, argv[4], nightly != 0) ? " a installer" : " rien") + " ; notes " + std::to_string(ChannelNotes(rel, nightly != 0).size()) + "\r\n";
-            o += "state=" + std::to_string(CheckResult(REL_OK, p, argv[4], nightly != 0)) + " offline=" + std::to_string(CheckResult(REL_OFFLINE, p, argv[4], nightly != 0)) + " page=" + (p ? Narrow(p->page, CP_UTF8) : "") + "\r\n";
+            o += "state=" + std::to_string(CheckResult(REL_OK, p, argv[4], nightly != 0)) + " offline=" + std::to_string(CheckResult(REL_OFFLINE, p, argv[4], nightly != 0)) + " page=" + (p ? Narrow(p->page, CP_UTF8) : "") + " exe=" + (p ? Narrow(p->exeUrl, CP_UTF8) : "") + "\r\n";
         }
         HANDLE f = CreateFileW(argv[3], GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, NULL);
         if (f != INVALID_HANDLE_VALUE) { DWORD w; WriteFile(f, o.data(), (DWORD)o.size(), &w, NULL); CloseHandle(f); }

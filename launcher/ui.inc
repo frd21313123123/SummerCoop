@@ -336,9 +336,10 @@ static bool LookEditable() { return g_state == ST_IDLE || g_state == ST_RUNNING;
 static bool RunningLook() { return g_state == ST_RUNNING && (g_tab == TAB_SKIN || g_tab == TAB_CAR); }
 static bool PageEnabled(int p)
 {
+    if (p == TAB_API) return false;
     if (g_state == ST_RUNNING) return p == TAB_HOME || (!g_gameDir.empty() && (p == TAB_SKIN || p == TAB_CAR));
     if (g_state != ST_IDLE) return false;
-    if (g_gameDir.empty()) return p == TAB_HOME || p == TAB_NOTES || p == TAB_COOP || p == TAB_API || p == TAB_CREDITS || p == TAB_WIKI || p == TAB_ALBUM;
+    if (g_gameDir.empty()) return p == TAB_HOME || p == TAB_NOTES || p == TAB_COOP || p == TAB_CREDITS || p == TAB_WIKI || p == TAB_ALBUM;
     if (p == TAB_LOBBY) return g_lobby != LB_NONE;
     return true;
 }
@@ -457,9 +458,14 @@ static void DrawRail(Graphics &g)
 {
     Glass(kRail, 22);
     if (g_logo) {
-        float lw = 168, lh = lw * g_logo->GetHeight() / g_logo->GetWidth();
+        float maxW = 168.0f, maxH = 74.0f;
+        float lw = maxW, lh = lw * g_logo->GetHeight() / g_logo->GetWidth();
+        if (lh > maxH) {
+            lh = maxH;
+            lw = lh * g_logo->GetWidth() / g_logo->GetHeight();
+        }
         g.SetInterpolationMode(InterpolationModeHighQualityBicubic);
-        g.DrawImage(g_logo, RectF(kRail.X + (kRail.Width - lw) / 2, 26, lw, lh));
+        g.DrawImage(g_logo, RectF(kRail.X + (kRail.Width - lw) / 2, 24.0f + (maxH - lh) / 2.0f, lw, lh));
     }
     // version (plus de pastille PRE-ALPHA depuis 0.75.35, demande de JD ; un ancien suffixe "-prealpha" n'est pas montre)
     std::wstring ver = L"v" + LauncherVersion();
@@ -479,7 +485,7 @@ static void DrawRail(Graphics &g)
         size_t dash = v.find(L'-');
         if (dash != std::wstring::npos) v.resize(dash);
         Icon(g, IC_DOWNLOAD, b.r.X + 20, b.r.Y + b.r.Height / 2, 17, kOnAcc, 2.2f);
-        Text(g, std::wstring(T(L"Télécharger · ", L"Download · ")) + v, RectF(b.r.X + 34, b.r.Y, b.r.Width - 40, b.r.Height), 13, FontStyleBold, kOnAcc, StringAlignmentNear);
+        Text(g, std::wstring(T(L"Mettre à jour · ", L"Update · ")) + v, RectF(b.r.X + 34, b.r.Y, b.r.Width - 40, b.r.Height), 13, FontStyleBold, kOnAcc, StringAlignmentNear);
         y0 = 180;
     }
     // groupes jusqu'a Reglages (674) : lignes de 44 px, ou de 40 quand le bouton de mise a jour prend de la place
@@ -510,14 +516,6 @@ static void DrawRail(Graphics &g)
         y += gap;
     }
     DrawNavItem(g, RectF(28, 674, 208, 44), TAB_COOP, IC_GEAR, T(L"Réglages", L"Settings"));
-    for (int id : { B_GITHUB, B_KOFI }) {
-        Button &b = g_btn[id];
-        GraphicsPath p; RoundRect(p, b.r, 12);
-        SolidBrush fb(Mix(TH(card), TH(cardSel), b.hover)); g.FillPath(&fb, &p);
-        Pen pen(TH(choiceBorder), 1.0f); g.DrawPath(&pen, &p);
-        bool gh = id == B_GITHUB;
-        Icon(g, gh ? IC_CODE : IC_HEART, b.r.X + b.r.Width / 2, b.r.Y + b.r.Height / 2, 18, gh ? kInk : Color(255, 255, 143, 163), 2.1f);
-    }
 }
 
 // ---- en-tete et pied
@@ -614,7 +612,6 @@ static void DrawHeader(Graphics &g)
     case TAB_LOGS: title = T(L"Journaux", L"Logs"); sub = T(L"Un souci en jeu ? Un zip à envoyer", L"Trouble in game? A zip to send"); break;
     case TAB_COOP: title = T(L"Réglages", L"Settings"); sub = T(L"Gardés dans summercoop-launcher.ini", L"Kept in summercoop-launcher.ini"); break;
     case TAB_GFX: title = T(L"Options du jeu", L"Game options"); sub = T(L"Graphismes et coop, pour toi seul · en partie : menu F10 > Graphismes", L"Graphics and co-op, just for you · in game: F10 menu > Graphics"); break;
-    case TAB_API: title = T(L"API pour les moddeurs", L"API for modders"); sub = T(L"SummerCoop.CoopApi : la doc, la DLL et un exemple", L"SummerCoop.CoopApi: docs, DLL and an example"); break;
     case TAB_CREDITS: title = T(L"Crédits", L"Credits"); sub = T(L"Merci à ceux qui améliorent SummerCoop", L"Thanks to everyone who makes SummerCoop better"); break;
     case TAB_VHS: title = T(L"Cassettes VHS", L"VHS tapes"); sub = T(L"Les voir, les exporter en .mp4, les renommer, y mettre une vidéo", L"Watch them, export them as .mp4, rename them, put a video on them"); break;
     case TAB_SAVES: title = T(L"Sauvegardes", L"Saves"); sub = T(L"Une partie par groupe d'amis : choisir, nommer, recommencer", L"One game per group of friends: pick, name, restart"); break;
@@ -628,13 +625,12 @@ static void DrawHeader(Graphics &g)
     HeadButton(g, B_MIN, IC_MIN);
     HeadButton(g, B_THEME, g_dark ? IC_SUN : IC_MOON);
     HeadButton(g, B_LANG, 0, g_fr ? L"FR" : g_ru ? L"RU" : g_ar ? L"AR" : L"EN");
-    // | puis API moddeurs et Journaux (pastille rouge : la derniere partie s'est arretee brutalement)
+    // | puis Journaux (pastille rouge : la derniere partie s'est arretee brutalement)
     {
         Pen sp(TH(fieldBorder), 1.4f);
         g.DrawLine(&sp, right - 2, 32.0f, right - 2, 56.0f);
         right -= 14;
-        HeadPage(g, RectF(right - 44, 22, 44, 44), TAB_API, IC_BRACES);
-        right -= 54;
+        g_navR[TAB_API] = RectF();
         HeadPage(g, RectF(right - 44, 22, 44, 44), TAB_LOGS, IC_FILE);
         right -= 54;
     }
@@ -991,7 +987,7 @@ static void DrawNotesPage(Graphics &g)
     Title(g, L"SummerCoop " + n.ver.substr(0, n.ver.find(L'-')), RectF(b.X + 28, b.Y + 22, 400, 38), 28, kInk);
     Text(g, n.date, RectF(b.X + 28, b.Y + 58, 300, 20), 13, FontStyleRegular, kGrey, StringAlignmentNear);
     int cmp = g_localVer.empty() ? 1 : CmpVer(n.ver, g_localVer);
-    if (cmp > 0 && !UpdAvail().empty()) UiButton(g, RectF(b.X + b.Width - 200, b.Y + 26, 172, 44), T(L"Télécharger", L"Download"), UI_NOTE_UPDATE, true, IC_DOWNLOAD);
+    if (cmp > 0 && !UpdAvail().empty()) UiButton(g, RectF(b.X + b.Width - 200, b.Y + 26, 172, 44), T(L"Mettre à jour", L"Update"), UI_NOTE_UPDATE, true, IC_DOWNLOAD);
     else if (cmp == 0) { const wchar_t *lab = T(L"INSTALLÉE", L"INSTALLED"); float w = PillW(lab, 11); Pill(g, RectF(b.X + b.Width - 28 - w, b.Y + 36, w, 24), WithA(kOk, 0.2f), lab, kOk); }
     Pen sep(TH(sep), 1); g.DrawLine(&sep, b.X + 28, b.Y + 84, b.X + b.Width - 28, b.Y + 84);
     // corps : puces, paragraphes, images (defilement)
@@ -1230,7 +1226,7 @@ static void DrawSettings(Graphics &g)
 {
     float cw = (kMain.Width - 16) / 2, lx = kMain.X, rx = kMain.X + cw + 16;
     // Mise a jour
-    RectF up(lx, kMain.Y, cw, 196);
+    RectF up(lx, kMain.Y, cw, 236);
     Glass(up);
     Title(g, T(L"Mise à jour", L"Updates"), RectF(up.X + 20, up.Y + 16, 200, 24), 17, kInk);
     // canal (temporaire : Stable / Nightly, pendant la refonte)
@@ -1251,18 +1247,25 @@ static void DrawSettings(Graphics &g)
         else l1 = T(L"Version pas encore vérifiée", L"Version not checked yet");
         Text(g, l1, RectF(box.X + 16, box.Y + 10, box.Width - 200, 22), 14, FontStyleBold, kInk, StringAlignmentNear);
         Text(g, l2, RectF(box.X + 16, box.Y + 33, box.Width - 200, 20), 12, FontStyleRegular, kGrey, StringAlignmentNear);
-        if (!av.empty()) UiButton(g, RectF(box.X + box.Width - 172, box.Y + 12, 160, 40), T(L"Télécharger", L"Download"), UI_NOTE_UPDATE, true, IC_DOWNLOAD, g_lobby == LB_NONE && !g_busy);
+        if (!av.empty()) UiButton(g, RectF(box.X + box.Width - 172, box.Y + 12, 160, 40), T(L"Mettre à jour", L"Update"), UI_NOTE_UPDATE, true, IC_DOWNLOAD, g_lobby == LB_NONE && !g_busy);
         else UiButton(g, RectF(box.X + box.Width - 172, box.Y + 12, 160, 40), T(L"Vérifier", L"Check"), UI_SET_CHECK, false, -1, !g_updChecking);
     }
     {
-        RectF row(up.X + 20, up.Y + 128, up.Width - 40, 52);
+        RectF row(up.X + 20, up.Y + 122, up.Width - 40, 50);
         bool on = AutoCheckUpdates();
         SetRowText(g, RectF(row.X, row.Y, row.Width - 70, row.Height), T(L"Vérifier automatiquement", L"Check automatically"), T(L"Au démarrage et toutes les 30 minutes", L"At startup and every 30 minutes"));
-        UiToggle(g, RectF(row.X + row.Width - 50, row.Y + 12, 50, 28), on, g_uiHot == UI_SET_AUTO);
+        UiToggle(g, RectF(row.X + row.Width - 50, row.Y + 11, 50, 28), on, g_uiHot == UI_SET_AUTO);
         HotZone(row, UI_SET_AUTO);
     }
+    {
+        RectF row(up.X + 20, up.Y + 176, up.Width - 40, 50);
+        bool on = AutoInstallUpdates();
+        SetRowText(g, RectF(row.X, row.Y, row.Width - 70, row.Height), T(L"Mettre à jour automatiquement", L"Auto-install updates"), T(L"Télécharger et redémarrer dès qu'une version sort", L"Download and restart when a new version is released"));
+        UiToggle(g, RectF(row.X + row.Width - 50, row.Y + 11, 50, 28), on, g_uiHot == UI_SET_AUTOINSTALL);
+        HotZone(row, UI_SET_AUTOINSTALL);
+    }
     // Lanceur
-    RectF la(lx, up.Y + up.Height + 16, cw, 268);
+    RectF la(lx, up.Y + up.Height + 12, cw, 252);
     Glass(la);
     Title(g, T(L"Lanceur", L"Launcher"), RectF(la.X + 20, la.Y + 16, 300, 24), 17, kInk);
     float y = la.Y + 54;
@@ -1498,7 +1501,6 @@ static void DrawUI(Graphics &g)
     case TAB_NOTES: DrawNotesPage(g); break;
     case TAB_LOGS: DrawLogsPage(g); break;
     case TAB_COOP: DrawSettings(g); break;
-    case TAB_API: DrawApiPage(g); break;
     case TAB_GFX: DrawGfxPage(g); break;
     case TAB_CREDITS: DrawCreditsPage(g); break;
     case TAB_WIKI: DrawWikiPage(g); break;
@@ -1549,6 +1551,11 @@ static bool UiClick(int id)
         bool on = AutoCheckUpdates();
         WritePrivateProfileStringW(L"Lanceur", L"CheckUpdates", on ? L"0" : L"1", g_iniLauncher.c_str());
         if (!on) StartUpdate(false);
+        return true;
+    }
+    case UI_SET_AUTOINSTALL: {
+        bool on = AutoInstallUpdates();
+        WritePrivateProfileStringW(L"Lanceur", L"AutoUpdate", on ? L"0" : L"1", g_iniLauncher.c_str());
         return true;
     }
     case UI_SET_DARK: case UI_SET_LIGHT:

@@ -31,6 +31,7 @@ namespace MWCoop
             if (readyAt >= 0)
             {
                 frames.Add(Time.unscaledDeltaTime * 1000);
+                if (Time.realtimeSinceStartup - readyAt > 6) MscToolCaseProbe.Update();
                 if (!chatSent) { chatSent = true; Chat.Send("MSC smoke " + (Session.IsHost ? "host" : "guest")); }
                 if (Time.realtimeSinceStartup - readyAt > 3)
                     try { MscOptimizationProbe.Update(); }
@@ -93,6 +94,7 @@ namespace MWCoop
             report.Add("TestCursorActionsSuppressed=" + MscTestEnvironment.SuppressedCursorActions);
             report.Add("Ready=" + ready); report.Add("Players=" + Session.Players.Count); report.Add("PartsBindings=" + MscParts.Count);
             report.Add("ReadyPlayers=" + readyPlayers); report.Add("Participants=" + participants);
+            report.Add("ToolCases=" + MscToolCases.Count);
             report.Add("Vehicles=" + VehicleSync.Count); report.Add("WorldFsms=" + WorldFsms.Count);
             report.Add("SaveReceived=" + SaveTransfer.Received); report.Add("SaveDirectory=" + MscProfile.SaveDirectory);
             report.Add("LauncherConfig=" + Config.IniPath);
@@ -113,6 +115,7 @@ namespace MWCoop
             report.AddRange(MscRegressionProbe.Results);
             report.AddRange(MscAssemblyProbe.Results);
             report.AddRange(MscCarrierProbe.Results);
+            report.AddRange(MscToolCaseProbe.Results);
             report.AddRange(MscOptimizationProbe.Results);
             report.Add("PartsDiscoveryPending=" + MscParts.DiscoveryPending + ";Age=" + MscParts.DiscoveryAge.ToString("F2", CultureInfo.InvariantCulture));
             foreach (string failure in MscRuntime.Failures) report.Add("ModuleError=" + failure);

@@ -7,6 +7,22 @@ namespace MWCoop
     {
         public static readonly Dictionary<string, string> Table = new Dictionary<string, string>
         {
+            { "Tool cases", "Ящики с инструментами" },
+            { "Spawn cases in front of you. Everyone in the session sees them.", "Ящики появляются перед вами и видны всем участникам сессии." },
+            { "Cases in this session: ", "Ящиков в этой сессии: " },
+            { "Only the host can spawn and delete cases in game.", "Создавать и удалять ящики может только хост в игре." },
+            { "Spawn spanner case", "Создать ящик с ключами" },
+            { "Spawn ratchet case", "Создать ящик с трещотками" },
+            { "Spanner case spawned in front of you.", "Ящик с ключами создан перед вами." },
+            { "Ratchet case spawned in front of you.", "Ящик с трещотками создан перед вами." },
+            { "Delete extra cases", "Удаление дополнительных ящиков" },
+            { "The original case and purchased sets are preserved. Put carried cases down first.", "Исходный ящик и купленные наборы сохраняются. Перед удалением положите ящики из рук." },
+            { "Spanner case", "Ящик с ключами" },
+            { "Ratchet case", "Ящик с трещотками" },
+            { "Delete case", "Удалить" },
+            { "Case deleted for all players.", "Ящик удалён у всех участников." },
+            { "Delete all extra cases", "Удалить все дополнительные ящики" },
+            { "Extra cases deleted for all players.", "Дополнительные ящики удалены у всех участников." },
             { "the parents' house", "дом родителей" },
             { "the church", "церкви" },
             { "the apartment", "квартира" },

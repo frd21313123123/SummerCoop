@@ -57,7 +57,7 @@ namespace MWCoop
             float w = Mathf.Min(Style.Px(680), Screen.width - Style.Px(32));
             int perRow = 4, placeRows = (Cheats.Places.Length + perRow - 1) / perRow;
             float h = Style.Px(120) + (Session.Active ? Style.Px(30) + Mathf.Max(1, players.Count) * rowH : 0f) + Style.Px(30) + placeRows * (bh + gap) + Style.Px(30) + bh + gap + Style.Px(30) + 2 * (bh + gap) + Style.Px(60);
-            h = Mathf.Min(h, Screen.height - Style.Px(24));
+            h = Mathf.Min(h + bh + gap, Screen.height - Style.Px(24));
             float x = Mathf.Round((Screen.width - w) / 2), y = Mathf.Round((Screen.height - h) / 2 + (1f - k) * Style.Px(12));
             Style.Glass(new Rect(x, y, w, h), Style.Px(20));
             Style.Title(new Rect(x + pad, y + Style.Px(12), w - 2 * pad, Style.Px(40)), Lang.T("TRICHES", "CHEATS"), Style.White, TextAnchor.MiddleLeft, 26);
@@ -69,6 +69,8 @@ namespace MWCoop
                                                                     : Lang.T("Coupées : lanceur, Options du jeu > Partie et partage > Autoriser les triches.", "Off: launcher, Game options > Game and sharing > Allow cheats."));
             Style.Text(new Rect(ix, cy, iw, Style.Px(26)), state, 15, TextAnchor.MiddleLeft, ok ? Style.Good : Style.Warn, false);
             cy += Style.Px(40);
+            if (Button(new Rect(ix, cy, iw, bh), Lang.R("Tool cases"), true, e)) Menu.ShowToolCases();
+            cy += bh + gap;
             // joueurs
             if (Session.Active)
             {

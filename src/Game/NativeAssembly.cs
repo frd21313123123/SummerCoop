@@ -147,10 +147,12 @@ namespace SummerCoop.Game
             if (action == null || action.parent.Value == null || part == null) throw new InvalidOperationException("Native mount parent is unavailable");
             Transform parent = action.parent.Value.transform;
             if (WorldRegistry.PersonalObject(parent.gameObject) || parent == part.transform || parent.IsChildOf(part.transform)) throw new InvalidOperationException("Invalid native mount parent");
-            bool moved = part.transform.parent != parent;
             part.transform.parent = parent;
             if (action.resetLocalPosition.Value) part.transform.localPosition = Vector3.zero;
-            if (moved && action.resetLocalRotation.Value) part.transform.localRotation = Quaternion.identity;
+            // A late held/loose pose can tilt a part after native SetParent has
+            // already attached it. Match the native reset even for the same parent,
+            // just as we do for position; otherwise repair preserves that tilt.
+            if (action.resetLocalRotation.Value) part.transform.localRotation = Quaternion.identity;
             // Several native End states apply a local offset after SetParent (engine
             // internals included). Read that offset from the game, not a mod table.
             FsmState current = binding.Component.Fsm.GetState(state);

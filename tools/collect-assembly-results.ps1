@@ -11,7 +11,7 @@ $channel = Join-Path $root ('.local/' + $Run + '-assembly')
 $hostManifest = Get-Content -LiteralPath (Join-Path $channel 'host-manifest.txt')
 $guestManifest = Get-Content -LiteralPath (Join-Path $channel 'guest-manifest.txt')
 if (@(Compare-Object $hostManifest $guestManifest).Count) { throw 'Peers tested different assembly slots.' }
-foreach ($part in @('/Subframe|','/Wishbone_FL|','/Wishbone_FR|','/CamshaftGear|','/SteeringWheel|')) {
+foreach ($part in @('/Subframe|','/Wishbone_FL|','/Wishbone_FR|','/CamshaftGear|','/SteeringWheel|','/Oilpan|','/Piston1|','/Piston2|','/Piston3|','/Piston4|')) {
     if (!($hostManifest | Select-String -SimpleMatch $part)) { throw ('Missing regression part: ' + $part) }
 }
 foreach ($corner in @('FL','FR','RL','RR')) {
@@ -26,7 +26,9 @@ foreach ($role in @('host','client')) {
     if ($checks.Count -ne 4) { throw ('Incomplete assembly phases: ' + $role) }
     foreach ($phase in 0..3) {
         $check = @($checks | Where-Object { $_ -match ('^Assembly=' + $phase + ';') })
-        if ($check.Count -ne 1 -or $check[0] -notmatch ';Mismatches=0;WrongInstalled=0;WrongJoints=0$' -or $check[0] -notmatch ';Parts=(1[0-9][0-9]|[2-9][0-9][0-9]);') { throw ('Assembly phase failed: ' + $role + ' ' + ($check -join ' ')) }
+        if ($check.Count -ne 1 -or $check[0] -notmatch ';Mismatches=0;WrongInstalled=0;WrongJoints=0;WrongRotation=0;Tilted=[05]$' -or $check[0] -notmatch ';Parts=(1[0-9][0-9]|[2-9][0-9][0-9]);') { throw ('Assembly phase failed: ' + $role + ' ' + ($check -join ' ')) }
+        $tilts = if ($phase % 2 -eq 1 -and $check[0] -match ';Role=actor;') { 5 } else { 0 }
+        if ($check[0] -notmatch (';Tilted=' + $tilts + '$')) { throw ('Rotation regression was not exercised: ' + $role + ' phase ' + $phase) }
     }
     $carrier = @($report | Where-Object { $_ -match '^Carrier=' })
     if (Test-Path -LiteralPath (Join-Path $root ('.local/' + $Run + '-carrier'))) {
@@ -63,6 +65,7 @@ foreach ($test in @('build/test-results.txt','build/msc-tests/test-results.txt')
 }
 $rows += @('', 'Scope: native assembly/removal actions over the real MWCoop UDP transport, both actor directions.',
     'Timing: native camshaft Adjust actions; absolute angle, stored database angle and mounted pose compared.',
+    'Rotation: four pistons and oilpan tilted after native parenting in both actor directions; checked against native zero local rotation.',
     'Fixture: physics steps paused with stationary rigidbodies; inactive assembly triggers enabled and joint setup follows native transitions.',
     'Carrier (when included): stationary deposits by both actors, both withdrawals, concurrent deposits, capacity nine, excess log preserved and refill.',
     'Limits: not a manual playthrough, road/crash physics, running-engine validation or two-account Steam/WAN test.')

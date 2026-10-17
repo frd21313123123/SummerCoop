@@ -1,4 +1,4 @@
-name: Build SummerCoop
+name: Build and Release SummerCoop
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: summercoop-${{ github.workflow }}-${{ github.ref }}
@@ -18,7 +18,7 @@ defaults:
 
 jobs:
   core-tests:
-    name: Protocol and network tests
+    name: Protocol, network and update tests
     runs-on: windows-latest
     timeout-minutes: 10
     steps:
@@ -34,6 +34,8 @@ jobs:
         run: ./tools/test-installer.ps1
       - name: Test launcher arguments, settings and Windows interface
         run: ./tools/test-launcher.ps1
+      - name: Test launcher self-update detection and parsing
+        run: ./tools/test-native-updates.ps1
       - name: Add test report to the workflow summary
         if: always()
         run: |
@@ -50,3 +52,71 @@ jobs:
             @('', 'Launcher test report', '', ($fence + 'text')) + @(Get-Content -LiteralPath build/launcher-tests/test-results.txt) + @($fence) |
               Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding UTF8
           }
+          if (Test-Path -LiteralPath build/native-update-tests/test-results.txt) {
+            @('', 'Update tests report', '', ($fence + 'text')) + @(Get-Content -LiteralPath build/native-update-tests/test-results.txt) + @($fence) |
+              Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding UTF8
+          }
+
+  publish-release:
+    name: Build, Package and Publish Release
+    needs: [core-tests]
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Compile core mod and package standalone launcher
+        run: |
+          ./tools/package.ps1
+
+      - name: Verify launcher update tests
+        run: |
+          ./tools/test-native-updates.ps1 -LauncherPath SummerCoop-Launcher\SummerCoop-Launcher.exe
+
+      - name: Read version
+        id: version
+        run: |
+          $model = Get-Content -LiteralPath 'src\Core\Model.cs' -Raw
+          if ($model -match 'ModVersion\s*=\s*"([^"]+)"') { $ver = $Matches[1] } else { $ver = '0.4.6' }
+          Write-Host "SummerCoop version: $ver"
+          "VERSION=$ver" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "TAG=v$ver" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Publish GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "${{ steps.version.outputs.TAG }}"
+          $ver = "${{ steps.version.outputs.VERSION }}"
+          $standaloneExe = "SummerCoop-Launcher\SummerCoop-Launcher.exe"
+          $standaloneSha = "SummerCoop-Launcher\SummerCoop-Launcher.exe.sha256"
+          $distZip = "dist\SummerCoop-$ver.zip"
+          $distExe = "dist\SummerCoop-Launcher-$ver.exe"
+          $distSource = "dist\SummerCoop-$ver-source.zip"
+
+          $assets = @($standaloneExe, $standaloneSha, $distZip, $distExe, $distSource) | Where-Object { Test-Path -LiteralPath $_ }
+
+          Write-Host "Publishing release $tag ($ver) with assets:"
+          $assets | ForEach-Object { Write-Host " - $_" }
+
+          $viewOut = & gh release view $tag 2>&1
+          if ($LASTEXITCODE -eq 0) {
+              Write-Host "Release $tag already exists, updating assets..."
+              & gh release upload $tag $assets --clobber
+          } else {
+              Write-Host "Creating release $tag..."
+              & gh release create $tag $assets --title "SummerCoop $ver" --generate-notes
+          }
+
+      - name: Upload Launcher Artifact
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
+        with:
+          name: SummerCoop-Launcher-${{ steps.version.outputs.VERSION }}
+          path: |
+            SummerCoop-Launcher/SummerCoop-Launcher.exe
+            SummerCoop-Launcher/SummerCoop-Launcher.exe.sha256
+            dist/SummerCoop-${{ steps.version.outputs.VERSION }}.zip

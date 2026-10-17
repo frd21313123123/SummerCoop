@@ -109,8 +109,8 @@ static const WikiBlock kW_Update[] = {
     { WB_GO, L"Ouvrir les Nouveautés", L"Open What's new", TAB_NOTES },
 };
 static const WikiBlock kW_Tour[] = {
-    { WB_P, L"Toutes les pages sont à gauche ; en haut à droite, les journaux, l'API, les crédits, la langue et le thème ; en bas, l'état du lanceur et le jeu trouvé.",
-            L"Every page is on the left; top right: logs, API, credits, language and theme; at the bottom, the launcher's status and the game it found." },
+    { WB_P, L"Toutes les pages sont à gauche ; en haut à droite, les journaux, les crédits, la langue et le thème ; en bas, l'état du lanceur et le jeu trouvé.",
+            L"Every page is on the left; top right: logs, credits, language and theme; at the bottom, the launcher's status and the game it found." },
     { WB_H, L"Les pages", L"The pages" },
     { WB_B, L"Accueil : ton pseudo, le réseau (Steam ou IP), HÉBERGER, REJOINDRE, SOLO.", L"Home: your nickname, the network (Steam or IP), HOST, JOIN, SOLO." },
     { WB_B, L"Salon : les joueurs, PRÊT et LANCER, l'engrenage des options.", L"Lobby: the players, READY and START, the options gear." },

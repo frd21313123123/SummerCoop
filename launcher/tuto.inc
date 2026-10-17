@@ -107,7 +107,7 @@ static RectF TutoTarget(int i)
     case 9: return g_navR[TAB_GFX];
     case 10: return g_navR[TAB_NOTES];
     case 11: return g_navR[TAB_LOGS];
-    case 12: return g_navR[TAB_API];
+    case 12: return RectF(0, 0, 0, 0);
     case 13: return g_navR[TAB_COOP];
     case 14: return join(g_btn[B_LANG].r, g_btn[B_THEME].r);
     case 15: { RectF a = kMscSrcOff, b = kMscReinst; return RectF(a.X - 110, a.Y, b.X + b.Width - a.X + 110, a.Height); }
@@ -175,7 +175,7 @@ static void TutoStart(bool all)
     char seen[32] = "0.0.0";
     GetPrivateProfileStringA("Lanceur", "TutoVersion", "0.0.0", seen, sizeof(seen), Narrow(g_iniLauncher).c_str());
     g_tutoList.clear();
-    for (int i = 0; i < kTutoN; i++) if (all || VerCmp(kTuto[i].since, seen) > 0) g_tutoList.push_back(i);
+    for (int i = 0; i < kTutoN; i++) if (i != 12) if (all || VerCmp(kTuto[i].since, seen) > 0) g_tutoList.push_back(i);
     if (!all && !g_tutoList.empty() && g_tutoList[0] == 0) g_tutoList.erase(g_tutoList.begin());   // (bienvenue : visite complete seulement)
     g_tutoAll = all;
     if (g_tutoList.empty()) { WritePrivateProfileStringW(L"Lanceur", L"TutoVersion", Widen(MyVersion()).c_str(), g_iniLauncher.c_str()); return; }

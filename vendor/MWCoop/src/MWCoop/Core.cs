@@ -120,6 +120,7 @@ namespace MWCoop
             new Mod("mscloader", MscMods.Update),
             new Mod("lanceur", MWCoop.Net.Admin.Update),
             new Mod("file IO", MscIo.Update),
+            new Mod("caisses outils MSC", MscToolCases.Update),
             new Mod("supports MSC", MscPlatforms.Update),
             new Mod("kilju MSC", MscBrewing.Update),
             new Mod("sommeil MSC", MscSleep.Update),

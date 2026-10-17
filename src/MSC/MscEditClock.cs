@@ -2,6 +2,22 @@ using System.Collections.Generic;
 
 namespace MWCoop
 {
+    // Several native turns (including different bolts on one part) can await
+    // publication together. Only an acknowledgement of the latest sent turn
+    // may release their predicted stage/total to host repair snapshots.
+    public sealed class MscPendingBoltEdit
+    {
+        int native, sent;
+        public void Begin() { native++; }
+        public void Sent(int revision) { if (native > 0) native--; if (revision > sent) sent = revision; }
+        public bool PermitSnapshot(bool mine, int actorRevision)
+        {
+            if (native > 0) return false;
+            if (sent == 0) return true;
+            if (!mine || actorRevision < sent) return false;
+            sent = 0; return true;
+        }
+    }
     // An old repair snapshot must not cancel a native action before its request
     // is sent, or acknowledge a newer action using an earlier actor sequence.
     public sealed class MscPendingPartEdit

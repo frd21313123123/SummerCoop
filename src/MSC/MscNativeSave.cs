@@ -19,7 +19,7 @@ namespace MWCoop
                 foreach (UnityEngine.Object value in Game.AllFsms())
                 {
                     PlayMakerFSM f = value as PlayMakerFSM;
-                    if (f == null || !f.Fsm.Initialized || Game.UnderPlayer(f.transform) || f.FsmName == "WaitPlayer") continue;
+                    if (f == null || !f.Fsm.Initialized || Game.UnderPlayer(f.transform) || MscToolCases.Generated(f.transform) || f.FsmName == "WaitPlayer") continue;
                     HashSet<string> visited = new HashSet<string>(StringComparer.Ordinal);
                     foreach (FsmTransition transition in f.Fsm.GlobalTransitions)
                     {
@@ -40,7 +40,7 @@ namespace MWCoop
                     }
                 }
                 foreach (ES2Auto mesh in UnityEngine.Object.FindObjectsOfType<ES2Auto>())
-                    if (!string.IsNullOrEmpty(mesh.saveFile) && !string.IsNullOrEmpty(mesh.uniqueTag)) mesh.Save();
+                    if (!MscToolCases.Generated(mesh.transform) && !string.IsNullOrEmpty(mesh.saveFile) && !string.IsNullOrEmpty(mesh.uniqueTag)) mesh.Save();
                 SleepingBags.OnGameSave();
                 MscSaveGuard.End();
                 Log.Info("MSC saved without switching native FSM states: " + count + " actions");

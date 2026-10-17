@@ -639,6 +639,7 @@ namespace MWCoop
             int who = r.U8();
             if (Session.IsHost) who = from.Id;
             int kind = r.U8();
+            if (kind == MscToolCases.Snapshot) { MscToolCases.OnMessage(from, r); return; }
             if (kind == MscBrewing.Request || kind == MscBrewing.Snapshot) { MscBrewing.OnMessage(from, kind, r); return; }
             if (kind == MscSleep.Request || kind == MscSleep.Response) { MscSleep.OnMessage(from, kind, r); return; }
             if (kind == MscIsland.Request || kind == MscIsland.Snapshot) { MscIsland.OnMessage(from, kind, r); return; }

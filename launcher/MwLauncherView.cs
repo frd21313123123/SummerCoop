@@ -52,8 +52,6 @@ namespace SummerCoop.Launcher
             navLogs=ViewButton(rail,"Журналы","file",12,424,208,44,delegate{ShowPage(pageLogs);RefreshLogs();});
             navSettings=ViewButton(rail,"Настройки","gear",12,658,208,44,delegate{ShowPage(pageSettings);});
             foreach(Button b in new Button[]{navHome,navLobby,navGuide,navNotes,navLogs,navSettings}) ((MwButton)b).Navigation=true;
-            ViewButton(rail,"GitHub","",12,716,100,34,delegate{OpenUrl("https://github.com/frd21313123123/SummerCoop");});
-            ViewButton(rail,"MWCoop","",120,716,100,34,delegate{OpenUrl("https://github.com/Parricidium/MWCoop");});
             pageTitle=Caption(content,"",268,16,700,34,26,true);
             pageSubtitle=Caption(content,"",270,50,700,22,13,false);pageSubtitle.ForeColor=MwStyle.Grey;
             pageTitle.MouseDown+=DragWindow;pageSubtitle.MouseDown+=DragWindow;

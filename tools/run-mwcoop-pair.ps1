@@ -3,7 +3,7 @@ param([ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9_-]{0,48}$')][string]$Run = ('mwco
     [ValidateRange(320,7680)][int]$Width = 640, [ValidateRange(240,4320)][int]$Height = 480,
     [ValidateSet('Local','Host','Client')][string]$Role = 'Local', [string]$JoinAddress = '127.0.0.1',
     [ValidatePattern('^[a-zA-Z0-9_-]+$')][string[]]$ExtraClientGames,
-    [string]$BuildDirectory, [string]$SeedProfile, [switch]$Optimization, [switch]$PartsProfile, [ValidateSet('Host','Guest')][string]$ActionActor = 'Host')
+    [string]$BuildDirectory, [string]$SeedProfile, [switch]$Optimization, [switch]$PartsProfile, [switch]$ToolCases, [switch]$ToolCaseMenu, [ValidateSet('Host','Guest')][string]$ActionActor = 'Host')
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $local = Join-Path $root '.local'
@@ -36,7 +36,7 @@ if (!(Test-Path -LiteralPath $desktopHost) -or (Get-Item -LiteralPath $desktopSo
 }
 if ($Vehicles -and !$PSBoundParameters.ContainsKey('Duration')) { $Duration = 135 }
 if ($Garage -and !$PSBoundParameters.ContainsKey('Duration')) { $Duration = 140 }
-if ($Workshop -and !$PSBoundParameters.ContainsKey('Duration')) { $Duration = 295 }
+if ($Workshop -and !$PSBoundParameters.ContainsKey('Duration')) { $Duration = 320 }
 if ($Platforms -and !$PSBoundParameters.ContainsKey('Duration')) { $Duration = 190 }
 if ($Activities -and !$PSBoundParameters.ContainsKey('Duration')) { $Duration = 270 }
 if ($Regression -and !$PSBoundParameters.ContainsKey('Duration')) { $Duration = 295 }
@@ -116,6 +116,8 @@ foreach ($instance in $instances) {
     if ($Performance) { $arguments += ' --summercoop-test-performance yes --summercoop-test-warmup ' + $Warmup }
     if ($PartsProfile) { $arguments += ' --summercoop-test-parts-profile yes' }
     if ($Optimization) { $arguments += ' --summercoop-test-optimization yes' }
+    if ($ToolCases) { $arguments += ' --summercoop-test-toolcases yes' }
+    if ($ToolCaseMenu) { $arguments += ' --summercoop-test-toolcases-menu yes' }
     if ($Actions) { $arguments += ' --summercoop-test-actions yes' }
     if ($ActionActor -eq 'Guest') { $arguments += ' --summercoop-test-action-actor guest' }
     if ($Assembly) { $arguments += ' --summercoop-test-assembly-channel "' + $assemblyChannel + '"' }

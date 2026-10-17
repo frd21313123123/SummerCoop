@@ -18,10 +18,16 @@ namespace MWCoop
         static readonly List<Mount> mounts = new List<Mount>();
         static bool inspected;
         static long start;
-        static int phaseIndex = -1, actionIndex, rotations;
+        static int phaseIndex = -1, actionIndex, rotations, tilted;
         static bool recorded;
         static string Role { get { return Session.IsHost ? "host" : "guest"; } }
         static bool Installed(Mount mount) { return mount.Data != null ? mount.Data.FsmVariables.FindFsmBool("Installed").Value : NativeAssembly.Installed(MscParts.Find(mount.Id)); }
+        static bool RotationRegression(Mount mount)
+        {
+            return mount.Id == "mscdb:Database/DatabaseMotor/Oilpan"
+                || mount.Id == "mscdb:Database/DatabaseMotor/Piston1" || mount.Id == "mscdb:Database/DatabaseMotor/Piston2"
+                || mount.Id == "mscdb:Database/DatabaseMotor/Piston3" || mount.Id == "mscdb:Database/DatabaseMotor/Piston4";
+        }
         public static void Update()
         {
             string channel = MscRuntime.Argument("--summercoop-test-assembly-channel");
@@ -50,7 +56,7 @@ namespace MWCoop
             bool actor = (phase < 2) != Session.IsHost, install = phase % 2 == 1;
             if (phaseIndex != phase)
             {
-                phaseIndex = phase; actionIndex = rotations = 0; recorded = false;
+                phaseIndex = phase; actionIndex = rotations = tilted = 0; recorded = false;
                 mounts.Sort((a, b) => a.Depth == b.Depth ? string.CompareOrdinal(a.Id, b.Id) : install ? a.Depth.CompareTo(b.Depth) : b.Depth.CompareTo(a.Depth));
             }
             if (actor && at >= 2 && actionIndex < mounts.Count)
@@ -66,6 +72,14 @@ namespace MWCoop
                     mount.Fsm.FsmVariables.FindFsmGameObject("Part").Value = part;
                     NativeAssembly.PrepareJoint(mount.Fsm, mount.State);
                     if (!Game.SetState(mount.Fsm, mount.State)) throw new InvalidOperationException("Assembly fixture state missing");
+                    if (RotationRegression(mount))
+                    {
+                        // Reproduce a loose/held pose arriving after native SetParent.
+                        // Parenting is already correct: repair must fix the rotation too.
+                        GameObject parent = NativeAssembly.MountParent(new FsmBinding { Component = mount.Fsm }, mount.State);
+                        if (parent == null || part.transform.parent != parent.transform) throw new InvalidOperationException("Rotation fixture is not mounted");
+                        part.transform.localRotation = Quaternion.Euler(17, -23, 41); tilted++;
+                    }
                     foreach (Joint joint in part.GetComponents<Joint>()) { joint.breakForce = float.PositiveInfinity; joint.breakTorque = float.PositiveInfinity; }
                     Log.Info("Assembly fixture mount " + mount.Id + ";installed=" + Installed(mount) + ";joints=" + part.GetComponents<Joint>().Length);
                 }
@@ -99,7 +113,7 @@ namespace MWCoop
                 List<string> rows = new List<string>();
                 foreach (KeyValuePair<string, string> value in snapshot) rows.Add(value.Key + "|" + value.Value);
                 MscProbeFiles.WriteAllLines(Path.Combine(channel, Role + "-state-" + phase + ".txt"), rows.ToArray());
-                int mismatches = 0, wrong = 0, wrongJoints = 0;
+                int mismatches = 0, wrong = 0, wrongJoints = 0, wrongRotation = 0;
                 if (actor) MscProbeFiles.WriteAllLines(expected, rows.ToArray());
                 else foreach (string row in MscProbeFiles.ReadAllLines(expected))
                 {
@@ -118,6 +132,11 @@ namespace MWCoop
                 }
                 if (install) foreach (Mount mount in mounts)
                 {
+                    // The game's SetParent for these five parts resets local rotation.
+                    // Compare against that native contract, not just the other peer.
+                    GameObject mounted = MscParts.Find(mount.Id);
+                    if (RotationRegression(mount) && (mounted == null || Quaternion.Angle(mounted.transform.localRotation, Quaternion.identity) > .1f))
+                    { wrongRotation++; Results.Add("AssemblyWrongRotation=" + phase + ";" + mount.Id); }
                     bool required = false;
                     foreach (FsmStateAction action in mount.Fsm.Fsm.GetState(mount.State).Actions) if (action.GetType().Name == "SetJointConnectedBody") required = true;
                     if (!required) continue;
@@ -125,7 +144,7 @@ namespace MWCoop
                     if (part != null) foreach (Joint joint in part.GetComponents<Joint>()) if (joint.connectedBody != null) connected = true;
                     if (!connected) wrongJoints++;
                 }
-                string result = "Assembly=" + phase + ";Role=" + (actor ? "actor" : "observer") + ";Parts=" + mounts.Count + ";Fields=" + snapshot.Count + ";Mismatches=" + mismatches + ";WrongInstalled=" + wrong + ";WrongJoints=" + wrongJoints;
+                string result = "Assembly=" + phase + ";Role=" + (actor ? "actor" : "observer") + ";Parts=" + mounts.Count + ";Fields=" + snapshot.Count + ";Mismatches=" + mismatches + ";WrongInstalled=" + wrong + ";WrongJoints=" + wrongJoints + ";WrongRotation=" + wrongRotation + ";Tilted=" + tilted;
                 Results.Add(result); Log.Info(result);
             }
         }

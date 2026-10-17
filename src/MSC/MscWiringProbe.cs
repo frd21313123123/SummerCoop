@@ -29,7 +29,8 @@ namespace MWCoop
             string clock = Path.Combine(channel, "start.txt");
             long ticks;
             if (!File.Exists(clock) || !long.TryParse(MscProbeFiles.ReadAllText(clock), out ticks)) return;
-            float elapsed = (float)TimeSpan.FromTicks(DateTime.UtcNow.Ticks - ticks).TotalSeconds;
+            // The workshop now includes one additional guest-tightening phase.
+            float elapsed = (float)TimeSpan.FromTicks(DateTime.UtcNow.Ticks - ticks).TotalSeconds - 22;
             if (elapsed < 89) return;
             if (!prepared)
             {

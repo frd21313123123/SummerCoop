@@ -12,6 +12,15 @@ class MscAdapterTests
     static void Assert(bool value, string reason) { if (!value) throw new Exception(reason); }
     static void Test(string name, Action test) { test(); passed++; Console.WriteLine("PASS " + name); }
     static void Reject(Action action) { try { action(); } catch (IOException) { return; } throw new Exception("Malformed packet accepted"); }
+#if !MWCOOP_NETWORK_ONLY
+    static byte[] CaseSnapshot(int revision, int[] ids, int[] kinds)
+    {
+        var w = new NetWriter(Msg.Home).I32(revision).U8(ids.Length);
+        for (int i = 0; i < ids.Length; i++) w.I32(ids[i]).U8(kinds[i]).F32(i).F32(2).F32(3).F32(0).F32(0).F32(0).F32(1);
+        return w.ToArray();
+    }
+    static MWCoop.MscToolCaseSnapshot ReadCases(byte[] bytes) { return MWCoop.MscToolCaseSnapshot.Read(new NetReader(bytes, 1, bytes.Length - 1)); }
+#endif
     sealed class Simulated : ILink
     {
         public static readonly Dictionary<string, Simulated> Nodes = new Dictionary<string, Simulated>();
@@ -43,6 +52,48 @@ class MscAdapterTests
         try
         {
 #if !MWCOOP_NETWORK_ONLY
+            Test("tool case snapshots preserve both native types and deletion without reusing identities", delegate {
+                var born = ReadCases(CaseSnapshot(3, new[] { 0, 1, 2 }, new[] { 0, 0, 1 }));
+                Assert(born.Revision == 3 && born.Entries.Count == 3 && born.Entries[2].Kind == 1, "Ratchet type lost");
+                var removed = ReadCases(CaseSnapshot(4, new[] { 0, 2 }, new[] { 0, 1 }));
+                Assert(removed.Entries.Count == 2 && removed.Entries[1].Id == 2, "Deletion renamed surviving case");
+                Assert(!MWCoop.MscToolCaseSnapshot.AcceptRevision(born.Revision, removed.Revision), "Delayed snapshot resurrects deleted case");
+                Assert(!MWCoop.MscToolCaseSnapshot.AcceptRevision(4, 4) && MWCoop.MscToolCaseSnapshot.AcceptRevision(5, 4), "Duplicate/reordered snapshots accepted");
+                Assert(MWCoop.MscToolCases.CanManage(true, true, true) && !MWCoop.MscToolCases.CanManage(true, false, true)
+                    && !MWCoop.MscToolCases.CanManage(false, true, true) && !MWCoop.MscToolCases.CanManage(true, true, false), "Guest or unloaded game can manage cases");
+            });
+            Test("tool case snapshots reject forged counts, duplicate identities, missing original and invalid kinds", delegate {
+                int[] maxIds = new int[MWCoop.MscToolCaseSnapshot.Limit], maxKinds = new int[maxIds.Length];
+                for (int i = 0; i < maxIds.Length; i++) { maxIds[i] = i; maxKinds[i] = i % 2; }
+                byte[] full = CaseSnapshot(1, maxIds, maxKinds);
+                Assert(full.Length + 2 <= Transport.MaxPayload && ReadCases(full).Entries.Count == maxIds.Length, "Case limit overflows reliable UDP packet");
+                Reject(delegate { ReadCases(CaseSnapshot(1, new int[maxIds.Length + 1], new int[maxIds.Length + 1])); });
+                Reject(delegate { ReadCases(CaseSnapshot(1, new[] { 0, 0 }, new[] { 0, 0 })); });
+                Reject(delegate { ReadCases(CaseSnapshot(1, new[] { 1 }, new[] { 0 })); });
+                Reject(delegate { ReadCases(CaseSnapshot(1, new[] { 0 }, new[] { 1 })); });
+                Reject(delegate { ReadCases(CaseSnapshot(1, new[] { 0, -1 }, new[] { 0, 0 })); });
+                Reject(delegate { ReadCases(CaseSnapshot(1, new[] { 0, 1 }, new[] { 0, 2 })); });
+                Reject(delegate { ReadCases(CaseSnapshot(0, new[] { 0 }, new[] { 0 })); });
+                Reject(delegate { ReadCases(CaseSnapshot(1, new int[0], new int[0])); });
+                byte[] good = CaseSnapshot(1, new[] { 0, 4 }, new[] { 0, 1 });
+                byte[] shortPacket = new byte[good.Length - 1]; Array.Copy(good, shortPacket, shortPacket.Length);
+                Reject(delegate { ReadCases(shortPacket); });
+                byte[] extra = new byte[good.Length + 1]; Array.Copy(good, extra, good.Length);
+                Reject(delegate { ReadCases(extra); });
+            });
+            Test("tool cases include host, grow for late joiners and reuse cases after reconnect", delegate {
+                Assert(MWCoop.MscToolCases.RequiredTotal(1, 1) == 1, "Original host case duplicated");
+                int total = MWCoop.MscToolCases.RequiredTotal(1, 2);
+                Assert(total == 2 && MWCoop.MscToolCases.RequiredTotal(total, 2) == 2, "Join was not idempotent");
+                total = MWCoop.MscToolCases.RequiredTotal(total, 4);
+                Assert(total == 4 && MWCoop.MscToolCases.RequiredTotal(total, 2) == 4, "Leave deleted usable cases");
+                Assert(MWCoop.MscToolCases.RequiredTotal(total, 4) == 4, "Reconnect duplicated cases");
+                Assert(MWCoop.MscToolCases.Identity(0) != MWCoop.MscToolCases.Identity(1), "Case IDs collide");
+                Assert(MWCoop.MscToolCases.Ready(new PlayerInfo { Local = true, Level = 1 }, 100), "Host was not counted");
+                Assert(!MWCoop.MscToolCases.Ready(new PlayerInfo { Level = 0, StateTime = 100 }, 100), "Loading peer was counted");
+                Assert(!MWCoop.MscToolCases.Ready(new PlayerInfo { Level = 1, StateTime = 80 }, 100), "Stale disconnected peer duplicated a reconnect case");
+                Assert(MWCoop.MscToolCases.Ready(new PlayerInfo { Level = 1, StateTime = 99 }, 100), "Ready guest was not counted");
+            });
             Test("launcher customization reload keeps connection and world settings", delegate {
                 string folder = Path.Combine(Path.GetTempPath(), "summercoop-looks-" + Guid.NewGuid().ToString("N"));
                 Directory.CreateDirectory(folder);
@@ -211,6 +262,28 @@ class MscAdapterTests
                 Assert(pending.PermitSnapshot(true, 3) && pending.PermitSnapshot(false, 9), "Latest acknowledgement did not restore host authority");
                 pending.Begin(); pending.Cancel();
                 Assert(pending.PermitSnapshot(false, 10), "Failed native action blocked host repair");
+            });
+            Test("bolt repair waits for native storage and the acknowledgement of the latest guest turn", delegate {
+                var pending = new MWCoop.MscPendingBoltEdit();
+                pending.Begin();
+                Assert(!pending.PermitSnapshot(false, 0), "Host repair erased an unpublished bolt turn");
+                pending.Sent(3);
+                Assert(!pending.PermitSnapshot(false, 0) && !pending.PermitSnapshot(true, 2), "Old snapshot acknowledged a new turn");
+                pending.Begin();
+                Assert(!pending.PermitSnapshot(true, 3), "Earlier echo interrupted the next native turn");
+                pending.Sent(4);
+                Assert(!pending.PermitSnapshot(true, 3), "Earlier echo erased the latest published turn");
+                Assert(pending.PermitSnapshot(true, 4) && pending.PermitSnapshot(false, 0), "Matching echo did not restore host authority");
+            });
+            Test("a shared suspension total waits for every locally edited bolt before accepting a repair", delegate {
+                var total = new MWCoop.MscPendingBoltEdit();
+                total.Begin(); total.Begin(); total.Sent(10);
+                Assert(!total.PermitSnapshot(true, 10), "First bolt echo erased another bolt's unpublished tightness");
+                total.Sent(11);
+                Assert(!total.PermitSnapshot(true, 10) && !total.PermitSnapshot(false, 100), "Unacknowledged suspension tightness was replaced");
+                Assert(total.PermitSnapshot(true, 11), "Latest total was not acknowledged");
+                total.Begin(); total.Sent(13); total.Sent(12);
+                Assert(!total.PermitSnapshot(true, 12) && total.PermitSnapshot(true, 13), "Publication order lowered the required acknowledgement");
             });
             Test("MSC policy excludes winter terrain, MWC shops and native DXR while retaining major coop modules", delegate {
                 foreach (Type type in new[] { typeof(MWCoop.Clearing), typeof(MWCoop.Kauppa), typeof(MWCoop.Frost), typeof(MWCoop.RayTracing) }) Assert(!MWCoop.MscRuntime.Supports(type), "Winter-only module enabled: " + type);

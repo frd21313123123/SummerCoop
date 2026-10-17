@@ -55,5 +55,7 @@ Check 'unversioned launcher asset is supported' @((Release '0.4.10' 'SummerCoop-
 Check 'empty release list and offline state' @() '0.4.2' @('stable :  rien', 'state=4 offline=5')
 Check 'release without downloadable build' @((Release '0.4.10' 'SHA256.txt')) '0.4.2' @('stable :  rien', 'state=4 offline=5')
 Check 'stable channel can return from nightly' @($current) '0.5.0-nightly.1' @('stable : 0\.4\.2 a installer', 'nightly : 0\.4\.2 rien')
-$results.Add('ALL 12 NATIVE UPDATE TESTS PASSED')
+Check 'launcher binary asset is selected for self-update' @($current, $new) '0.4.2' @('exe=https://github\.com/frd21313123123/SummerCoop/releases/download/v0\.4\.10/SummerCoop-Launcher-0\.4\.10\.exe')
+Check 'unversioned launcher asset resolves as exe' @((Release '0.4.10' 'SummerCoop-Launcher.exe')) '0.4.2' @('exe=https://github\.com/frd21313123123/SummerCoop/releases/download/v0\.4\.10/SummerCoop-Launcher\.exe')
+$results.Add('ALL 14 NATIVE UPDATE TESTS PASSED')
 $results | Tee-Object -FilePath (Join-Path $testDir 'test-results.txt')

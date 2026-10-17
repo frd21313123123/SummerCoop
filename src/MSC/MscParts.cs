@@ -16,14 +16,14 @@ namespace MWCoop
     // MWC's VIN, Install 2 and BoltTightness. The network/replay engine is MWCoop.
     public static class MscParts
     {
-        sealed class Binding { public string Key, MountState; public PlayMakerFSM Fsm; public BoltTotal Total; public bool BoltChanged; public Transform KeyParent, KeyRoot; public int KeyGeneration = -1; public FsmBinding Native; public string[] MountNames; public FsmGameObject[] RepairVariables; public FsmGameObject Held; public readonly MscEditClock Clock = new MscEditClock(); }
+        sealed class Binding { public string Key, MountState; public PlayMakerFSM Fsm; public BoltTotal Total; public bool BoltChanged; public int BoltActor, BoltActorRevision; public readonly MscPendingBoltEdit PendingBolt = new MscPendingBoltEdit(); public Transform KeyParent, KeyRoot; public int KeyGeneration = -1; public FsmBinding Native; public string[] MountNames; public FsmGameObject[] RepairVariables; public FsmGameObject Held; public readonly MscEditClock Clock = new MscEditClock(); }
         sealed class Database { public string Id; public PlayMakerFSM Fsm; public FsmGameObject Part, Loose, Model; public FsmBool Installed; public FsmGameObject[] Models, Variables; public FsmBool[] Bools; public bool MotorState; }
         sealed class Model { public PlayMakerFSM Database, Removal; public FsmGameObject Reference; public FsmGameObject[] Variables; public GameObject Part; }
         sealed class BoltTotal { public PlayMakerFSM Fsm; public FsmFloat Tightness; public FsmBool Bolted; }
         sealed class Pending { public Binding Binding; public string State, Id; public GameObject Part; public int Frame; public float ReadyAt; }
         sealed class PartEdit { public int Who, Revision, ActorRevision; public string Key, State, Id; public float Until, Angle; public bool HasAngle; }
         sealed class PartState { public PartEdit Edit; public readonly MscEditClock Clock = new MscEditClock(); public readonly MscPendingPartEdit Pending = new MscPendingPartEdit(); }
-        sealed class PendingBolt { public int Who, Target, Revision; public float Until, Tightness; public bool HasTotal, HasBolted, Bolted; }
+        sealed class PendingBolt { public int Who, Target, Revision, ActorRevision; public float Until, Tightness; public bool HasTotal, HasBolted, Bolted; }
         sealed class Scope { public float Until; }
         static readonly Dictionary<string, GameObject> parts = new Dictionary<string, GameObject>(StringComparer.Ordinal);
         static readonly Dictionary<GameObject, string> ids = new Dictionary<GameObject, string>();
@@ -49,6 +49,7 @@ namespace MWCoop
         static readonly Dictionary<string, PendingBolt> pendingBolts = new Dictionary<string, PendingBolt>(StringComparer.Ordinal);
         static readonly List<string> completedBolts = new List<string>();
         static readonly Dictionary<PlayMakerFSM, MscEditClock> totalClocks = new Dictionary<PlayMakerFSM, MscEditClock>();
+        static readonly Dictionary<PlayMakerFSM, MscPendingBoltEdit> totalPending = new Dictionary<PlayMakerFSM, MscPendingBoltEdit>();
         static readonly Dictionary<Binding, float> repairs = new Dictionary<Binding, float>();
         static readonly List<Binding> repaired = new List<Binding>();
         static readonly Dictionary<Fsm, Scope> remote = new Dictionary<Fsm, Scope>();
@@ -78,7 +79,7 @@ namespace MWCoop
             foreach (var row in rows) lines.Add(row.Key + "\t" + row.Value);
             return lines.ToArray();
         }
-        public static void Reset() { parts.Clear(); ids.Clear(); modelKeys.Clear(); databases.Clear(); databaseCache.Clear(); modelCache.Clear(); MscRepairCache.Clear(); changedRoots.Clear(); changedSet.Clear(); changedStack.Clear(); scanFsms = null; scanCursor = scanPhase = 0; keyGeneration++; partStates.Clear(); pendingParts.Clear(); completedParts.Clear(); bindings.Clear(); byFsm.Clear(); hooked.Clear(); pending.Clear(); pendingBolts.Clear(); completedBolts.Clear(); totalClocks.Clear(); repairs.Clear(); remote.Clear(); nextScan = nextBoltSnapshot = nextPartSnapshot = 0; localBoltRevision = hostBoltRevision = 0; }
+        public static void Reset() { parts.Clear(); ids.Clear(); modelKeys.Clear(); databases.Clear(); databaseCache.Clear(); modelCache.Clear(); MscRepairCache.Clear(); changedRoots.Clear(); changedSet.Clear(); changedStack.Clear(); scanFsms = null; scanCursor = scanPhase = 0; keyGeneration++; partStates.Clear(); pendingParts.Clear(); completedParts.Clear(); bindings.Clear(); byFsm.Clear(); hooked.Clear(); pending.Clear(); pendingBolts.Clear(); completedBolts.Clear(); totalClocks.Clear(); totalPending.Clear(); repairs.Clear(); remote.Clear(); nextScan = nextBoltSnapshot = nextPartSnapshot = 0; localBoltRevision = hostBoltRevision = 0; }
         public static bool Owns(PlayMakerFSM f)
         {
             return f != null && !MscBrewing.Owns(f) && (f.FsmName == "Assembly" || f.FsmName == "Removal" || f.FsmName == "Assemble" && Recon.Path(f.transform).IndexOf("Wiring", StringComparison.OrdinalIgnoreCase) >= 0 || IsBolt(f));
@@ -237,6 +238,12 @@ namespace MWCoop
                         if (Binding.Fsm.FsmName == "Removal") part = Binding.Fsm.gameObject;
                         if (Binding.Fsm.FsmName == "Assembly") Binding.MountState = StateName;
                         bool bolt = IsBolt(Binding.Fsm);
+                        if (bolt && !Session.IsHost)
+                        {
+                            Binding.PendingBolt.Begin();
+                            if (Binding.Total == null) Binding.Total = TotalOf(Binding.Fsm);
+                            if (Binding.Total != null) PendingTotal(Binding.Total).Begin();
+                        }
                         // Chassis assembly destroys the loose object in this state.
                         // Capture its database identity before the native actions run.
                         PlayMakerFSM target = Binding.Fsm.FsmName == "Assembly" ? NativeAssembly.Database(Binding.Fsm, Binding.Fsm.Fsm.GetState(StateName)) : null;
@@ -433,15 +440,17 @@ namespace MWCoop
             if (profile) ProfileStep(ref profileAt, "[MSC parts discovery]");
             for (int i = 0; i < pending.Count; i++)
             {
-                Pending item = pending[i]; if (Time.frameCount < item.Frame || Time.realtimeSinceStartup < item.ReadyAt) continue; pending.RemoveAt(i--);
+                Pending item = pending[i]; if (Time.frameCount < item.Frame || Time.realtimeSinceStartup < item.ReadyAt) continue;
+                // Publish after the native pose/storage chain, even on a slow
+                // frame. Stage changes before AddFsmFloat updates the part total.
+                if (item.Binding.Fsm != null && IsBolt(item.Binding.Fsm) && !BoltInputReady(item.Binding.Fsm.ActiveStateName)) continue;
+                pending.RemoveAt(i--);
                 if (item.Binding.Fsm == null) continue;
                 if (!IsBolt(item.Binding.Fsm)) { Changed(item.Part); Changed(item.Binding.Fsm.gameObject); }
                 if (IsBolt(item.Binding.Fsm))
                 {
                     item.Binding.BoltChanged = true;
-                    int revision = Session.IsHost ? ++hostBoltRevision : ++localBoltRevision;
-                    if (Session.IsHost) item.Binding.Clock.AcceptSnapshot(revision);
-                    Session.SendAll(BoltPacket(item.Binding, Session.LocalId, revision), true);
+                    PublishBolt(item.Binding);
                 }
                 else
                 {
@@ -498,7 +507,7 @@ namespace MWCoop
             if (Session.IsHost && Session.Active && Time.realtimeSinceStartup >= nextBoltSnapshot)
             {
                 nextBoltSnapshot = Time.realtimeSinceStartup + 2;
-                foreach (Binding b in bindings.Values) if (b.Fsm != null && b.BoltChanged) Session.Broadcast(BoltPacket(b, Session.LocalId, b.Clock.HostRevision), true);
+                foreach (Binding b in bindings.Values) if (b.Fsm != null && b.BoltChanged) Session.Broadcast(BoltPacket(b, b.BoltActor, b.Clock.HostRevision), true);
             }
             if (profile) ProfileStep(ref profileAt, "[MSC parts snapshots]");
         }
@@ -609,11 +618,11 @@ namespace MWCoop
         }
         public static void OnBolt(Peer from, NetReader reader)
         {
-            int who = reader.U8(); string key = reader.Str(); int target = reader.I32(), revision = reader.I32(); if (Session.IsHost) who = from.Id;
-            PendingBolt edit = new PendingBolt { Who = who, Target = target, Revision = revision, Until = Time.realtimeSinceStartup + 60, HasTotal = reader.Bool() };
+            int who = reader.U8(); string key = reader.Str(); int target = reader.I32(), revision = reader.I32(), actorRevision = reader.I32(); if (Session.IsHost) who = from.Id;
+            PendingBolt edit = new PendingBolt { Who = who, Target = target, Revision = revision, ActorRevision = actorRevision, Until = Time.realtimeSinceStartup + 60, HasTotal = reader.Bool() };
             if (edit.HasTotal) { edit.Tightness = reader.F32(); edit.HasBolted = reader.Bool(); edit.Bolted = reader.Bool(); }
             Binding binding;
-            if (target < 0 || target > 8 || revision <= 0 || reader.More) throw new ProtocolException("Invalid MSC bolt stage/revision");
+            if (target < 0 || target > 8 || revision <= 0 || actorRevision < 0 || Session.IsHost && actorRevision != revision || reader.More) throw new ProtocolException("Invalid MSC bolt stage/revision");
             if (!bindings.TryGetValue(key, out binding) || binding.Fsm == null || !IsBolt(binding.Fsm))
             {
                 PendingBolt previous;
@@ -625,9 +634,38 @@ namespace MWCoop
         }
         static NetWriter BoltPacket(Binding binding, int who, int revision)
         {
-            NetWriter writer = new NetWriter(Msg.Bolt).U8(who).Str(binding.Key).I32(binding.Fsm.FsmVariables.FindFsmInt("Stage").Value).I32(revision).Bool(binding.Total != null);
+            NetWriter writer = new NetWriter(Msg.Bolt).U8(who).Str(binding.Key).I32(binding.Fsm.FsmVariables.FindFsmInt("Stage").Value).I32(revision).I32(binding.BoltActorRevision).Bool(binding.Total != null);
             if (binding.Total != null) writer.F32(binding.Total.Tightness.Value).Bool(binding.Total.Bolted != null).Bool(binding.Total.Bolted != null && binding.Total.Bolted.Value);
             return writer;
+        }
+        static MscPendingBoltEdit PendingTotal(BoltTotal total)
+        {
+            MscPendingBoltEdit value;
+            if (!totalPending.TryGetValue(total.Fsm, out value)) totalPending[total.Fsm] = value = new MscPendingBoltEdit();
+            return value;
+        }
+        static bool BoltInputReady(string state)
+        {
+            return state == "Idle" || state == "Get scroll" || state == "Get scroll 2" || state == "Mouse off 2";
+        }
+        static void PublishBolt(Binding binding)
+        {
+            int revision = Session.IsHost ? ++hostBoltRevision : ++localBoltRevision;
+            binding.BoltActor = Session.LocalId; binding.BoltActorRevision = revision;
+            if (Session.IsHost) binding.Clock.AcceptSnapshot(revision);
+            else
+            {
+                binding.PendingBolt.Sent(revision);
+                if (binding.Total != null) PendingTotal(binding.Total).Sent(revision);
+            }
+            Session.SendAll(BoltPacket(binding, Session.LocalId, revision), true);
+        }
+        // QA: reproduce a host repair captured before the guest's next turn.
+        internal static byte[] CaptureBoltRepair(PlayMakerFSM f)
+        {
+            if (Session.IsHost || MscRuntime.Argument("--summercoop-test-workshop-channel").Length == 0) return null;
+            Binding b;
+            return byFsm.TryGetValue(f, out b) ? BoltPacket(b, 0, b.Clock.HostRevision + 1).ToArray() : null;
         }
         static BoltTotal TotalOf(PlayMakerFSM f)
         {
@@ -649,7 +687,9 @@ namespace MWCoop
         }
         static void ReceiveBolt(Binding binding, PendingBolt edit)
         {
+            if (!Session.IsHost && (edit.Revision <= binding.Clock.HostRevision || !binding.PendingBolt.PermitSnapshot(edit.Who == Session.LocalId, edit.ActorRevision))) return;
             if (Session.IsHost ? !binding.Clock.AcceptRequest(edit.Who, edit.Revision) : !binding.Clock.AcceptSnapshot(edit.Revision)) return;
+            if (binding.Total == null) binding.Total = TotalOf(binding.Fsm);
             FsmInt stage = binding.Fsm.FsmVariables.FindFsmInt("Stage");
             int target = edit.Target;
             FsmState pose = binding.Fsm.Fsm.GetState(target + " 2") ?? binding.Fsm.Fsm.GetState(target.ToString());
@@ -678,7 +718,7 @@ namespace MWCoop
                 {
                     MscEditClock clock;
                     if (!totalClocks.TryGetValue(binding.Total.Fsm, out clock)) totalClocks[binding.Total.Fsm] = clock = new MscEditClock();
-                    if (Session.IsHost ? clock.AcceptRequest(edit.Who, edit.Revision) : clock.AcceptSnapshot(edit.Revision))
+                    if (Session.IsHost ? clock.AcceptRequest(edit.Who, edit.Revision) : edit.Revision > clock.HostRevision && PendingTotal(binding.Total).PermitSnapshot(edit.Who == Session.LocalId, edit.ActorRevision) && clock.AcceptSnapshot(edit.Revision))
                     {
                         binding.Total.Tightness.Value = edit.Tightness;
                         if (binding.Total.Bolted != null && edit.HasBolted)
@@ -694,8 +734,9 @@ namespace MWCoop
                     }
                 }
             }
-            finally { Replay.Depth--; }
+            finally { Replay.Depth--; remote.Remove(binding.Fsm.Fsm); }
             binding.BoltChanged = true;
+            binding.BoltActor = edit.Who; binding.BoltActorRevision = edit.ActorRevision;
             Log.Info("MSC bolt applied " + binding.Key + " = " + stage.Value);
             if (Session.IsHost) { int revision = ++hostBoltRevision; binding.Clock.AcceptSnapshot(revision); Session.Broadcast(BoltPacket(binding, edit.Who, revision), true); }
         }
@@ -830,9 +871,7 @@ namespace MWCoop
             if (binding == null || binding.Fsm == null) throw new InvalidOperationException("Exercised MSC bolt was not retained");
             int stage = binding.Fsm.FsmVariables.FindFsmInt("Stage").Value;
             binding.BoltChanged = true;
-            int revision = Session.IsHost ? ++hostBoltRevision : ++localBoltRevision;
-            if (Session.IsHost) binding.Clock.AcceptSnapshot(revision);
-            Session.SendAll(BoltPacket(binding, Session.LocalId, revision), true);
+            PublishBolt(binding);
             Log.Info("MSC bolt published " + binding.Key + " = " + stage);
         }
     }

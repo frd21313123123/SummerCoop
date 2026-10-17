@@ -1,0 +1,50 @@
+SummerCoop 0.4.5 — tool case menu checks, 2026-10-17
+
+Build: tools/build.ps1
+PASS: all 126 core tests
+PASS: all 33 MSC adapter tests
+PASS: ordinary/ratchet snapshot types, stable IDs after deletion, stale and
+      duplicate revisions, host-only management, malformed/truncated packets.
+PASS: maximum 32-case snapshot fits Transport.MaxPayload (1150 bytes).
+
+Native MSC / two isolated local game processes / real LAN UDP:
+  .local/toolcase-menu-02-host-report.txt
+  .local/toolcase-menu-02-client-report.txt
+Both peers completed:
+  ToolCaseMenu=PASS;BothTypesReplicated;NativeLidsAndTools
+  ToolCaseMenu=PASS;SingleDeletionReplicated
+  ToolCaseMenu=PASS;BulkDeletionReplicated;OriginalPreserved;SelectionCleared;NoAutomaticRespawn
+  ToolCaseMenu=PASS;RespawnUsesNewIdentity;NativeRatchetWorks
+The host also verified HostSpawnedBothTypes. Guest spawn/delete requests were
+rejected. Original case deletion was rejected. Deletion of spanner #2 preserved
+ratchet #3; removing all extras retained original #0. The next ratchet used #4.
+Both peers ended with ToolCases=2: original plus newly created ratchet.
+No MscToolCases module errors in the completed menu run.
+
+Screenshots visually inspected:
+  .local/toolcase-menu-02-host-toolcases-menu.png
+  .local/toolcase-menu-02-client-toolcases-menu.png
+F10 has a separate Russian CHEATS tab with both spawn actions, per-case delete
+and delete-all. The guest sees a host-only explanation. The F7 panel links to
+this tab. Keyboard navigation and scroll use the existing menu controls.
+
+The native fixture was compiled before the final 64 -> 32 case-limit reduction;
+the final source was rebuilt and passed the snapshot size/bounds checks above.
+The native fixture MVID was 031586c1-631e-4116-b0a5-3b6062cc0757.
+
+Final DLL SHA256 values to embed in the standalone launcher:
+  SummerCoop.dll
+    B296C32CF18EA21F3806A47B0C8A9C8B468F16B6FFA4A428D1AA8A1FE1E3BDDC
+  SummerCoop.Core.dll
+    28EC2098695289BA3907086B2FCA2029ADB89222077302376EDC2D466583931E
+Target: SummerCoop-Launcher/SummerCoop-Launcher.exe, ProductVersion=0.4.5, /MT.
+Both DLLs must be updated for all participants, including earlier 0.4.5 builds.
+
+Earlier automatic-spawn validation is retained in local toolcases-05* reports:
+three players received three cases, and normal reconnect did not create extras.
+
+Scope: local native MSC, both native case types, lid opening/tool selection,
+replicated creation/deletion and new IDs after deletion. Steam between separate
+computers, 32 physical cases simultaneously, deletion while remotely carrying,
+vehicle transport and host reload were not separately exercised. Generated
+cases intentionally last one session; purchased/native cases are preserved.

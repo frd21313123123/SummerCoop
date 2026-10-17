@@ -24,12 +24,18 @@ namespace MWCoop
         static int phaseIndex = -1, step;
         static int busyBoltStates, boltInputs;
         static readonly Dictionary<PlayMakerFSM, int> boltAttempts = new Dictionary<PlayMakerFSM, int>();
-        static bool initialized, recorded;
+        static readonly HashSet<PlayMakerFSM> raced = new HashSet<PlayMakerFSM>();
+        static int repairRaces, lostTurns;
+        static bool initialized, recorded, physicsPaused;
         static string Role { get { return Session.IsHost ? "host" : "guest"; } }
         public static void Update()
         {
             string channel = MscRuntime.Argument("--summercoop-test-workshop-channel");
             if (channel.Length == 0 || MscParts.Count == 0 || VehicleSync.Count == 0 || Time.timeSinceLevelLoad < 22) return;
+            // Loosening suspension changes the wheel simulation between the
+            // actor's and observer's inspection. This fixture checks native
+            // writes and replication; road loads belong to a separate test.
+            if (!physicsPaused && Time.timeSinceLevelLoad >= 30) { Time.timeScale = 0; physicsPaused = true; }
             if (preparedAt < 0)
             {
                 preparedAt = Time.realtimeSinceStartup;
@@ -71,15 +77,16 @@ namespace MWCoop
                 if (!File.Exists(clock) || !long.TryParse(MscProbeFiles.ReadAllText(clock), out clockTicks)) return;
             }
             float elapsed = (float)TimeSpan.FromTicks(DateTime.UtcNow.Ticks - clockTicks).TotalSeconds;
-            if (elapsed < 0 || elapsed >= 88) return;
+            if (elapsed >= 110) { Time.timeScale = 1; return; }
+            if (elapsed < 0) return;
             int current = (int)(elapsed / 22);
             float phase = elapsed - current * 22;
-            bool actor = (current == 0 || current == 3) != Session.IsHost;
-            if (phaseIndex != current) { phaseIndex = current; step = busyBoltStates = boltInputs = 0; boltAttempts.Clear(); nextStep = 0; recorded = false; }
+            bool actor = (current == 0 || current == 3 || current == 4) != Session.IsHost;
+            if (phaseIndex != current) { phaseIndex = current; step = busyBoltStates = boltInputs = 0; boltAttempts.Clear(); if (current == 4) raced.Clear(); nextStep = 0; recorded = false; }
             if (actor && phase >= 2 && phase < 12 && Time.realtimeSinceStartup >= nextStep)
             {
                 nextStep = Time.realtimeSinceStartup + .3f;
-                bool tighten = current == 0 || current == 2;
+                bool tighten = current == 0 || current == 2 || current == 4;
                 foreach (PlayMakerFSM f in bolts)
                 {
                     for (Transform p = f.transform; p != null; p = p.parent) p.gameObject.SetActive(true);
@@ -93,7 +100,15 @@ namespace MWCoop
                     if (f.ActiveStateName != "Idle") { busyBoltStates++; continue; }
                     string state = tighten ? "Screw 2" : "Unscrew 2";
                     if (f.Fsm.GetState(state) == null) state = tighten ? "Screw" : "Unscrew";
+                    byte[] stale = !Session.IsHost && raced.Add(f) ? MscParts.CaptureBoltRepair(f) : null;
                     if (!Game.SetState(f, state)) throw new InvalidOperationException("Native bolt input state missing: " + MscParts.Key(f));
+                    if (stale != null)
+                    {
+                        int turned = f.FsmVariables.FindFsmInt("Stage").Value;
+                        MscParts.OnBolt(null, new NetReader(stale, 1, stale.Length - 1));
+                        repairRaces++;
+                        if (f.FsmVariables.FindFsmInt("Stage").Value != turned) lostTurns++;
+                    }
                     boltAttempts[f] = attempts + 1; boltInputs++;
                 }
                 for (int i = 0; i < tuners.Count; i++)
@@ -122,16 +137,22 @@ namespace MWCoop
                     float error = snapshot.TryGetValue(key, out actual) ? key.Contains("angle.") ? Mathf.Abs(Mathf.DeltaAngle(value, actual)) : Mathf.Abs(value - actual) : float.MaxValue;
                     if (error > .002f) { mismatches++; Results.Add("WorkshopMismatch=" + current + ";" + key + ";expected=" + value.ToString("R", C) + ";actual=" + actual.ToString("R", C)); }
                 }
-                int wrongStages = 0;
-                foreach (PlayMakerFSM f in bolts) if (f.FsmVariables.FindFsmInt("Stage").Value != (current == 0 || current == 2 ? 8 : 0)) wrongStages++;
-                string result = "Workshop=" + current + ";Role=" + (actor ? "actor" : "observer") + ";Tuners=" + tuners.Count + ";Bolts=" + bolts.Count + ";Fields=" + rows.Count + ";Mismatches=" + mismatches + ";WrongStages=" + wrongStages;
+                int wrongStages = 0, wrongBolted = 0;
+                foreach (PlayMakerFSM f in bolts) if (f.FsmVariables.FindFsmInt("Stage").Value != (current == 0 || current == 2 || current == 4 ? 8 : 0)) wrongStages++;
+                foreach (var value in snapshot) if (value.Key.EndsWith("/bolted", StringComparison.Ordinal) && value.Value != (current == 0 || current == 2 || current == 4 ? 1 : 0)) wrongBolted++;
+                string result = "Workshop=" + current + ";Role=" + (actor ? "actor" : "observer") + ";Tuners=" + tuners.Count + ";Bolts=" + bolts.Count + ";Fields=" + rows.Count + ";Mismatches=" + mismatches + ";WrongStages=" + wrongStages + ";WrongBolted=" + wrongBolted;
                 Results.Add(result); Log.Info(result);
                 string pacing = "WorkshopPacing=" + current + ";Inputs=" + boltInputs + ";BusyStates=" + busyBoltStates;
                 Results.Add(pacing); Log.Info(pacing);
+                string race = "BoltRepairRace=" + current + ";Attempts=" + repairRaces + ";LostTurns=" + lostTurns;
+                Results.Add(race); Log.Info(race);
             }
         }
         static bool FixtureBolt(PlayMakerFSM f)
         {
+            FsmGameObject part = f.FsmVariables.FindFsmGameObject("PartAssembled");
+            string id = part == null ? "" : MscParts.IdOf(part.Value);
+            if (id == "mscdb:Database/DatabaseBody/Subframe" || id.Contains("/Wishbone_") || id.Contains("/SteeringRod_") || id.Contains("/Shock_")) return true;
             for (Transform p = f.transform; p != null; p = p.parent)
                 foreach (string name in fixtureParts) if (p.name == name) return true;
             return false;
@@ -176,6 +197,23 @@ namespace MWCoop
                     PlayMakerFSM check = Game.FsmOn(p.gameObject, "BoltCheck");
                     FsmFloat tightness = check != null ? check.FsmVariables.FindFsmFloat("Tightness") : null;
                     if (tightness != null) { values[key + "/tightness"] = tightness.Value; break; }
+                }
+                // Suspension bolts can be siblings of their mounted model.
+                // Follow the native action instead of guessing from ancestry.
+                foreach (FsmState state in f.FsmStates) foreach (FsmStateAction action in state.Actions)
+                {
+                    AddFsmFloat add = action as AddFsmFloat;
+                    if (add == null || add.variableName.Value != "Tightness") continue;
+                    GameObject go = add.gameObject.OwnerOption == OwnerDefaultOption.UseOwner ? f.gameObject : add.gameObject.GameObject.Value;
+                    PlayMakerFSM check = go == null ? null : Game.FsmOn(go, add.fsmName.Value);
+                    if (check == null) continue;
+                    values[key + "/total"] = check.FsmVariables.FindFsmFloat("Tightness").Value;
+                    FsmGameObject db = check.FsmVariables.FindFsmGameObject("db_ThisPart");
+                    PlayMakerFSM data = db == null || db.Value == null ? null : Game.FsmOn(db.Value, "Data");
+                    if (data == null) continue;
+                    FsmBool bolted = data.FsmVariables.FindFsmBool("Bolted"), installed = data.FsmVariables.FindFsmBool("Installed");
+                    if (bolted != null) values[key + "/bolted"] = bolted.Value ? 1 : 0;
+                    if (installed != null) values[key + "/installed"] = installed.Value ? 1 : 0;
                 }
             }
             return values;
