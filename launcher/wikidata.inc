@@ -207,8 +207,8 @@ static const WikiBlock kW_InGame[] = {
             L"On death, the character collapses (ragdoll) until the player comes back; at the wheel, it slumps in the seat." },
     { WB_H, L"Pas encore", L"Not yet" },
     { WB_B, L"Les plateaux du restaurant ne sont pas vus par ceux qui arrivent en cours de partie.", L"Restaurant trays aren't seen by players who join mid-game." },
-    { WB_TIP, L"Quelque chose ne colle pas ? Envoie le zip des journaux sur le Discord. L'audit de F10 > Synchro est coupé par défaut (performances) : Audit=1 sous [Coop] dans mwcoop.ini pour l'activer.",
-              L"Something's off? Send the logs zip on the Discord. The F10 > Sync audit is off by default (performance): Audit=1 under [Coop] in mwcoop.ini turns it on." },
+    { WB_TIP, L"Quelque chose ne colle pas ? Envoie le zip des journaux sur GitHub. L'audit de F10 > Synchro est coupé par défaut (performances) : Audit=1 sous [Coop] dans mwcoop.ini pour l'activer.",
+              L"Something's off? Send the logs zip to GitHub. The F10 > Sync audit is off by default (performance): Audit=1 under [Coop] in mwcoop.ini turns it on." },
 };
 
 // ---- Mods et partage
@@ -292,7 +292,7 @@ static const WikiBlock kW_Start[] = {
     { WB_H, L"Quel ordre essayer ?", L"Which order to try?" },
     { WB_S, L"Copie. Si MWCoop ne se charge pas :", L"Copy. If MWCoop doesn't load:" },
     { WB_S, L"Dossier. Si toujours pas :", L"Folder. If still not:" },
-    { WB_S, L"Steam. Si rien ne marche : mode débogage, puis le zip des journaux sur le Discord.", L"Steam. If nothing works: debug mode, then the logs zip on the Discord." },
+    { WB_S, L"Steam. Si rien ne marche : mode débogage, puis le zip des journaux sur GitHub.", L"Steam. If nothing works: debug mode, then the logs zip to GitHub." },
     { WB_WARN, L"Invité d'un hôte avec des mods : le jeu part toujours de la copie d'invité (celle qui contient les mods de l'hôte), quel que soit ce réglage.",
                L"Guest of a host with mods: the game always starts from the guest copy (the one with the host's mods), whatever this setting." },
     { WB_GO, L"Ouvrir Réglages", L"Open Settings", TAB_COOP },
@@ -386,7 +386,7 @@ static const WikiBlock kW_NoLoad[] = {
     { WB_S, L"Réglages > Jeu > Démarrer le jeu : essaie Dossier, puis Steam.", L"Settings > Game > Start the game: try Folder, then Steam." },
     { WB_S, L"Antivirus : regarde son historique (Sécurité Windows > Historique de protection) ; autorise version.dll et ajoute le dossier du jeu en exclusion.",
             L"Antivirus: check its history (Windows Security > Protection history); allow version.dll and add the game folder as an exclusion." },
-    { WB_S, L"Toujours rien : Journaux > Mode débogage, lance ta partie, ferme le jeu, crée le zip et envoie-le sur le Discord.", L"Still nothing: Logs > Debug mode, start your game, close it, create the zip and send it on the Discord." },
+    { WB_S, L"Toujours rien : Journaux > Mode débogage, lance ta partie, ferme le jeu, crée le zip et envoie-le sur GitHub.", L"Still nothing: Logs > Debug mode, start your game, close it, create the zip and send it to GitHub." },
     { WB_FIG, NULL, NULL, WF_START },
     { WB_H, L"Pourquoi « ça marchait, puis plus du tout » ?", L"Why \"it worked, then not at all\"?" },
     { WB_P, L"Quand le jeu plante en se fermant, Windows lui ajoute parfois tout seul un mode de compatibilité. Au lancement suivant, ce mode charge la version.dll de Windows avant celle de MWCoop : le jeu démarre sans le mod. Chaque copie du jeu a le sien, et chaque installation de Windows aussi, d'où des résultats différents d'un disque ou d'un Windows à l'autre.",
@@ -437,8 +437,8 @@ static const WikiBlock kW_ModCompat[] = {
                L"MOP (Modern Optimization Plugin): it turns off and on cars and objects far from you, which MWCoop follows live. Cars that fly, teleport or desync. Remove it to play co-op." },
     { WB_WARN, L"Toiveradio Enhanced : chaque joueur tire ses propres morceaux et pubs sur Toivoradio, vous n'entendez pas la même chose. Sans lui, la radio est la même pour tous.",
                L"Toiveradio Enhanced: each player picks their own songs and ads on Toivoradio, you don't hear the same thing. Without it, the radio is the same for everyone." },
-    { WB_TIP, L"Un mod absent de cette liste ? Essaie-le : s'il ajoute un objet que les autres ne voient pas, dis-le sur Discord (salon suggestions) avec son lien Nexus.",
-              L"A mod missing from this list? Try it: if it adds an object the others can't see, say so on Discord (suggestions channel) with its Nexus link." },
+    { WB_TIP, L"Un mod absent de cette liste ? Essaie-le : s'il ajoute un objet que les autres ne voient pas, signale-le sur GitHub avec son lien Nexus.",
+              L"A mod missing from this list? Try it: if it adds an object the others can't see, report it on GitHub with its Nexus link." },
     { WB_GO, L"Ouvrir l'onglet Mods", L"Open the Mods tab", TAB_MODS },
 };
 static const WikiBlock kW_Saves[] = {
@@ -475,7 +475,7 @@ static const WikiBlock kW_Logs[] = {
     { WB_S, L"MWCoop ne se charge pas ? Active d'abord le mode débogage (page Journaux).", L"MWCoop doesn't load? Turn on debug mode first (Logs page)." },
     { WB_S, L"Lance la partie où le problème arrive, puis ferme le jeu.", L"Start the game where the problem happens, then close it." },
     { WB_S, L"« Créer un zip à envoyer » : il arrive sur ton bureau.", L"\"Create a zip to send\": it lands on your desktop." },
-    { WB_S, L"Envoie-le sur le Discord (#bug-reports) ou sur GitHub, avec ce que tu faisais.", L"Send it on the Discord (#bug-reports) or on GitHub, with what you were doing." },
+    { WB_S, L"Envoie-le sur GitHub (issues), avec ce que tu faisais.", L"Send it to GitHub (issues), with what you were doing." },
     { WB_TIP, L"Même sans journal du jeu, le zip contient le journal du lanceur : envoie-le quand même.", L"Even with no game log, the zip has the launcher's log: send it anyway." },
     { WB_GO, L"Ouvrir les Journaux", L"Open Logs", TAB_LOGS },
 };

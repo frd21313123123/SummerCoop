@@ -12,6 +12,8 @@ namespace MWCoop
     {
         static readonly HashSet<PlayMakerFSM> hooked = new HashSet<PlayMakerFSM>();
         static float scan;
+        static UnityEngine.Object[] candidates;
+        static int cursor;
         static HarmonyInstance harmony;
         static bool CanPour(FsmStateAction __instance)
         {
@@ -33,7 +35,7 @@ namespace MWCoop
                 FireTools.Cancel(Fsm, State, this, "State 1");
             }
         }
-        public static void Reset() { hooked.Clear(); scan = 0; }
+        public static void Reset() { hooked.Clear(); scan = 0; candidates = null; cursor = 0; }
         public static void Update()
         {
             if (!Session.Active || !PlayerSync.InGame || Time.realtimeSinceStartup < scan) return;
@@ -47,14 +49,20 @@ namespace MWCoop
                         if (method != null && method.DeclaringType == type) harmony.Patch(method, new HarmonyMethod(typeof(MscFluids).GetMethod("CanPour", BindingFlags.Static | BindingFlags.NonPublic)), null);
                     }
             }
-            scan = Time.realtimeSinceStartup + 2;
-            foreach (UnityEngine.Object item in Game.AllFsms())
+            if (candidates == null) { candidates = Game.AllFsms(); cursor = 0; }
+            while (cursor < candidates.Length && MscMaintenance.Available)
             {
-                PlayMakerFSM f = item as PlayMakerFSM;
+                long started = MscMaintenance.Begin();
+                try
+                {
+                PlayMakerFSM f = candidates[cursor++] as PlayMakerFSM;
                 if (f == null || f.hideFlags != HideFlags.None || f.FsmName != "Trigger" || !f.name.StartsWith("CapTrigger_", StringComparison.Ordinal) || hooked.Contains(f)) continue;
                 FsmState state = f.Fsm.GetState("Pouring"); if (state == null || f.FsmVariables.FindFsmGameObject("FluidTrigger") == null) continue;
                 if (FireTools.Insert(f, state, new Pour { Fsm = f, State = state }, false)) hooked.Add(f);
+                }
+                finally { MscMaintenance.End(started); }
             }
+            if (cursor >= candidates.Length) { candidates = null; scan = Time.realtimeSinceStartup + 2; }
         }
         public static bool Owns(PlayMakerFSM f)
         {

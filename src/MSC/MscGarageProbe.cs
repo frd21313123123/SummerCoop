@@ -29,9 +29,9 @@ namespace MWCoop
             {
                 if (VehicleSync.Count == 0 || !Props.HandFound || Props.BodyOf(MscGarage.Identity(0, false)) == null || Props.BodyOf(MscGarage.Identity(1, false)) == null) return;
                 string ready = Path.Combine(channel, Session.IsHost ? "host-ready.txt" : "guest-ready.txt");
-                if (!File.Exists(ready)) File.WriteAllText(ready, "ready");
-                if (Session.IsHost && File.Exists(Path.Combine(channel, "guest-ready.txt")) && !File.Exists(clock)) File.WriteAllText(clock, DateTime.UtcNow.AddSeconds(3).Ticks.ToString(C));
-                if (!File.Exists(clock) || !long.TryParse(File.ReadAllText(clock), out ticks)) return;
+                if (!File.Exists(ready)) MscProbeFiles.WriteAllText(ready, "ready");
+                if (Session.IsHost && File.Exists(Path.Combine(channel, "guest-ready.txt")) && !File.Exists(clock)) MscProbeFiles.WriteAllText(clock, DateTime.UtcNow.AddSeconds(3).Ticks.ToString(C));
+                if (!File.Exists(clock) || !long.TryParse(MscProbeFiles.ReadAllText(clock), out ticks)) return;
             }
             float elapsed = (float)TimeSpan.FromTicks(DateTime.UtcNow.Ticks - ticks).TotalSeconds;
             if (elapsed < 0 || elapsed >= 120) return;
@@ -50,6 +50,7 @@ namespace MWCoop
                 stage = current; pumps = 0; placed = folded = recorded = released = measuring = picked = false; problem = ""; nextPump = 0;
                 firstHeight = car.position.y; maxRise = 0;
                 carryAt = root.position + new Vector3(1.2f, .3f, 0);
+                if (actor) Game.SetState(ctrl, "Down");
                 Log.Info("MSC garage probe " + stage + " " + key + (actor ? " ACTOR" : " OBSERVER") + " tracked=" + (Props.BodyOf(key) != null));
             }
             if (actor)
@@ -73,7 +74,12 @@ namespace MWCoop
                         if (hit.normal.y > .8f && hit.point.y < car.position.y) ground = Mathf.Max(ground - 1, hit.point.y);
                     }
                     root.rotation = Quaternion.Euler(0, car.rotation.eulerAngles.y, 0);
-                    root.position += new Vector3(at.x, ground + .03f, at.z) - point.position;
+                    // A previous phase may leave the pad raised. Align the
+                    // resting pad with the ground, or its base starts below
+                    // terrain and free-falls while both peers keep syncing it.
+                    float raised = Mathf.Max(0, ctrl.FsmVariables.GetFsmFloat("Y").Value - MscGarage.Rest(kind, 0));
+                    Vector3 restingPoint = point.position - Vector3.up * raised;
+                    root.position += new Vector3(at.x, ground + .03f, at.z) - restingPoint;
                     Rigidbody rb = root.GetComponent<Rigidbody>(); if (rb != null) { rb.velocity = rb.angularVelocity = Vector3.zero; }
                     Transform player = Game.PlayerT;
                     if (player != null) { CharacterController cc = player.GetComponent<CharacterController>(); if (cc != null) cc.enabled = false; player.position = at + new Vector3(-2, 1, 0); if (cc != null) cc.enabled = true; }
@@ -97,7 +103,7 @@ namespace MWCoop
                     recorded = true;
                     if (!picked) problem = "PICKUP NOT TRACKED";
                     float y = ctrl.FsmVariables.GetFsmFloat("Y").Value;
-                    File.WriteAllText(Path.Combine(channel, "state-" + stage + ".txt"), string.Join(";", new[]{F(root.position.x), F(root.position.y), F(root.position.z), F(y), F(point.position.y), F(car.position.y), F(maxRise)}));
+                    MscProbeFiles.WriteAllText(Path.Combine(channel, "state-" + stage + ".txt"), string.Join(";", new[]{F(root.position.x), F(root.position.y), F(root.position.z), F(y), F(point.position.y), F(car.position.y), F(maxRise)}));
                     Record(key, true, 0, 0, 0, y, car, maxRise);
                 }
                 if (phase >= 28) Game.SetState(ctrl, "Down");
@@ -107,7 +113,7 @@ namespace MWCoop
                 string state = Path.Combine(channel, "state-" + stage + ".txt");
                 if (File.Exists(state))
                 {
-                    recorded = true; string[] a = File.ReadAllText(state).Split(';');
+                    recorded = true; string[] a = MscProbeFiles.ReadAllText(state).Split(';');
                     Vector3 expected = new Vector3(P(a[0]), P(a[1]), P(a[2]));
                     float y = ctrl.FsmVariables.GetFsmFloat("Y").Value;
                     Record(key, false, Vector3.Distance(root.position, expected), Mathf.Abs(y-P(a[3])), Mathf.Abs(car.position.y-P(a[5])), y, car, maxRise);

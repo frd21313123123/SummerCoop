@@ -206,7 +206,7 @@ static float WikiFigure(Graphics &g, int id, RectF a, bool draw)
         Icon(g, IC_PLAY, game.X + 20, game.Y + 20, 14, kInk, 2.0f);
         Text(g, T(L"Lance ta partie, puis ferme le jeu", L"Start your game, then close it"), RectF(game.X + 36, game.Y, game.Width - 40, 40), 12.5f, FontStyleRegular, kInk, StringAlignmentNear);
         WikiBadge(g, game.X + game.Width - 22, game.Y + 20, 2);
-        Text(g, T(L"Le zip se crée sur ton bureau : envoie-le sur le Discord.", L"The zip is created on your desktop: send it on the Discord."), RectF(x, y + 108, w, 20), 11.5f, FontStyleRegular, kGrey, StringAlignmentNear);
+        Text(g, T(L"Le zip se crée sur ton bureau : envoie-le sur GitHub.", L"The zip is created on your desktop: send it to GitHub."), RectF(x, y + 108, w, 20), 11.5f, FontStyleRegular, kGrey, StringAlignmentNear);
         return 132;
     }
     case WF_UPDATE: {   // bouton de mise a jour sous le logo

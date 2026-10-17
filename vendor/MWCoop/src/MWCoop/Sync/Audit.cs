@@ -99,15 +99,17 @@ namespace MWCoop
             if (!enabled) return;
             float now = Time.realtimeSinceStartup;
             if (Input.GetMouseButtonDown(0) || Input.GetMouseButtonDown(1) || Input.GetKeyDown(KeyCode.F) || Input.GetKeyDown(KeyCode.E) || Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter)) lastInputAt = now;
-            if (scanAt > 0 && now >= scanAt)
+            if (scanAt > 0 && now >= scanAt && MscMaintenance.Available)
             {
+                long started = MscMaintenance.Begin();
+                double remaining = MscMaintenance.RemainingMilliseconds;
                 var sw = System.Diagnostics.Stopwatch.StartNew();
                 bool first = scanIndex < 0;
                 if (scanIndex < 0) { scanRoots = WorldFsms.CachedRoots != null ? new List<GameObject>(WorldFsms.CachedRoots) : Recon.SceneRoots(); scanIndex = 0; scanStack.Clear(); }
                 // Parcours en profondeur, au plus 500 objets par image (pas d'a-coup), puis un nouveau releve
                 // toutes les 5 min (objets crees en jeu).
                 int budget = 500;
-                while (budget > 0 && sw.ElapsedMilliseconds < 4 && (scanStack.Count > 0 || scanIndex < scanRoots.Count))
+                while (budget > 0 && sw.Elapsed.TotalMilliseconds < remaining && (scanStack.Count > 0 || scanIndex < scanRoots.Count))
                 {
                     if (scanStack.Count == 0)
                     {
@@ -125,6 +127,7 @@ namespace MWCoop
                 }
                 if (sw.ElapsedMilliseconds > 20) Log.Info("audit : releve " + sw.ElapsedMilliseconds + " ms" + (first ? " (racines)" : "") + ", " + (500 - budget) + " objets");
                 if (scanStack.Count == 0 && scanIndex >= scanRoots.Count) { scanAt = -1; rescanAt = now + 300f; scanIndex = -1; Log.Info("audit : " + obs.Count + " automates suivis du regard"); }
+                MscMaintenance.End(started);
             }
             else if (scanAt < 0 && rescanAt > 0 && now >= rescanAt) { rescanAt = -1; scanAt = now; }
             Poll(now);

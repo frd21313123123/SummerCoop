@@ -22,7 +22,11 @@ namespace SummerCoop.Game
             MWCoop.MscRuntime.TouchLoaderTrace();
             MWCoop.Entry.Init();
             if (MWCoop.Entry.Root != null) MWCoop.Entry.Root.AddComponent<MWCoop.MscConnectPanel>();
-            if (MWCoop.Entry.Root != null && MWCoop.MscRuntime.Argument("--summercoop-test-report").Length > 0) MWCoop.Entry.Root.AddComponent<MWCoop.MscSmokeProbe>();
+            if (MWCoop.Entry.Root != null && MWCoop.MscRuntime.Argument("--summercoop-test-report").Length > 0)
+            {
+                if (MWCoop.MscPerformanceProbe.Requested) MWCoop.Entry.Root.AddComponent<MWCoop.MscPerformanceProbe>();
+                else MWCoop.Entry.Root.AddComponent<MWCoop.MscSmokeProbe>();
+            }
             ModConsole.Print("SummerCoop " + Version);
         }
         private void BeforeGame() { MWCoop.MscRuntime.TouchLoaderTrace(); MWCoop.MscRuntime.ConfigureGame(); MWCoop.MscParts.Index(); }

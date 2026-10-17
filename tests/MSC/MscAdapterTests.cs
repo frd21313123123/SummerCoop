@@ -43,11 +43,96 @@ class MscAdapterTests
         try
         {
 #if !MWCOOP_NETWORK_ONLY
+            Test("launcher customization reload keeps connection and world settings", delegate {
+                string folder = Path.Combine(Path.GetTempPath(), "summercoop-looks-" + Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(folder);
+                string path = Path.Combine(folder, "mwcoop.ini");
+                string previous = MWCoop.Config.IniPath;
+                try {
+                    MWCoop.Config.IniPath = path;
+                    MWCoop.Config.Override("Coop", "Port", "27842");
+                    MWCoop.Config.Override("Coop", "Profil", "host");
+                    File.WriteAllText(path, "[Coop]\nApparence=char_shirt02\nPantalon=char_pants03\nVisage=char_face01\nCorps=1712-37\nChapeau=cap\nLunettes=glasses\nCheveux=hair\nCouleurVoiture=123ABC\nPort=12345\nProfil=guest\n");
+                    Assert(MWCoop.MscLauncher.ReloadCustomization(path), "Launcher changes were ignored");
+                    Assert(MWCoop.Config.Get("Coop", "Apparence", "") == "char_shirt02" && MWCoop.Config.Get("Coop", "Pantalon", "") == "char_pants03", "Clothes lost");
+                    Assert(MWCoop.Config.Get("Coop", "Chapeau", "") == "cap" && MWCoop.Config.Get("Coop", "CouleurVoiture", "") == "123ABC", "Accessories or color lost");
+                    Assert(MWCoop.Config.Get("Coop", "Port", "") == "27842" && MWCoop.Config.Get("Coop", "Profil", "") == "host", "Active session settings changed");
+                    Assert(!MWCoop.MscLauncher.ReloadCustomization(path), "Unchanged customization reported a change");
+                    File.WriteAllText(path, "[Coop]\nChapeau=\nCouleurVoiture=\n[Other]\nApparence=wrong\n");
+                    Assert(MWCoop.MscLauncher.ReloadCustomization(path), "Removing hat or random color ignored");
+                    Assert(MWCoop.Config.Get("Coop", "Chapeau", "none") == "none" && MWCoop.Config.Get("Coop", "CouleurVoiture", "random") == "random", "Empty selections lost");
+                    Assert(MWCoop.Config.Get("Coop", "Apparence", "") == "char_shirt02", "Other INI section replaced outfit");
+                    MWCoop.Config.Save("Coop", "Apparence", "char_shirt03");
+                    Assert(File.ReadAllText(path).Contains("Apparence=char_shirt03"), "F10 changes not saved to shared config");
+                } finally { MWCoop.Config.IniPath = previous; Directory.Delete(folder, true); }
+            });
+            Test("launcher and isolated profile share settings and preview paths", delegate {
+                string folder = Path.Combine(Path.GetTempPath(), "summercoop-launcher-" + Guid.NewGuid().ToString("N"));
+                string profile = Path.Combine(folder, "profile");
+                string game = Path.Combine(folder, "game");
+                string[] names = { "MWCOOP_CONFIG", "MWCOOP_LAUNCHER_DIR", "MWCOOP_DIR", "MWCOOP_DATA" };
+                var saved = new Dictionary<string, string>();
+                foreach (string name in names) saved[name] = Environment.GetEnvironmentVariable(name);
+                string ini = MWCoop.Config.IniPath;
+                try {
+                    Directory.CreateDirectory(profile);
+                    File.WriteAllText(Path.Combine(profile, "mwcoop.ini"), "[Coop]\nApparence=char_shirt04\nPantalon=char_pants02\n");
+                    Environment.SetEnvironmentVariable("MWCOOP_DIR", profile);
+                    Environment.SetEnvironmentVariable("MWCOOP_DATA", profile);
+                    MWCoop.MscLauncher.Initialize(game, profile, Path.Combine(folder, "missing.ini"));
+                    MWCoop.Config.Load();
+                    string shared = Path.Combine(game, "MWCoop");
+                    Assert(MWCoop.Config.IniPath == Path.Combine(shared, "mwcoop.ini"), "Config stayed in isolated profile");
+                    Assert(MWCoop.Config.Get("Coop", "Apparence", "") == "char_shirt04", "Existing appearance was not migrated");
+                    Assert(Path.GetDirectoryName(MWCoop.Looks.PreviewPath) == Path.Combine(shared, "cache") && Path.GetDirectoryName(MWCoop.CarColor.MeshPath) == Path.Combine(shared, "cache"), "Previews are invisible to launcher");
+                    Assert(Environment.GetEnvironmentVariable("MWCOOP_DATA") == profile && Environment.GetEnvironmentVariable("MWCOOP_DIR") == profile, "World data isolation changed");
+                    MWCoop.Config.Save("Coop", "Apparence", "char_shirt05");
+                    MWCoop.MscLauncher.Initialize(game, profile, Path.Combine(folder, "missing.ini"));
+                    Assert(File.ReadAllText(Path.Combine(shared, "mwcoop.ini")).Contains("char_shirt05"), "Migration overwrote launcher selection");
+                    File.WriteAllText(Path.Combine(profile, "mwcoop.ini"), "[Test]\nProfileOnly=kept\n[Coop]\nApparence=old\n");
+                    MWCoop.Config.Load();
+                    Assert(MWCoop.Config.Get("Test", "ProfileOnly", "") == "kept" && MWCoop.Config.Get("Coop", "Apparence", "") == "char_shirt05", "Profile fallback or shared config priority changed");
+                    string request = Path.Combine(folder, "lancement.ini");
+                    string original = Path.Combine(folder, "Исходная игра с пробелами");
+                    long now = (long)(DateTime.UtcNow - new DateTime(1970, 1, 1)).TotalSeconds;
+                    File.WriteAllText(request, "[Lancement]\nHorodatage=" + now + "\nLauncherDir=" + original + "\n");
+                    MWCoop.MscLauncher.Initialize(game, profile, request);
+                    Assert(Environment.GetEnvironmentVariable("MWCOOP_LAUNCHER_DIR") == original, "Launch copy lost original Unicode directory");
+                    File.WriteAllText(request, "[Lancement]\nHorodatage=1\nLauncherDir=" + original + "\n");
+                    MWCoop.MscLauncher.Initialize(game, profile, request);
+                    Assert(Environment.GetEnvironmentVariable("MWCOOP_LAUNCHER_DIR") == shared, "Expired launch request changed shared settings directory");
+                } finally {
+                    foreach (string name in names) Environment.SetEnvironmentVariable(name, saved[name]);
+                    MWCoop.Config.IniPath = ini;
+                    Directory.Delete(folder, true);
+                }
+            });
             Test("MSC assembly loads MWCoop runtime without the legacy SummerCoop runtime", delegate {
                 var assembly = typeof(MWCoop.MscRuntime).Assembly;
                 Assert(assembly.GetType("MWCoop.Core") != null && assembly.GetType("SummerCoop.Game.SummerCoopMod") != null, "New runtime missing");
                 Assert(assembly.GetType("SummerCoop.Game.CoopRuntime") == null, "Two multiplayer runtimes would run");
                 Assert(Session.NetVersion != 41 && MWCoop.Version.Text == SummerCoop.Core.Protocol.ModVersion, "Build identities disagree");
+            });
+            Test("Avatar body cache follows profile replacements without sharing mutable looks", delegate {
+                var player = new PlayerInfo { Skin = "shirt|pants|face|1712-37|hat" };
+                Assert(player.BodyKey == "1712-37" && player.BodyKey == "1712-37", "Body cache not populated");
+                var look = MWCoop.Looks.Parse(player.Skin); look.Body = "changed";
+                Assert(player.BodyKey == "1712-37", "Mutable look changed a cached profile");
+                player.Skin = "shirt|pants|face|other"; Assert(player.BodyKey == "other", "Profile replacement kept old body");
+                player.Skin = "shirt"; Assert(player.BodyKey == "", "Legacy shirt-only profile kept body");
+            });
+            Test("Preview float writer preserves BinaryWriter file bytes", delegate {
+                var expected = new MemoryStream(); var actual = new MemoryStream();
+                using (var baseline = new BinaryWriter(expected))
+                using (var candidate = new MWCoop.MscPreviewWriter(actual)) {
+                    var random = new Random(1046);
+                    for (int i = 0; i < 1000; i++) {
+                        byte[] bits = new byte[8]; random.NextBytes(bits);
+                        float single = BitConverter.ToSingle(bits, 0); double number = BitConverter.ToDouble(bits, 0);
+                        baseline.Write(single); baseline.Write(number); candidate.Write(single); candidate.Write(number);
+                    }
+                }
+                Assert(Convert.ToBase64String(expected.ToArray()) == Convert.ToBase64String(actual.ToArray()), "Preview format changed");
             });
 #endif
             Test("MWCoop codec retains Cyrillic, exact numbers and bounded owned slices", delegate {
@@ -55,6 +140,35 @@ class MscAdapterTests
                 NetReader reader = new NetReader(bytes, 1, bytes.Length - 1);
                 Assert(reader.Str() == "Привет, MSC 🚗" && reader.I32() == 123 && reader.F32() == 1.25f && reader.Bool(), "Codec changed values");
                 Assert(reader.Bytes()[1] == 6 && !reader.More, "Byte slice changed");
+            });
+            Test("Direct MWCoop packets match BinaryWriter bytes including nonfinite sentinels and exact UTF8", delegate {
+                var random = new Random(1046);
+                for (int trial = 0; trial < 300; trial++) {
+                    byte[] bits = new byte[8]; random.NextBytes(bits);
+                    float single = BitConverter.ToSingle(bits, 0); double number = BitConverter.ToDouble(bits, 0);
+                    string text = trial % 3 == 0 ? "Деталь/🚗/\u0000/" + trial : new string('x', trial * 7);
+                    byte[] encoded = System.Text.Encoding.UTF8.GetBytes(text);
+                    var expected = new MemoryStream();
+                    using (var writer = new BinaryWriter(expected)) {
+                        writer.Write((byte)Msg.Chat); writer.Write((byte)trial); writer.Write((ushort)(trial * 413)); writer.Write(-trial);
+                        writer.Write(single); writer.Write(number); writer.Write((ushort)encoded.Length); writer.Write(encoded);
+                        byte[] actual = new NetWriter(Msg.Chat).U8(trial).U16(trial * 413).I32(-trial).F32(single).F64(number).Str(text).ToArray();
+                        Assert(Convert.ToBase64String(expected.ToArray()) == Convert.ToBase64String(actual), "Packet bytes changed at trial " + trial);
+                    }
+                }
+            });
+            Test("Pooled writers retain owned packets through nested use, reuse and exceptions", delegate {
+                byte[] first; byte[] second;
+                using (var outer = NetWriter.Rent(Msg.Prop)) {
+                    outer.Str("original").F32(1.25f); first = outer.ToArray();
+                    using (var inner = NetWriter.Rent(Msg.Chat)) inner.Str(new string('y', 8000)).ToArray();
+                    second = outer.ToArray(); Assert(!object.ReferenceEquals(first, second), "ToArray did not return an owned copy");
+                    first[0] = 255; Assert(second[0] == (byte)Msg.Prop, "Copies alias each other");
+                    Reject(delegate { outer.Str(new string('x', 16385)); }); outer.I32(42);
+                    Assert(outer.Length == second.Length + 4, "Failed write corrupted cursor");
+                }
+                for (int i = 0; i < 100; i++) using (var writer = NetWriter.Rent(Msg.Chat)) writer.Str("replacement").I32(i).ToArray();
+                Assert(new NetReader(second, 1, second.Length - 1).Str() == "original", "Pool reuse overwrote a pending packet");
             });
             Test("MWCoop codec rejects invalid ranges, truncation and UTF8", delegate {
                 Reject(delegate { new NetReader(new byte[8], int.MaxValue, 4); }); Reject(delegate { new NetReader(new byte[8], 0, -1); });
@@ -102,11 +216,81 @@ class MscAdapterTests
                 foreach (Type type in new[] { typeof(MWCoop.Clearing), typeof(MWCoop.Kauppa), typeof(MWCoop.Frost), typeof(MWCoop.RayTracing) }) Assert(!MWCoop.MscRuntime.Supports(type), "Winter-only module enabled: " + type);
                 foreach (Type type in new[] { typeof(MWCoop.PlayerSync), typeof(MWCoop.VehicleSync), typeof(MWCoop.Parts), typeof(MWCoop.Chat), typeof(MWCoop.WorldFsms), typeof(MWCoop.Wallet), typeof(SaveTransfer) }) Assert(MWCoop.MscRuntime.Supports(type), "Core MWCoop module removed: " + type);
             });
+            Test("MSC save waits for Hello before a transport-accepted peer can queue a manifest", delegate {
+                var auth = (HashSet<int>)typeof(Session).GetField("authenticated", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).GetValue(null);
+                var waiting = (System.Collections.IList)typeof(SaveTransfer).GetField("waiting", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).GetValue(null);
+                var outgoing = (System.Collections.IList)typeof(SaveTransfer).GetField("outgoing", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).GetValue(null);
+                var eligible = typeof(Session).GetMethod("AuthenticatedForSave", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+                Peer peer = new Peer { Id = 222, Accepted = true }; int queued = waiting.Count, active = outgoing.Count;
+                Assert(!auth.Contains(peer.Id), "Test peer identity is already authenticated");
+                SaveTransfer.Queue(peer); SaveTransfer.SendTo(peer);
+                Assert(waiting.Count == queued && outgoing.Count == active && !(bool)eligible.Invoke(null, new object[] { peer }), "Save began before Hello completed");
+                try { auth.Add(peer.Id); Assert((bool)eligible.Invoke(null, new object[] { peer }), "Completed Hello cannot enable a save"); peer.Accepted = false; Assert(!(bool)eligible.Invoke(null, new object[] { peer }), "Closed peer remains eligible for a save"); }
+                finally { auth.Remove(peer.Id); }
+            });
+            Test("MSC save coalesces a late Hello while that peer's transfer is still outgoing", delegate {
+                var auth = (HashSet<int>)typeof(Session).GetField("authenticated", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).GetValue(null);
+                var waiting = (System.Collections.IList)typeof(SaveTransfer).GetField("waiting", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).GetValue(null);
+                var outgoing = (System.Collections.IList)typeof(SaveTransfer).GetField("outgoing", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).GetValue(null);
+                Type type = typeof(SaveTransfer).GetNestedType("Outgoing", System.Reflection.BindingFlags.NonPublic);
+                object item = Activator.CreateInstance(type, true); Peer peer = new Peer { Id = 222, Accepted = true };
+                type.GetField("P").SetValue(item, peer); int queued = waiting.Count;
+                try { auth.Add(peer.Id); outgoing.Add(item); SaveTransfer.Queue(peer); SaveTransfer.SendTo(peer); Assert(waiting.Count == queued && outgoing.Count == 1, "Late Hello enqueued a second save manifest"); }
+                finally { outgoing.Remove(item); auth.Remove(peer.Id); }
+            });
+            Test("Failed MSC host or guest connection cannot fall through into offline GAME", delegate {
+                var policy = typeof(MWCoop.MscFlow).GetMethod("MayStartOffline", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+                foreach (string mode in new[] { "host", "client", "hote", "invite", "" }) Assert(!(bool)policy.Invoke(null, new object[] { mode, true, true }), "Failed connection started offline: " + mode);
+                Assert((bool)policy.Invoke(null, new object[] { "solo", true, false }) && (bool)policy.Invoke(null, new object[] { "solo", false, true }) && !(bool)policy.Invoke(null, new object[] { "solo", false, false }), "Explicit offline start policy changed");
+            });
+            Test("Native QA clocks and snapshots remain complete during concurrent atomic publication", delegate {
+                Type type = typeof(MWCoop.MscRuntime).Assembly.GetType("MWCoop.MscProbeFiles", true);
+                var write = type.GetMethod("WriteAllText"); var read = type.GetMethod("ReadAllText");
+                string directory = Path.Combine(Path.GetTempPath(), "summercoop-probe-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(directory);
+                string path = Path.Combine(directory, "clock.txt"), body = new string('x', 8192); Exception failure = null; Thread writer = null;
+                try {
+                    write.Invoke(null, new object[] { path, "0|" + body + "|0" });
+                    writer = new Thread(delegate() { try { for (int i = 1; i <= 60; i++) write.Invoke(null, new object[] { path, i + "|" + body + "|" + i }); } catch (Exception e) { failure = e; } });
+                    writer.Start(); int samples = 0;
+                    do { string[] fields = ((string)read.Invoke(null, new object[] { path })).Split('|'); Assert(fields.Length == 3 && fields[0] == fields[2] && fields[1] == body, "Reader observed an incomplete clock/snapshot"); samples++; } while (writer.IsAlive);
+                    writer.Join(); Assert(failure == null && samples > 0, "Concurrent native QA publication failed: " + failure);
+                    type.GetMethod("WriteAllLines").Invoke(null, new object[] { path, new[] { "кириллица", "second" } });
+                    var lines = (string[])type.GetMethod("ReadAllLines").Invoke(null, new object[] { path });
+                    Assert(lines.Length == 2 && lines[0] == "кириллица" && lines[1] == "second", "QA line encoding changed");
+                } finally {
+                    if (writer != null) writer.Join();
+                    foreach (string suffix in new[] { "", ".pending", ".bak" }) if (File.Exists(path + suffix)) File.Delete(path + suffix);
+                    Directory.Delete(directory);
+                }
+            });
             Test("MSC mount adapter preserves variant HandChild slots and reads native Part parenting actions", delegate {
                 var names = new[] { new HutongGames.PlayMaker.FsmString { Name = "HandChild2", Value = "starter(Clone)" }, new HutongGames.PlayMaker.FsmString { Name = "Other", Value = "block(Clone)" } };
                 Assert(SummerCoop.Game.NativeAssembly.Accepts(names, "starter(Clone)") && !SummerCoop.Game.NativeAssembly.Accepts(names, "block(Clone)"), "MSC mount compatibility changed");
                 var action = new HutongGames.PlayMaker.Actions.SetParent { gameObject = new HutongGames.PlayMaker.FsmOwnerDefault { OwnerOption = HutongGames.PlayMaker.OwnerDefaultOption.SpecifyGameObject, GameObject = new HutongGames.PlayMaker.FsmGameObject { Name = "Part" } } };
-                Assert(object.ReferenceEquals(SummerCoop.Game.NativeAssembly.MountAction(new HutongGames.PlayMaker.FsmStateAction[] { action }), action), "Native Part parent was ignored");
+                var actions = new HutongGames.PlayMaker.FsmStateAction[] { null, action };
+                Assert(object.ReferenceEquals(SummerCoop.Game.NativeAssembly.MountAction(actions), action), "Native Part parent was ignored");
+                Assert(object.ReferenceEquals(SummerCoop.Game.NativeAssembly.MountAction((IEnumerable<HutongGames.PlayMaker.FsmStateAction>)actions), action), "Array mount selection differs from the original sequence");
+                action.gameObject.GameObject.Name = "Other";
+                Assert(SummerCoop.Game.NativeAssembly.MountAction(actions) == null, "Mount selection cached a changed native action");
+            });
+            Test("MSC indexed native offsets preserve sequential float values and live variables", delegate {
+                var owner = new HutongGames.PlayMaker.FsmOwnerDefault { OwnerOption = HutongGames.PlayMaker.OwnerDefaultOption.SpecifyGameObject, GameObject = new HutongGames.PlayMaker.FsmGameObject { Name = "Part" } };
+                var position = new HutongGames.PlayMaker.Actions.SetPosition {
+                    gameObject = owner, space = UnityEngine.Space.Self,
+                    vector = new HutongGames.PlayMaker.FsmVector3(), x = new HutongGames.PlayMaker.FsmFloat(),
+                    y = new HutongGames.PlayMaker.FsmFloat { UseVariable = true, Name = "" }, z = new HutongGames.PlayMaker.FsmFloat { UseVariable = true, Name = "" }
+                };
+                var actions = new HutongGames.PlayMaker.FsmStateAction[] { null, position };
+                for (int i = 0; i < 300; i++) {
+                    position.vector.Value = new UnityEngine.Vector3(i / 13f, -i / 7f, i / 19f); position.x.Value = i / -17f;
+                    UnityEngine.Vector3 input = new UnityEngine.Vector3(i / 31f, 4, -2);
+                    var indexed = SummerCoop.Game.NativeAssembly.LocalOffset(actions, input);
+                    var original = SummerCoop.Game.NativeAssembly.LocalOffset((IEnumerable<HutongGames.PlayMaker.FsmStateAction>)actions, input);
+                    Assert(indexed.x == original.x && indexed.y == original.y && indexed.z == original.z, "Native mount offset changed float values");
+                }
+                position.space = UnityEngine.Space.World;
+                var untouched = SummerCoop.Game.NativeAssembly.LocalOffset(actions, new UnityEngine.Vector3(1,2,3));
+                Assert(untouched.x == 1 && untouched.y == 2 && untouched.z == 3, "World-space action changed a local mount offset");
             });
             Test("MSC respawn offers only the church and parents' house", delegate {
                 var destinations = (Array)typeof(MWCoop.Respawn).GetField("places", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic).GetValue(null);
@@ -223,6 +407,42 @@ class MscAdapterTests
                     bool sent = false;
                     for (int step = 0; step < 600; step++) { float time = step * .01f; host.Update(time); foreach (Transport client in clients) client.Update(time); if (!sent && clients.TrueForAll(c => c.LocalId > 0)) { foreach (Transport client in clients) client.SendReliable(client.Peers[0], new byte[] { 1, 2, 3 }); sent = true; } if (received == 3) break; Thread.Sleep(5); }
                     Assert(received == 3 && host.Peers.Count == 3, "Actual UDP transport failed");
+                } finally { foreach (Transport client in clients) client.Close(); host.Close(); }
+            });
+            if (Array.IndexOf(args, "--no-sockets") < 0) Test("actual UDP bulk snapshots converge after three receivers pause between polls", delegate {
+                int port; using (Socket reserve = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp)) { reserve.Bind(new IPEndPoint(IPAddress.Loopback, 0)); port = ((IPEndPoint)reserve.LocalEndPoint).Port; }
+                Transport host = Create(); List<Transport> clients = new List<Transport>(); int[] received = new int[3];
+                var clock = System.Diagnostics.Stopwatch.StartNew();
+                try {
+                    host.Host(port);
+                    for (int i = 0; i < 3; i++) {
+                        int index = i; Transport client = Create(); clients.Add(client);
+                        client.OnMessage += delegate(Peer peer, byte[] bytes, int offset, int length) {
+                            Assert(length == 1000 && BitConverter.ToInt32(bytes, offset) == received[index], "Bulk snapshot order or size changed");
+                            for (int n = 4; n < length; n++) Assert(bytes[offset + n] == (byte)(received[index] + n), "Pending snapshot bytes were overwritten");
+                            received[index]++;
+                        };
+                        client.Connect("127.0.0.1", port);
+                    }
+                    bool sent = false;
+                    while (clock.Elapsed.TotalSeconds < 20) {
+                        float now = (float)clock.Elapsed.TotalSeconds; host.Update(now);
+                        foreach (Transport client in clients) client.Update(now);
+                        if (!sent && clients.TrueForAll(c => c.LocalId > 0)) {
+                            foreach (Peer peer in host.Peers) for (int n = 0; n < 600; n++) {
+                                byte[] bytes = new byte[1000]; Buffer.BlockCopy(BitConverter.GetBytes(n), 0, bytes, 0, 4);
+                                for (int k = 4; k < bytes.Length; k++) bytes[k] = (byte)(n + k);
+                                host.SendReliable(peer, bytes);
+                            }
+                            sent = true;
+                        }
+                        if (sent && Array.TrueForAll(received, n => n == 600)) break;
+                        // Loading/long frames stop polling; do not require a high rendering rate.
+                        Thread.Sleep(50);
+                    }
+                    Assert(Array.TrueForAll(received, n => n == 600), "Bulk snapshots stalled with paused receivers: " + string.Join(",", Array.ConvertAll(received, n => n.ToString())));
+                    host.Update((float)clock.Elapsed.TotalSeconds);
+                    Assert(host.Peers.TrueForAll(p => p.InFlight == 0), "Bulk reliable bytes remain owned after ACK");
                 } finally { foreach (Transport client in clients) client.Close(); host.Close(); }
             });
             Console.WriteLine("ALL " + passed + " MSC ADAPTER TESTS PASSED"); return 0;

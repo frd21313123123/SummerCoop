@@ -358,6 +358,7 @@ namespace MWCoop
 
         static void Scan()
         {
+            Props.InvalidateHierarchy();
             scanned = true;
             float now = Time.realtimeSinceStartup;
             nextScan = now + 20f;
@@ -1964,7 +1965,9 @@ namespace MWCoop
         {
             if (c.Body == null || c.Net < 0) return;   // (absente de la table de l'hote : personne ne la connait sous ce numero)
             bool driven = mode != 0;
-            var w = new NetWriter(Msg.Vehicle).U8(Session.LocalId).U8(c.Net).U8(mode)
+            using (var w = NetWriter.Rent(Msg.Vehicle))
+            {
+            w.U8(Session.LocalId).U8(c.Net).U8(mode)
                 .Vec(c.Body.position).Quat(c.Body.rotation).Vec(c.Body.velocity).Vec(c.Body.angularVelocity);
             if (driven)
             {
@@ -1992,6 +1995,7 @@ namespace MWCoop
             // d'un envoi a l'autre -- a 25 m/s, jusqu'a 50 cm d'ecart au hasard : la copie du passager avancait par saccades).
             w.F32(Time.realtimeSinceStartup - Mathf.Clamp(Time.time - Time.fixedTime, 0f, Time.fixedDeltaTime));
             Session.SendAll(w, false);
+            }
         }
 
         // Etat de la simulation (SimVars) : (empreinte de la cle, valeur). Les commandes (tirette de starter) seulement

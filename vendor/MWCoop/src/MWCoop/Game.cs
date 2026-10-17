@@ -169,6 +169,10 @@ namespace MWCoop
         static int rootsFrame = -1, rootsLevel = -1;
         static float rootsAt = -100f;
         static readonly Dictionary<string, float> rootMiss = new Dictionary<string, float>();
+        // Static MWC locations absent from MSC. Native MSC dynamic roots keep the normal retry path.
+        static readonly HashSet<string> mwcRoots = new HashSet<string> {
+            "HOMENEW", "PERAPORTTI", "Cutter", "FleaMarket", "FleaMarketProducts", "STORE_AREA", "EQUIPMENTS", "RACES"
+        };
         public static int RootScans, rootMissLogs, FsmScans; public static double FsmScanMs; public static double RootScanMs;
 
         static void ScanRoots()
@@ -272,6 +276,7 @@ namespace MWCoop
             // objet absent dessous (un PNJ pas encore cree, JOBS/HouseWood1/.../WoodCaller1), un nouveau releve n'y change
             // rien -- il revenait toutes les 5 s, 24 releves par minute (journaux de HowardCS, 11/10).
             if (HasRoot(rootName)) return null;
+            if (MscRuntime.Enabled && mwcRoots.Contains(rootName)) return null;
             float now = Time.realtimeSinceStartup, last;
             if (rootsFrame == Time.frameCount || now - rootsAt < 1f) return null;
             if (rootMiss.TryGetValue(path, out last) && now - last < 5f) return null;

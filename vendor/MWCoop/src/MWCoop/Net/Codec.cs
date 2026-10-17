@@ -6,30 +6,62 @@ using UnityEngine;
 namespace MWCoop.Net
 {
     // Ecriture/lecture binaire des messages (petit-boutiste, textes UTF-8 prefixes par leur longueur).
-    public class NetWriter
+    public class NetWriter : IDisposable
     {
-        readonly MemoryStream ms = new MemoryStream(256);
-        readonly BinaryWriter w;
-        public NetWriter(Msg type) { w = new BinaryWriter(ms); w.Write((byte)type); }
-        public NetWriter U8(int v) { w.Write((byte)v); return this; }
-        public NetWriter U16(int v) { w.Write((ushort)v); return this; }
-        public NetWriter I32(int v) { w.Write(v); return this; }
-        public NetWriter F32(float v) { w.Write(v); return this; }
-        public NetWriter F64(double v) { w.Write(v); return this; }
-        public NetWriter Bool(bool v) { w.Write(v); return this; }
-        public NetWriter Vec(Vector3 v) { w.Write(v.x); w.Write(v.y); w.Write(v.z); return this; }
-        public NetWriter Quat(Quaternion q) { w.Write(q.x); w.Write(q.y); w.Write(q.z); w.Write(q.w); return this; }
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Explicit)]
+        struct SingleBits { [System.Runtime.InteropServices.FieldOffset(0)] public float Value; [System.Runtime.InteropServices.FieldOffset(0)] public int Bits; }
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Explicit)]
+        struct DoubleBits { [System.Runtime.InteropServices.FieldOffset(0)] public double Value; [System.Runtime.InteropServices.FieldOffset(0)] public long Bits; }
+        [ThreadStatic] static System.Collections.Generic.Stack<byte[]> buffers;
+        byte[] buffer;
+        int position;
+        readonly bool pooled;
+        public NetWriter(Msg type) : this(type, false) { }
+        NetWriter(Msg type, bool rent)
+        {
+            pooled = rent;
+            buffer = rent && buffers != null && buffers.Count > 0 ? buffers.Pop() : new byte[256];
+            buffer[position++] = (byte)type;
+        }
+        public static NetWriter Rent(Msg type) { return new NetWriter(type, true); }
+        void Need(int count)
+        {
+            if (buffer == null) throw new ObjectDisposedException("NetWriter");
+            if (count < 0 || position > int.MaxValue - count) throw new IOException("Packet too large");
+            if (position + count > buffer.Length) Array.Resize(ref buffer, Math.Max(position + count, buffer.Length * 2));
+        }
+        public NetWriter U8(int v) { Need(1); buffer[position++] = (byte)v; return this; }
+        public NetWriter U16(int v) { Need(2); buffer[position++] = (byte)v; buffer[position++] = (byte)(v >> 8); return this; }
+        public NetWriter I32(int v) { Need(4); for (int i = 0; i < 4; i++) buffer[position++] = (byte)(v >> (i * 8)); return this; }
+        public NetWriter F32(float v) { return I32(new SingleBits { Value = v }.Bits); }
+        public NetWriter F64(double v) { long bits = new DoubleBits { Value = v }.Bits; Need(8); for (int i = 0; i < 8; i++) buffer[position++] = (byte)(bits >> (i * 8)); return this; }
+        public NetWriter Bool(bool v) { return U8(v ? 1 : 0); }
+        public NetWriter Vec(Vector3 v) { return F32(v.x).F32(v.y).F32(v.z); }
+        public NetWriter Quat(Quaternion q) { return F32(q.x).F32(q.y).F32(q.z).F32(q.w); }
         public NetWriter Str(string s)
         {
-            byte[] b = Encoding.UTF8.GetBytes(s ?? "");
-            if (b.Length > 16384) throw new IOException("Network string too long");
-            w.Write((ushort)b.Length); w.Write(b); return this;
+            s = s ?? "";
+            int length = Encoding.UTF8.GetByteCount(s);
+            if (length > 16384) throw new IOException("Network string too long");
+            Need(length + 2); U16(length);
+            position += Encoding.UTF8.GetBytes(s, 0, s.Length, buffer, position);
+            return this;
         }
-        public NetWriter Bytes(byte[] b, int off, int n) { if (b == null || off < 0 || n < 0 || n > ushort.MaxValue || off > b.Length - n) throw new IOException("Invalid byte range"); w.Write((ushort)n); w.Write(b, off, n); return this; }
-        public NetWriter Raw(byte[] b) { w.Write(b); return this; }
-        public NetWriter Raw(byte[] b, int off, int n) { w.Write(b, off, n); return this; }
-        public byte[] ToArray() { w.Flush(); return ms.ToArray(); }
-        public int Length { get { return (int)ms.Length; } }
+        public NetWriter Bytes(byte[] b, int off, int n) { if (b == null || off < 0 || n < 0 || n > ushort.MaxValue || off > b.Length - n) throw new IOException("Invalid byte range"); U16(n); return Raw(b, off, n); }
+        public NetWriter Raw(byte[] b) { if (b == null) throw new ArgumentNullException("b"); return Raw(b, 0, b.Length); }
+        public NetWriter Raw(byte[] b, int off, int n) { if (b == null || off < 0 || n < 0 || off > b.Length - n) throw new IOException("Invalid byte range"); Need(n); Buffer.BlockCopy(b, off, buffer, position, n); position += n; return this; }
+        public byte[] ToArray() { Need(0); byte[] owned = new byte[position]; Buffer.BlockCopy(buffer, 0, owned, 0, position); return owned; }
+        public int Length { get { return position; } }
+        public void Dispose()
+        {
+            if (buffer == null) return;
+            if (pooled && buffer.Length <= 65536)
+            {
+                if (buffers == null) buffers = new System.Collections.Generic.Stack<byte[]>();
+                if (buffers.Count < 32) buffers.Push(buffer);
+            }
+            buffer = null;
+        }
     }
 
     public class NetReader

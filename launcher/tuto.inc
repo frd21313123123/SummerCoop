@@ -38,8 +38,6 @@ static const TutoStep kTuto[] = {
     { L"Réglages", L"Mise à jour, thème, langue, port, dossier du jeu, envoi de l'hôte chez un ami… et ce guide.",
       L"Settings", L"Updates, theme, language, port, game folder, a host's files at a friend's… and this guide.", "0.42.0" },
     { L"Thème et langue", L"Sombre ou clair, français ou anglais, d'un clic.", L"Theme and language", L"Dark or light, French or English, in one click.", "0.42.0" },
-    { L"Discord", L"La communauté MWCoop : de l'aide, les bugs à signaler, les nouveautés et des joueurs pour faire équipe. GitHub et Ko-fi juste à côté.",
-      L"Discord", L"The MWCoop community: help, bug reports, news and players to team up with. GitHub and Ko-fi right next to it.", "0.51.0" },
     { L"MSCLoader de MWCoop", L"Dans l'onglet Mods : OFFICIEL (celui installé dans le jeu) ou MWCOOP (installé à part, le jeu n'est pas modifié). Si tes mods ne se chargent pas, essaie MWCOOP, ou RÉINSTALLER.",
       L"MWCoop's MSCLoader", L"In the Mods tab: OFFICIAL (the one installed in the game) or MWCOOP (installed apart, the game is not changed). If your mods don't load, try MWCOOP, or REINSTALL.", "0.60.0" },
     { L"Démarrer le jeu", L"Dans Réglages > Jeu : Copie (d'origine), Dossier du jeu ou Steam. Si MWCoop ne se charge pas, essaie l'un puis l'autre ; le lanceur passe aussi tout seul au dossier du jeu.",
@@ -88,8 +86,8 @@ static const TutoStep kTuto[] = {
       L"Saves", L"Several games, one per group of friends: create them, name them, pick the one to host (here or in the lobby). Your guests receive your save, theirs is not touched.", "0.95.0" },
     { L"Stable ou Nightly", L"Dans Réglages, Mise à jour : Stable, la version recommandée ; Nightly, la prochaine version en cours de développement, à essayer entre amis. Instable, et la même pour tout le monde.",
       L"Stable or Nightly", L"In Settings, Updates: Stable, the recommended version; Nightly, the next version still in development, to try with friends. Unstable, and the same for everyone.", "0.95.2" },
-    { L"C'est parti !", L"Bon jeu à plusieurs en Finlande. Et si quelque chose ne va pas : les journaux, et le Discord.",
-      L"Let's go!", L"Have fun together in Finland. And if something goes wrong: the logs, and the Discord.", "0.42.0" },
+    { L"C'est parti !", L"Bon jeu à plusieurs en Finlande. Et si quelque chose ne va pas : les journaux.",
+      L"Let's go!", L"Have fun together in Finland. And if something goes wrong: the logs.", "0.42.0" },
 };
 static const int kTutoN = (int)(sizeof(kTuto) / sizeof(kTuto[0]));
 
@@ -112,35 +110,34 @@ static RectF TutoTarget(int i)
     case 12: return g_navR[TAB_API];
     case 13: return g_navR[TAB_COOP];
     case 14: return join(g_btn[B_LANG].r, g_btn[B_THEME].r);
-    case 15: return g_btn[B_DISCORD].r;
-    case 16: { RectF a = kMscSrcOff, b = kMscReinst; return RectF(a.X - 110, a.Y, b.X + b.Width - a.X + 110, a.Height); }
-    case 17: return kSetSteamRow;
-    case 18: return kSetUninst;
-    case 19: return g_navR[TAB_CREDITS];
-    case 20: return kLogsDebugRow;
-    case 21: return kSetCompatRow;
-    case 22: return g_navR[TAB_WIKI];
-    case 23: return g_navR[TAB_GFX];
-    case 24: return g_faceRect;
-    case 25: return g_trimRect;
+    case 15: { RectF a = kMscSrcOff, b = kMscReinst; return RectF(a.X - 110, a.Y, b.X + b.Width - a.X + 110, a.Height); }
+    case 16: return kSetSteamRow;
+    case 17: return kSetUninst;
+    case 18: return g_navR[TAB_CREDITS];
+    case 19: return kLogsDebugRow;
+    case 20: return kSetCompatRow;
+    case 21: return g_navR[TAB_WIKI];
+    case 22: return g_navR[TAB_GFX];
+    case 23: return g_faceRect;
+    case 24: return g_trimRect;
+    case 25: return g_navR[TAB_GFX];
     case 26: return g_navR[TAB_GFX];
     case 27: return g_navR[TAB_GFX];
     case 28: return g_navR[TAB_GFX];
-    case 29: return g_navR[TAB_GFX];
+    case 29: return kGfxArea;
     case 30: return kGfxArea;
-    case 31: return kGfxArea;
-    case 32: return kGfxTop;
-    case 33: return g_vinBtnRect;
-    case 34: return g_paintBtnRect;
-    case 35: return MscActiveRect(MscRowRect(0));
-    case 36: return kMscCompat;
-    case 37: return g_dentBtnRect;
-    case 38: return g_navR[TAB_SAVES];
-    case 39: return g_canalRect;
+    case 31: return kGfxTop;
+    case 32: return g_vinBtnRect;
+    case 33: return g_paintBtnRect;
+    case 34: return MscActiveRect(MscRowRect(0));
+    case 35: return kMscCompat;
+    case 36: return g_dentBtnRect;
+    case 37: return g_navR[TAB_SAVES];
+    case 38: return g_canalRect;
     }
     return RectF(0, 0, 0, 0);
 }
-static int TutoTab(int i) { return i == 30 || i == 31 || i == 32 ? TAB_GFX : i == 16 || i == 35 || i == 36 ? TAB_MODS : i == 17 || i == 18 || i == 21 || i == 39 ? TAB_COOP : i == 24 ? TAB_SKIN : i == 25 || i == 33 || i == 34 || i == 37 ? TAB_CAR : i == 20 ? TAB_LOGS : TAB_HOME; }   // (16 : choix de MSCLoader, onglet MODS ; 17, 18 : Reglages)
+static int TutoTab(int i) { return i == 29 || i == 30 || i == 31 ? TAB_GFX : i == 15 || i == 34 || i == 35 ? TAB_MODS : i == 16 || i == 17 || i == 20 || i == 38 ? TAB_COOP : i == 23 ? TAB_SKIN : i == 24 || i == 32 || i == 33 || i == 36 ? TAB_CAR : i == 19 ? TAB_LOGS : TAB_HOME; }   // (15 : choix de MSCLoader, onglet MODS ; 16, 17 : Reglages)
 
 // Visite complete (premier lancement, COOP > Revoir le guide), ou seulement les bulles des elements apparus depuis la
 // derniere visite ([Lanceur] TutoVersion), apres une mise a jour : pour un nouveau bouton, ajouter une etape avec la
@@ -165,7 +162,6 @@ static void TutoGo(int i)
         g_tab = g_tutoTabWas >= 0 ? g_tutoTabWas : TAB_HOME;
         WritePrivateProfileStringW(L"Lanceur", L"TutoVu", L"1", g_iniLauncher.c_str());
         WritePrivateProfileStringW(L"Lanceur", L"TutoVersion", Widen(MyVersion()).c_str(), g_iniLauncher.c_str());
-        DiscordAskMaybe();   // (premier lancement : l'invitation au Discord vient apres la visite)
         return;
     }
     g_tuto = i;

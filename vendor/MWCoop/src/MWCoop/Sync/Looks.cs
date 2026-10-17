@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
@@ -293,7 +294,7 @@ namespace MWCoop
         //   u32 accessoires : chaine cle, u8 genre (0 chapeau, 1 lunettes, 2 cheveux), u32 matieres + chaines,
         //               matrice (repere de la tete), u32 sommets + sommets, u32 sous-maillages + indices chacun.
         // Textures : cache\perso\<matiere>.png (256 px au plus) ; couleurs des matieres sans texture : couleurs.txt.
-        public static string PreviewPath { get { return Path.Combine(Path.Combine(System.Environment.GetEnvironmentVariable("MWCOOP_DIR") ?? "MWCoop", "cache"), "perso.mesh"); } }
+        public static string PreviewPath { get { return Path.Combine(Path.GetDirectoryName(CarColor.MeshPath), "perso.mesh"); } }
         static string TexDir { get { return Path.Combine(Path.GetDirectoryName(PreviewPath), "perso"); } }
 
         // Version du mod + nombre de tenues offertes ("0.61.0-prealpha+tenues157") : export refait quand un pack arrive.
@@ -354,17 +355,21 @@ namespace MWCoop
             {
                 BoneWeight b = bw.Length > i ? bw[i] : new BoneWeight { weight0 = 1f };
                 Vector3 p = Vector3.zero, q = Vector3.zero;
-                int[] bi = { b.boneIndex0, b.boneIndex1, b.boneIndex2, b.boneIndex3 };
-                float[] wt = { b.weight0, b.weight1, b.weight2, b.weight3 };
-                for (int k = 0; k < 4; k++)
-                {
-                    if (wt[k] <= 0f || bi[k] >= mats.Length) continue;
-                    p += mats[bi[k]].MultiplyPoint3x4(v[i]) * wt[k];
-                    if (n != null && i < n.Length) q += mats[bi[k]].MultiplyVector(n[i]) * wt[k];
-                }
+                Vector3 normal = n != null && i < n.Length ? n[i] : Vector3.zero;
+                Influence(mats, b.boneIndex0, b.weight0, v[i], normal, ref p, ref q);
+                Influence(mats, b.boneIndex1, b.weight1, v[i], normal, ref p, ref q);
+                Influence(mats, b.boneIndex2, b.weight2, v[i], normal, ref p, ref q);
+                Influence(mats, b.boneIndex3, b.weight3, v[i], normal, ref p, ref q);
                 pos[i] = p;
                 nrm[i] = q.sqrMagnitude > 0f ? q.normalized : Vector3.up;
             }
+        }
+
+        static void Influence(Matrix4x4[] mats, int bone, float weight, Vector3 vertex, Vector3 normal, ref Vector3 p, ref Vector3 q)
+        {
+            if (weight <= 0f || bone < 0 || bone >= mats.Length) return;
+            p += mats[bone].MultiplyPoint3x4(vertex) * weight;
+            q += mats[bone].MultiplyVector(normal) * weight;
         }
 
         static void SaveTexture(Material m, HashSet<string> done, List<string> colors)
@@ -378,21 +383,37 @@ namespace MWCoop
             int w = Mathf.Min(256, t.width), h = Mathf.Max(1, t.height * w / Mathf.Max(1, t.width));
             var rt = RenderTexture.GetTemporary(w, h, 0, RenderTextureFormat.ARGB32);
             RenderTexture prev = RenderTexture.active;
-            Graphics.Blit(t, rt);
-            RenderTexture.active = rt;
-            var tex = new Texture2D(w, h, TextureFormat.ARGB32, false);
-            tex.ReadPixels(new Rect(0, 0, w, h), 0, 0);
-            tex.Apply();
-            RenderTexture.active = prev;
-            RenderTexture.ReleaseTemporary(rt);
-            string f = Path.Combine(TexDir, name + ".png");
-            File.WriteAllBytes(f + ".tmp", tex.EncodeToPNG());
-            if (File.Exists(f)) File.Delete(f);
-            File.Move(f + ".tmp", f);
-            Object.Destroy(tex);
+            Texture2D tex = null;
+            try
+            {
+                Graphics.Blit(t, rt);
+                RenderTexture.active = rt;
+                tex = new Texture2D(w, h, TextureFormat.ARGB32, false);
+                tex.ReadPixels(new Rect(0, 0, w, h), 0, 0);
+                tex.Apply();
+                string f = Path.Combine(TexDir, name + ".png");
+                File.WriteAllBytes(f + ".tmp", tex.EncodeToPNG());
+                if (File.Exists(f)) File.Delete(f);
+                File.Move(f + ".tmp", f);
+            }
+            finally
+            {
+                RenderTexture.active = prev;
+                RenderTexture.ReleaseTemporary(rt);
+                if (tex != null) Object.Destroy(tex);
+            }
         }
 
         public static string Export(int layer)
+        {
+            IEnumerator steps = ExportSteps(layer);
+            try { while (steps.MoveNext()) { } }
+            finally { ((System.IDisposable)steps).Dispose(); }
+            return ExportSummary;
+        }
+
+        public static string ExportSummary { get; private set; }
+        public static IEnumerator ExportSteps(int layer)
         {
             Scan();
             Directory.CreateDirectory(TexDir);
@@ -400,7 +421,7 @@ namespace MWCoop
             var colors = new List<string>();
             string tmp = PreviewPath + ".tmp";
             int nb = 0, na = 0;
-            using (var w = new BinaryWriter(File.Create(tmp)))
+            using (var w = new MscPreviewWriter(File.Create(tmp)))
             {
                 w.Write(new[] { (byte)'M', (byte)'W', (byte)'C', (byte)'P' });
                 w.Write((uint)1);
@@ -408,7 +429,12 @@ namespace MWCoop
                 foreach (List<string> l in new[] { shirts, pants, faces })
                 {
                     w.Write((uint)l.Count);
-                    foreach (string s in l) { Str(w, s); if (!Tenues.Has(s)) SaveTexture(Avatar.FindMaterial(s), done, colors); }   // (offertes : le lanceur lit leur image)
+                    foreach (string s in l)
+                    {
+                        Str(w, s);
+                        if (!Tenues.Has(s)) SaveTexture(Avatar.FindMaterial(s), done, colors);
+                        yield return null;
+                    }
                 }
                 var keys = new List<string>();
                 foreach (string k in bodies.Keys) keys.Add(k);
@@ -417,48 +443,64 @@ namespace MWCoop
                 var skinned = new List<KeyValuePair<Vector3[], Vector3[]>>();
                 var meshes = new List<Mesh>();
                 var defs = new List<Material[]>();
-                foreach (string k in keys)
+                try
                 {
-                    Avatar a = Avatar.CreatePreview("MWCoop-Export-" + k, layer, k);
-                    if (a == null) continue;
-                    a.PoseStanding(0f);
-                    Vector3[] p, n;
-                    SkinnedMeshRenderer smr = a.BodyRenderer;
-                    Skin(smr, a.Root.transform, out p, out n);
-                    skinned.Add(new KeyValuePair<Vector3[], Vector3[]>(p, n));
-                    meshes.Add(smr.sharedMesh);
-                    defs.Add(smr.sharedMaterials);
-                    heads.Add(a.HeadBone != null ? a.Root.transform.worldToLocalMatrix * Matrix4x4.TRS(a.HeadDelta, Quaternion.identity, Vector3.one) * a.HeadBone.localToWorldMatrix : Matrix4x4.identity);
-                    models.Add(a);
+                    foreach (string k in keys)
+                    {
+                        Avatar a = Avatar.CreatePreview("MWCoop-Export-" + k, layer, k);
+                        if (a == null) continue;
+                        models.Add(a);
+                        a.PoseStanding(0f);
+                        Vector3[] p, n;
+                        SkinnedMeshRenderer smr = a.BodyRenderer;
+                        Skin(smr, a.Root.transform, out p, out n);
+                        skinned.Add(new KeyValuePair<Vector3[], Vector3[]>(p, n));
+                        meshes.Add(smr.sharedMesh);
+                        defs.Add(smr.sharedMaterials);
+                        heads.Add(a.HeadBone != null ? a.Root.transform.worldToLocalMatrix * Matrix4x4.TRS(a.HeadDelta, Quaternion.identity, Vector3.one) * a.HeadBone.localToWorldMatrix : Matrix4x4.identity);
+                        a.Root.SetActive(false);
+                        yield return null;
+                    }
+                    w.Write((uint)models.Count);
+                    for (int i = 0; i < models.Count; i++)
+                    {
+                        Str(w, models[i].Body);
+                        for (int k = 0; k < 3; k++)
+                        {
+                            Material dm = defs[i].Length > k ? defs[i][k] : null;
+                            Str(w, dm != null ? Clean(dm.name) : ""); SaveTexture(dm, done, colors);
+                            yield return null;
+                        }
+                        Mat(w, heads[i]);
+                        Verts(w, skinned[i].Key, skinned[i].Value, meshes[i].uv);
+                        Subs(w, meshes[i]);
+                        nb++;
+                        yield return null;
+                    }
                 }
-                w.Write((uint)models.Count);
-                for (int i = 0; i < models.Count; i++)
-                {
-                    Str(w, models[i].Body);
-                    for (int k = 0; k < 3; k++) { Material dm = defs[i].Length > k ? defs[i][k] : null; Str(w, dm != null ? Clean(dm.name) : ""); SaveTexture(dm, done, colors); }
-                    Mat(w, heads[i]);
-                    Verts(w, skinned[i].Key, skinned[i].Value, meshes[i].uv);
-                    Subs(w, meshes[i]);
-                    models[i].Destroy();
-                    nb++;
-                }
+                finally { foreach (Avatar model in models) model.Destroy(); }
                 w.Write((uint)accs.Count);
                 foreach (AccInfo ai in accs.Values)
                 {
                     Str(w, ai.Key);
                     w.Write((byte)ai.Kind);
                     w.Write((uint)ai.Mats.Length);
-                    foreach (Material m in ai.Mats) { Str(w, Clean(m.name)); SaveTexture(m, done, colors); }
+                    foreach (Material m in ai.Mats)
+                    {
+                        Str(w, m != null ? Clean(m.name) : ""); SaveTexture(m, done, colors);
+                        yield return null;
+                    }
                     Mat(w, Matrix4x4.TRS(ai.Pos, ai.Rot, ai.Scale));
                     Verts(w, ai.Mesh.vertices, ai.Mesh.normals, ai.Mesh.uv);
                     Subs(w, ai.Mesh);
                     na++;
+                    yield return null;
                 }
             }
             File.WriteAllLines(Path.Combine(TexDir, "couleurs.txt"), colors.ToArray());
             if (File.Exists(PreviewPath)) File.Delete(PreviewPath);
             File.Move(tmp, PreviewPath);
-            return nb + " corps, " + na + " accessoires, " + done.Count + " matieres, " + PreviewPath;
+            ExportSummary = nb + " corps, " + na + " accessoires, " + done.Count + " matieres, " + PreviewPath;
         }
     }
 }

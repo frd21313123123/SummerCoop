@@ -83,7 +83,7 @@ namespace MWCoop
                     avatars[pi.Id] = a;
                 }
                 if (!want) { RemoveAvatar(pi.Id); continue; }
-                if (a.Body != Looks.Parse(pi.Skin).Body) { RemoveAvatar(pi.Id); continue; }   // autre corps : refait a l'image suivante
+                if (a.Body != pi.BodyKey) { RemoveAvatar(pi.Id); continue; }   // autre corps : refait a l'image suivante
                 a.Apply(pi);
             }
         }
@@ -164,10 +164,13 @@ namespace MWCoop
         {
             PlayerState st = BuildLocal();
             Session.Me.State = st;
-            var w = new NetWriter(Msg.PlayerState).U8(Session.LocalId).U8(Session.Me.Level)
+            using (var w = NetWriter.Rent(Msg.PlayerState))
+            {
+            w.U8(Session.LocalId).U8(Session.Me.Level)
                 .Vec(st.Feet).Vec(st.Head).F32(st.Yaw).F32(st.Pitch).F32(st.Height).F32(st.Speed).U16(st.Flags).U8(st.Drink);
             st.Support.Write(w);
             Session.SendAll(w, false);
+            }
         }
 
         // Etat du joueur local (envoye 20 fois/s ; a chaque image pour son avatar a la troisieme personne).

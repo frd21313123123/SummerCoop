@@ -27,9 +27,9 @@ namespace MWCoop
             string start = Path.Combine(channel, "start.txt");
             if (clock == 0)
             {
-                File.WriteAllText(Path.Combine(channel, Role + "-ready.txt"), "ready");
-                if (Session.IsHost && File.Exists(Path.Combine(channel, "guest-ready.txt")) && !File.Exists(start)) File.WriteAllText(start, DateTime.UtcNow.AddSeconds(4).Ticks.ToString());
-                if (!File.Exists(start) || !long.TryParse(File.ReadAllText(start), out clock)) return;
+                MscProbeFiles.WriteAllText(Path.Combine(channel, Role + "-ready.txt"), "ready");
+                if (Session.IsHost && File.Exists(Path.Combine(channel, "guest-ready.txt")) && !File.Exists(start)) MscProbeFiles.WriteAllText(start, DateTime.UtcNow.AddSeconds(4).Ticks.ToString());
+                if (!File.Exists(start) || !long.TryParse(MscProbeFiles.ReadAllText(start), out clock)) return;
             }
             Elapsed = (float)TimeSpan.FromTicks(DateTime.UtcNow.Ticks - clock).TotalSeconds;
             if (Elapsed < 0) return;
@@ -78,13 +78,13 @@ namespace MWCoop
             }
             foreach (Rigidbody rb in UnityEngine.Object.FindObjectsOfType<Rigidbody>())
                 text.AppendLine("BODY " + Recon.Path(rb.transform) + " key=" + Props.WorldKeyOf(rb));
-            File.WriteAllText(Path.Combine(channel, Role + "-products.txt"), text.ToString());
+            MscProbeFiles.WriteAllText(Path.Combine(channel, Role + "-products.txt"), text.ToString());
         }
         public static void Record(string channel, string name, bool pass, string detail)
         {
             string line = "Regression=" + name + ";Pass=" + pass + ";" + detail;
             Results.Add(line); Log.Info(line);
-            File.WriteAllText(Path.Combine(channel, Role + "-" + name + ".txt"), line);
+            MscProbeFiles.WriteAllText(Path.Combine(channel, Role + "-" + name + ".txt"), line);
         }
         static void Inspect(string channel)
         {
@@ -118,7 +118,7 @@ namespace MWCoop
             }
             text.AppendLine("===== GLOBALS");
             foreach (FsmBool b in FsmVariables.GlobalVariables.BoolVariables) text.AppendLine(b.Name + "=" + b.Value);
-            File.WriteAllText(Path.Combine(channel, Role + "-native.txt"), text.ToString());
+            MscProbeFiles.WriteAllText(Path.Combine(channel, Role + "-native.txt"), text.ToString());
             var index = new StringBuilder();
             foreach (UnityEngine.Object item in Game.AllFsms())
             {
@@ -129,7 +129,7 @@ namespace MWCoop
                 foreach (FsmBool v in f.FsmVariables.BoolVariables) index.Append(" bool:").Append(v.Name);
                 index.AppendLine();
             }
-            File.WriteAllText(Path.Combine(channel, Role + "-index.txt"), index.ToString());
+            MscProbeFiles.WriteAllText(Path.Combine(channel, Role + "-index.txt"), index.ToString());
             Results.Add("RegressionInspection=Fsms=" + all.Count);
         }
     }

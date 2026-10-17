@@ -41,8 +41,8 @@ namespace MWCoop
             string clock = Path.Combine(channel, "start.txt");
             if (start == 0)
             {
-                if (Session.IsHost && File.Exists(Path.Combine(channel, "guest-ready.txt")) && !File.Exists(clock)) File.WriteAllText(clock, DateTime.UtcNow.AddSeconds(10).Ticks.ToString());
-                if (!File.Exists(clock) || !long.TryParse(File.ReadAllText(clock), out start)) return;
+                if (Session.IsHost && File.Exists(Path.Combine(channel, "guest-ready.txt")) && !File.Exists(clock)) MscProbeFiles.WriteAllText(clock, DateTime.UtcNow.AddSeconds(10).Ticks.ToString());
+                if (!File.Exists(clock) || !long.TryParse(MscProbeFiles.ReadAllText(clock), out start)) return;
             }
             float elapsed = (float)TimeSpan.FromTicks(DateTime.UtcNow.Ticks - start).TotalSeconds;
             if (elapsed < 0 || elapsed >= 112) return;
@@ -98,10 +98,10 @@ namespace MWCoop
                 SortedDictionary<string, string> snapshot = Snapshot();
                 List<string> rows = new List<string>();
                 foreach (KeyValuePair<string, string> value in snapshot) rows.Add(value.Key + "|" + value.Value);
-                File.WriteAllLines(Path.Combine(channel, Role + "-state-" + phase + ".txt"), rows.ToArray());
+                MscProbeFiles.WriteAllLines(Path.Combine(channel, Role + "-state-" + phase + ".txt"), rows.ToArray());
                 int mismatches = 0, wrong = 0, wrongJoints = 0;
-                if (actor) File.WriteAllLines(expected, rows.ToArray());
-                else foreach (string row in File.ReadAllLines(expected))
+                if (actor) MscProbeFiles.WriteAllLines(expected, rows.ToArray());
+                else foreach (string row in MscProbeFiles.ReadAllLines(expected))
                 {
                     int split = row.LastIndexOf('|'); string actual;
                     if (!snapshot.TryGetValue(row.Substring(0, split), out actual) || !Equivalent(actual, row.Substring(split + 1), row.Substring(0, split).EndsWith("/rotation", StringComparison.Ordinal)))
@@ -217,12 +217,12 @@ namespace MWCoop
                     mounts.Add(new Mount { Fsm = f, Data = db, State = state.Name, Id = id, Depth = depth });
                 }
             }
-            File.WriteAllText(Path.Combine(channel, Session.IsHost ? "host-inventory.txt" : "guest-inventory.txt"), text.ToString());
-            File.WriteAllText(Path.Combine(channel, Role + "-ready.txt"), "parts=" + mounts.Count);
+            MscProbeFiles.WriteAllText(Path.Combine(channel, Session.IsHost ? "host-inventory.txt" : "guest-inventory.txt"), text.ToString());
+            MscProbeFiles.WriteAllText(Path.Combine(channel, Role + "-ready.txt"), "parts=" + mounts.Count);
             List<string> manifest = new List<string>();
             foreach (Mount mount in mounts) manifest.Add(mount.Id + "|" + MscParts.Key(mount.Fsm) + "|" + mount.State);
             manifest.Sort(StringComparer.Ordinal);
-            File.WriteAllLines(Path.Combine(channel, Role + "-manifest.txt"), manifest.ToArray());
+            MscProbeFiles.WriteAllLines(Path.Combine(channel, Role + "-manifest.txt"), manifest.ToArray());
             foreach (Mount mount in mounts)
             {
                 FsmBool purchased = mount.Data == null ? null : mount.Data.FsmVariables.FindFsmBool("Purchased");

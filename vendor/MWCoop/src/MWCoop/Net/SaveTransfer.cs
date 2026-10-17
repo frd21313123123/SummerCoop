@@ -49,6 +49,7 @@ namespace MWCoop.Net
         // Hote : un invite vient d'arriver ; sa sauvegarde partira des que possible.
         public static void Queue(Peer p)
         {
+            if (!Session.AuthenticatedForSave(p) || HasOutgoing(p)) return;
             if (!waiting.Contains(p)) waiting.Add(p);
             if (!PlayerSync.InGame) Log.Info("sauvegarde : " + p + " attend que l'hote soit en jeu");
         }
@@ -68,7 +69,10 @@ namespace MWCoop.Net
             {
                 // L'hote (re)entre en jeu : chaque invite deja la recevra cette partie.
                 inGameSince = now;
-                foreach (Peer p in Session.T.Peers) if (p.Accepted && !waiting.Contains(p)) waiting.Add(p);
+                // A transport can accept a peer during GAME loading, one frame
+                // before its Hello arrives. Only the completed handshake may
+                // enqueue its save; otherwise Hello starts a second manifest.
+                foreach (Peer p in Session.T.Peers) if (Session.AuthenticatedForSave(p)) Queue(p);
             }
             // Nouvelle partie : 13 s pour que les pieces se posent et que la couleur choisie soit appliquee.
             if (waiting.Count == 0 || newGame && now - inGameSince < 13f) return;
@@ -186,6 +190,7 @@ namespace MWCoop.Net
 
         public static void SendTo(Peer p)
         {
+            if (!Session.AuthenticatedForSave(p) || HasOutgoing(p)) return;
             List<string> list = SaveFiles();
             var data = new List<byte[]>();
             long total = 0;
@@ -200,6 +205,11 @@ namespace MWCoop.Net
         // Morceaux mis en file 3 ms par image (avant : les ~1500 morceaux d'un coup, ~80 ms chez l'hote a l'arrivee d'un ami).
         class Outgoing { public Peer P; public List<byte[]> Data; public int File, Off; public long Total; }
         static readonly List<Outgoing> outgoing = new List<Outgoing>();
+        static bool HasOutgoing(Peer peer)
+        {
+            foreach (Outgoing item in outgoing) if (item.P == peer) return true;
+            return false;
+        }
         static void Pump()
         {
             if (outgoing.Count == 0) return;

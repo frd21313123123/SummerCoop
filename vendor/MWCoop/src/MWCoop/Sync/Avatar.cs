@@ -302,7 +302,7 @@ namespace MWCoop
         {
             if (!BuildTemplate()) return null;
             var a = new Avatar { Player = pi };
-            a.Build("MWCoop-Joueur-" + pi.Id, Looks.Parse(pi.Skin).Body);
+            a.Build("MWCoop-Joueur-" + pi.Id, pi.BodyKey);
             Log.Info("avatar cree pour " + pi.Name + " (#" + pi.Id + ")");
             return a;
         }

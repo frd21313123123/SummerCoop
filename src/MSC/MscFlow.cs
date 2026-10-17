@@ -9,6 +9,7 @@ namespace MWCoop
         public static bool Requested;
         static bool loading;
         static float since;
+        internal static bool MayStartOffline(string mode, bool automatic, bool requested) { return mode == "solo" && (automatic || requested); }
         public static void Update()
         {
             if (Application.loadedLevelName == "GAME") { loading = false; since = 0; return; }
@@ -20,7 +21,9 @@ namespace MWCoop
             bool canStart = false;
             if (!Session.Active)
             {
-                canStart = MscRuntime.AutoStart || Requested;
+                // A failed guest handshake must remain at the connection/menu
+                // screen, rather than auto-loading an empty offline profile.
+                canStart = MayStartOffline(Config.Get("Coop", "Mode", ""), MscRuntime.AutoStart, Requested);
             }
             else if (Session.IsHost)
             {

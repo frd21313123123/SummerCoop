@@ -28,7 +28,7 @@ namespace MWCoop
             if (channel.Length == 0) return;
             string clock = Path.Combine(channel, "start.txt");
             long ticks;
-            if (!File.Exists(clock) || !long.TryParse(File.ReadAllText(clock), out ticks)) return;
+            if (!File.Exists(clock) || !long.TryParse(MscProbeFiles.ReadAllText(clock), out ticks)) return;
             float elapsed = (float)TimeSpan.FromTicks(DateTime.UtcNow.Ticks - ticks).TotalSeconds;
             if (elapsed < 89) return;
             if (!prepared)
@@ -51,7 +51,7 @@ namespace MWCoop
                     if (db != null && db.Value != null && !ends.ContainsKey(db.Value.name)) ends[db.Value.name] = f;
                 }
                 foreach (PlayMakerFSM f in ends.Values) connections.Add(f);
-                File.WriteAllText(Path.Combine(channel, Session.IsHost ? "host-wiring-ready.txt" : "guest-wiring-ready.txt"), "connections=" + connections.Count + ";databases=" + databases.Count);
+                MscProbeFiles.WriteAllText(Path.Combine(channel, Session.IsHost ? "host-wiring-ready.txt" : "guest-wiring-ready.txt"), "connections=" + connections.Count + ";databases=" + databases.Count);
             }
             if (elapsed < 100 && Session.IsHost && Time.realtimeSinceStartup >= nextElectrical)
             {
@@ -114,10 +114,10 @@ namespace MWCoop
                 SortedDictionary<string, bool> snapshot = Snapshot(); List<string> rows = new List<string>();
                 int installed = 0;
                 foreach (KeyValuePair<string, bool> pair in snapshot) { rows.Add(pair.Key + "|" + pair.Value); if (pair.Key.EndsWith("/Installed", StringComparison.Ordinal) && pair.Value) installed++; }
-                File.WriteAllLines(Path.Combine(channel, (Session.IsHost ? "host" : "guest") + "-wiring-state-" + stage + ".txt"), rows.ToArray());
+                MscProbeFiles.WriteAllLines(Path.Combine(channel, (Session.IsHost ? "host" : "guest") + "-wiring-state-" + stage + ".txt"), rows.ToArray());
                 int mismatches = 0;
-                if (actor) File.WriteAllLines(state, rows.ToArray());
-                else foreach (string row in File.ReadAllLines(state))
+                if (actor) MscProbeFiles.WriteAllLines(state, rows.ToArray());
+                else foreach (string row in MscProbeFiles.ReadAllLines(state))
                 {
                     int at = row.LastIndexOf('|'); string key = row.Substring(0, at); bool actual;
                     if (!snapshot.TryGetValue(key, out actual) || actual != bool.Parse(row.Substring(at + 1))) { mismatches++; Results.Add("WiringMismatch=" + stage + ";" + key); }

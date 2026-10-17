@@ -10,13 +10,26 @@ $testExe = Join-Path $testDir 'SummerCoop.LauncherTests.exe'
 if ($LASTEXITCODE) { throw 'Launcher tests build failed.' }
 & $testExe | Tee-Object -FilePath (Join-Path $testDir 'test-results.txt')
 if ($LASTEXITCODE) { throw 'Launcher tests failed.' }
-# Compile the real WinForms launcher too, with explicitly inert fixtures. Never publish this EXE.
+# Exercise the retained WinForms backend with inert fixtures. The native launcher
+# has its own test-native-* scripts and does not implement this legacy CLI.
 $package = Join-Path $testDir 'fixture-package'
 New-Item -ItemType Directory -Path (Join-Path $package 'Mods\References') -Force | Out-Null
 foreach ($file in @('SummerCoop.dll','References\SummerCoop.Core.dll','References\SummerCoop.ProfileUpdate.exe')) {
     'CI fixture, not a mod binary' | Set-Content -LiteralPath (Join-Path (Join-Path $package 'Mods') $file) -Encoding ASCII
 }
-& (Join-Path $PSScriptRoot 'build-launcher.ps1') -PackagePath $package -OutputPath (Join-Path $testDir 'DO-NOT-PUBLISH-fixture-Launcher.exe')
+$fixtureFiles = @('SummerCoop.dll','References\SummerCoop.Core.dll','References\SummerCoop.ProfileUpdate.exe')
+$manifest = Join-Path $testDir 'fixture-sha256.txt'
+$manifestLines = foreach ($file in $fixtureFiles) { (Get-FileHash -LiteralPath (Join-Path $package ('Mods\' + $file)) -Algorithm SHA256).Hash + '  ' + $file }
+[IO.File]::WriteAllLines($manifest, [string[]]$manifestLines, [Text.Encoding]::UTF8)
+$resources = @(('/resource:' + $manifest + ',SummerCoop.Payload.SHA256'), ('/resource:' + (Join-Path $root 'launcher\assets\background.png') + ',SummerCoop.Launcher.Background'))
+if (Test-Path -LiteralPath (Join-Path $root 'launcher\assets\background-dark.png')) {
+    $resources += '/resource:' + (Join-Path $root 'launcher\assets\background-dark.png') + ',SummerCoop.Launcher.BackgroundDark'
+}
+for ($i = 0; $i -lt $fixtureFiles.Count; $i++) { $resources += '/resource:' + (Join-Path $package ('Mods\' + $fixtureFiles[$i])) + ',SummerCoop.Payload.' + $i }
+$sources = @(Get-ChildItem -LiteralPath (Join-Path $root 'launcher') -Filter '*.cs' -File | Sort-Object Name | ForEach-Object FullName)
+$fixtureExe = Join-Path $testDir 'DO-NOT-PUBLISH-fixture-Launcher.exe'
+& $compiler /nologo /langversion:5 /target:winexe ('/out:' + $fixtureExe) ('/win32manifest:' + (Join-Path $root 'launcher\app.manifest')) /reference:System.dll /reference:System.Drawing.dll /reference:System.Windows.Forms.dll $resources (Join-Path $root 'tools\Installer\InstallerCore.cs') $sources
+if ($LASTEXITCODE) { throw 'Legacy launcher fixture build failed.' }
 # The launcher is the only setup tool: its command line installs the embedded
 # mod into a fixture game the same way the automatic update and the interface do.
 $fixtureGame = Join-Path $testDir 'cli-game'
@@ -34,7 +47,8 @@ New-Item -ItemType Directory -Path $fixtureProfile -Force | Out-Null
 # The launcher is a GUI executable that must be waited for; Start-Process does
 # not quote argument arrays, so one quoted command line is passed explicitly.
 $cliArguments = '--install --game="' + $fixtureGame + '" --profile="' + $fixtureProfile + '" --log="' + $cliLog + '"'
-$cliInstall = Start-Process -FilePath (Join-Path $testDir 'DO-NOT-PUBLISH-fixture-Launcher.exe') -ArgumentList $cliArguments -WindowStyle Hidden -PassThru -Wait
+$cliInstall = Start-Process -FilePath $fixtureExe -ArgumentList $cliArguments -WindowStyle Hidden -PassThru
+if (!$cliInstall.WaitForExit(30000)) { $cliInstall.Kill(); throw 'Legacy launcher fixture installation timed out.' }
 if ($cliInstall.ExitCode) { throw 'Launcher command line installation failed.' }
 foreach ($file in @('SummerCoop.dll','References\SummerCoop.Core.dll')) {
     if (!(Test-Path -LiteralPath (Join-Path (Join-Path $fixtureGame 'Mods') $file))) { throw ('Launcher command line did not install ' + $file) }
@@ -42,6 +56,9 @@ foreach ($file in @('SummerCoop.dll','References\SummerCoop.Core.dll')) {
 if (!(Test-Path -LiteralPath $cliLog) -or (Get-Item -LiteralPath $cliLog).Length -eq 0) { throw 'Launcher command line did not write the installation log.' }
 $uiTestExe = Join-Path $testDir 'SummerCoop.LauncherUiTests.exe'
 $artResources = @('/resource:' + (Join-Path $root 'launcher\assets\background.png') + ',SummerCoop.Launcher.Background')
+if (Test-Path -LiteralPath (Join-Path $root 'launcher\assets\background-dark.png')) {
+    $artResources += '/resource:' + (Join-Path $root 'launcher\assets\background-dark.png') + ',SummerCoop.Launcher.BackgroundDark'
+}
 $uiSources = @(Get-ChildItem -LiteralPath (Join-Path $root 'launcher') -Filter '*.cs' -File | Where-Object Name -ne 'Program.cs' | Sort-Object Name | ForEach-Object FullName)
 & $compiler /nologo /langversion:5 /target:exe ('/out:' + $uiTestExe) ('/win32manifest:' + (Join-Path $root 'launcher\app.manifest')) /reference:System.dll /reference:System.Drawing.dll /reference:System.Windows.Forms.dll $artResources (Join-Path $root 'tools\Installer\InstallerCore.cs') $uiSources (Join-Path $root 'tests\Launcher\LauncherUiTests.cs')
 if ($LASTEXITCODE) { throw 'Launcher GUI tests build failed.' }

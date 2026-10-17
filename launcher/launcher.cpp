@@ -6,11 +6,9 @@
 //  - Cherche My Summer Car : le dossier du lanceur, sinon celui retenu dans summercoop-launcher.ini, sinon les
 //    bibliotheques Steam (registre + steamapps\libraryfolders.vdf), sinon l'exe choisi par le joueur. Jeu reconnu :
 //    mysummercar.exe + mysummercar_Data\Managed\Assembly-CSharp.dll. Version du jeu : 1re ligne de changelog.txt.
-//  - A chaque lancement : derniere version publiee sur GitHub (frd21313123123/SummerCoop, pre-versions comprises). Plus
-//    recente que MWCoop\version.txt (ou mod absent) : telechargement du zip, extraction (Unzip, ici meme), copie
-//    dans le dossier du jeu. MWCoop\mwcoop.ini garde les valeurs du joueur (seules les cles nouvelles sont ajoutees) ;
-//    version.txt est copie en dernier. Le lanceur se remplace lui-meme (renomme en .old) puis se relance. Depot sans
-//    release (ou pas encore public) : rien a installer, pas d'erreur.
+//  - Version checks use the compiled launcher version and SummerCoop GitHub releases.
+//    Check at startup and every 30 minutes, even without a game folder. A newer
+//    release offers a download page. Checks never install files or block play.
 //  - Heberger ouvre un SALON (TCP sur le port de la partie ; le jeu, lui, est en UDP) : liste des joueurs, choix de
 //    la partie (continuer / nouvelle), puis LANCER : chaque lanceur demarre son jeu. Rejoindre entre dans le salon
 //    de l'adresse saisie (sinon, si l'hote joue deja, propose de rejoindre directement en jeu). Jouer en solo :
@@ -39,7 +37,7 @@
 //            127.0.0.1 seulement. /sansudp : l'hote ne repond pas aux sondes UDP (port UDP "pas redirige").
 //            /steam <fichier> : le salon par Steam (Steam ouvert ; un seul compte suffit) ; l'hote ecrit le numero du
 //            salon dans <fichier>, l'invite le lit et y entre ;
-//   /maj <dossier du jeu> <journal> [/depot proprietaire/depot] : mise a jour sans fenetre, journal = etat final ;
+//   /maj <dossier du jeu> <journal> [/depot proprietaire/depot] : read-only version check, no window ;
 //   /jeu <journal> : jeu trouve (dossier, version) ;
 //   /zip <fichier.zip> : le zip des journaux (bouton de la page JOURNAUX), ecrit la ou on le demande, sans explorateur ;
 //   /dezip <fichier.zip> <dossier> <journal> : extraction d'un paquet comme pendant une mise a jour ;
@@ -83,6 +81,7 @@ using std::max;
 #include <stdarg.h>
 #include <string.h>
 #include <time.h>
+#include "mwversion.h"
 
 using namespace Gdiplus;
 
@@ -109,7 +108,9 @@ static float g_sceneT = 12;   // horloge de la scene animee (g_time est remis a 
 static int g_benchSkip;       // /capture ... /sauter n : essais de vitesse (1 sans la neige, 2 sans l'interface)
 static int g_bench;           // /capture ... /images n : temps de n images (journal a cote de la capture)
 static Bitmap *g_bg, *g_bgDark;
-static Bitmap *g_bgSummer = NULL;
+static Bitmap *g_bgSummerLight = NULL;
+static Bitmap *g_bgSummerDark = NULL;
+static bool g_bgSummerHasDark = false;
 static Bitmap *g_bgCache, *g_bgCacheSrc;   // fond deja a l'echelle de la fenetre (le redimensionner coutait ~30 ms par image)
 static int g_winW, g_winH;
 static HDC g_memDC;
@@ -439,7 +440,8 @@ static void LoadLocalVersion()
     if (g_modOk) {
         if (ReadAll(g_gameDir + L"MWCoop\\version.txt", d) || ReadAll(g_gameDir + L"Mods\\version.txt", d))
             g_localVer = Trim(Widen(std::string(d.begin(), d.end())));
-        if (g_localVer.empty()) g_localVer = L"0.4.1";
+        // ModEnsure deploys the DLLs embedded in this launcher.
+        if (scOk) g_localVer = Widen(MWV_STR);
     }
 }
 
@@ -494,6 +496,8 @@ static void SetGame(const std::wstring &dir)
 // "0.96.0-nightly.10" apres "0.96.0-nightly.9" : nombres du suffixe compares comme des nombres).
 static int CmpVer(std::wstring a, std::wstring b)
 {
+    if (a.find(L'+') != std::wstring::npos) a.erase(a.find(L'+'));
+    if (b.find(L'+') != std::wstring::npos) b.erase(b.find(L'+'));
     if (!a.empty() && (a[0] == L'v' || a[0] == L'V')) a.erase(0, 1);
     if (!b.empty() && (b[0] == L'v' || b[0] == L'V')) b.erase(0, 1);
     size_t i = 0, j = 0;
@@ -946,7 +950,7 @@ static bool IsWritableDir(const std::wstring &dir)
 // Texte de chaque release GitHub : en francais, puis une ligne "---", puis en anglais. Gardees dans
 // <jeu>\MWCoop\notes-maj.json pour les lire hors ligne.
 // (depuis 0.92.3, demande de JD : encore une ligne "---" et en russe ; sans : l'anglais en russe)
-struct Note { std::wstring ver, date, fr, en, ru, ar, zip; bool pre = false; };   // pre : pre-release de GitHub (Nightly)
+struct Note { std::wstring ver, date, fr, en, ru, ar, zip, page; bool pre = false; };
 static const std::wstring &NoteBody(const Note &n) { return g_fr ? n.fr : g_ru && !n.ru.empty() ? n.ru : g_ar && !n.ar.empty() ? n.ar : n.en; }
 static std::vector<Note> g_notes;
 static volatile bool g_notesDone;
@@ -1002,17 +1006,47 @@ static std::wstring CleanNote(const std::wstring &s)
 }
 
 // Liste des releases (les plus recentes d'abord), brouillons exclus.
-static std::vector<Note> ParseReleases(const std::string &json)
+// Walk complete objects, ignoring braces and escaped quotes inside strings.
+// GitHub puts draft before tag_name; splitting at tag_name leaks flags between releases.
+static std::vector<std::string> JsonObjects(const std::string &json)
+{
+    std::vector<std::string> out;
+    size_t start = 0;
+    int depth = 0;
+    bool quoted = false, escape = false;
+    for (size_t i = 0; i < json.size(); ++i) {
+        char c = json[i];
+        if (quoted) {
+            if (escape) escape = false;
+            else if (c == '\\') escape = true;
+            else if (c == '"') quoted = false;
+        } else if (c == '"') quoted = true;
+        else if (c == '{') { if (depth++ == 0) start = i; }
+        else if (c == '}' && depth > 0 && --depth == 0) out.push_back(json.substr(start, i - start + 1));
+    }
+    return out;
+}
+static bool JsonFlag(const std::string &json, const char *key)
+{
+    size_t p = json.find(std::string("\"") + key + "\"");
+    if (p == std::string::npos) return false;
+    p = json.find(':', p);
+    if (p == std::string::npos) return false;
+    p = json.find_first_not_of(" \t\r\n", p + 1);
+    return p != std::string::npos && json.compare(p, 4, "true") == 0;
+}
+static std::vector<Note> ParseReleases(const std::string &source)
 {
     std::vector<Note> list;
-    for (size_t at = 0;;) {
-        size_t p = json.find("\"tag_name\"", at);
-        if (p == std::string::npos) break;
-        size_t next = json.find("\"tag_name\"", p + 10), end = next == std::string::npos ? json.size() : next;
-        // l'objet de la release commence avant "tag_name" (url, id...) : on cherche les assets dans [p, fin)
+    for (const std::string &json : JsonObjects(source)) {
+        size_t p = 0, end = json.size();
         Note n;
         n.ver = Widen(JsonField(json, "tag_name", p, end));
         if (!n.ver.empty() && (n.ver[0] == L'v' || n.ver[0] == L'V')) n.ver.erase(0, 1);
+        // Only version tags can become download links; ignore unrelated tags.
+        if (n.ver.empty() || n.ver[0] < L'0' || n.ver[0] > L'9' ||
+            n.ver.find_first_not_of(L"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-+") != std::wstring::npos) continue;
+        n.page = L"https://github.com/" + g_repo + L"/releases/tag/" + Widen(JsonField(json, "tag_name", p, end));
         std::string d = JsonField(json, "published_at", p, end);
         if (d.size() >= 10) n.date = Widen(d.substr(8, 2) + "/" + d.substr(5, 2) + "/" + d.substr(0, 4));
         std::wstring body = Widen(JsonField(json, "body", p, end));
@@ -1043,14 +1077,14 @@ static std::vector<Note> ParseReleases(const std::string &json)
             if (u == std::string::npos || u >= end) break;
             std::string url = JsonField(json, "browser_download_url", u, end);
             k = u + 20;
-            // (Nightly : paquet en .nightly, un zip sous un autre nom, que les lanceurs d'avant 0.95.2 ne prennent pas)
-            if (url.size() > 4 && !_stricmp(url.c_str() + url.size() - 4, ".zip")) { n.zip = Widen(url); break; }
-            if (url.size() > 8 && !_stricmp(url.c_str() + url.size() - 8, ".nightly")) { n.zip = Widen(url); n.pre = true; break; }
+            // Accept the assets produced by tools/package.ps1, excluding source ZIPs.
+            std::string name = url.substr(url.find_last_of('/') + 1);
+            std::string ver = Narrow(n.ver, CP_UTF8);
+            if (name == "SummerCoop-Launcher.exe" || name == "SummerCoop-Launcher-" + ver + ".exe" || name == "SummerCoop-" + ver + ".zip") { n.zip = Widen(url); break; }
         }
-        bool draft = json.find("\"draft\": true", p) < end || json.find("\"draft\":true", p) < end;
-        if (json.find("\"prerelease\": true", p) < end || json.find("\"prerelease\":true", p) < end || n.ver.find(L"nightly") != std::wstring::npos) n.pre = true;
+        bool draft = JsonFlag(json, "draft");
+        if (JsonFlag(json, "prerelease") || n.ver.find(L'-') != std::wstring::npos) n.pre = true;
         if (!n.ver.empty() && !draft) list.push_back(n);
-        at = end;
     }
     return list;
 }
@@ -1062,14 +1096,15 @@ static std::vector<Note> ParseReleases(const std::string &json)
 static DWORD g_relCode, g_relErr;
 static int FetchReleases(std::string &json)
 {
-    std::wstring cache = g_gameDir.empty() ? L"" : g_gameDir + L"MWCoop\\notes-maj.json";
+    // The game folder may change while the background check runs. Keep its
+    // optional notes cache beside the immutable launcher settings path instead.
+    std::wstring cache = g_iniLauncher.empty() ? L"" : g_iniLauncher + L".releases.json";
     DWORD code = 0;
     bool got = HttpGet(L"https://api.github.com/repos/" + g_repo + L"/releases?per_page=40", &json, L"", false, &code);
     g_relCode = code; g_relErr = got ? 0 : g_httpErr;
     LaunchLog("versions sur GitHub : %s (code HTTP %lu, erreur WinHTTP %lu)", got ? "recues" : "pas de reponse", code, g_relErr);
     if (got && json.find("\"tag_name\"") != std::string::npos) {
         if (!cache.empty()) {
-            EnsureModDir();
             HANDLE f = CreateFileW(cache.c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, NULL);
             if (f != INVALID_HANDLE_VALUE) { DWORD w; WriteFile(f, json.data(), (DWORD)json.size(), &w, NULL); CloseHandle(f); }
         }
@@ -1088,21 +1123,22 @@ static int FetchReleases(std::string &json)
     return REL_OFFLINE;
 }
 
-// ---------------------------------------------------------------- mise a jour
-// Demande de JD (07/10) : plus de mise a jour toute seule. Au demarrage (et toutes les 30 min, sans bruit), on regarde
-// seulement : une version plus recente -> bouton "NOUVELLE VERSION x \u00B7 METTRE A JOUR" a la place de la ligne d'etat
-// (B_UPDATE), l'installation au clic. Sauf mod absent (premiere installation) ou [Lanceur] MajAuto=1 : installee d'office.
-enum { UPD_CHECK, UPD_INSTALL, UPD_QUIET };   // parametre du fil : regarder, installer, regarder sans rien afficher
-static std::wstring g_updVer;                 // version plus recente proposee (vide : rien), sous g_cs
-static volatile bool g_updChecking;
+// ---------------------------------------------------------------- version checks
+// Checks never install files or block play. The download button opens the exact
+// SummerCoop release; the downloaded launcher already contains the mod DLLs.
+enum { UPD_CHECK, UPD_QUIET };
+enum { CHECK_PENDING, CHECK_RUNNING, CHECK_CURRENT, CHECK_AVAILABLE, CHECK_EMPTY, CHECK_FAILED };
+static std::atomic<int> g_updState(CHECK_PENDING);
+static std::wstring g_updVer, g_updPage; // protected by g_cs
+static std::atomic<bool> g_updChecking(false);
 static DWORD g_updCheckT;
+static std::wstring LauncherVersion() { return Widen(MWV_STR); }
 static std::wstring UpdAvail() { EnterCriticalSection(&g_cs); std::wstring v = g_updVer; LeaveCriticalSection(&g_cs); return v; }
-static void UpdSet(const std::wstring &v) { EnterCriticalSection(&g_cs); g_updVer = v; LeaveCriticalSection(&g_cs); }
-
-// Canal (demande de JD, 14/10, temporaire : « un switch Stable / Nightly dans le lanceur, les deux versions sur GitHub ;
-// quand la Nightly est stable, on la passe en stable et on enleve le bouton ») : [Lanceur] Canal=stable|nightly. Nightly =
-// pre-release de GitHub (tag v0.96.0-nightly.N, paquet .nightly : dist\make-release.ps1 -Nightly). Stable : la plus
-// recente hors pre-releases ; Nightly : la plus recente de toutes (une Stable plus recente passe devant).
+static void UpdSet(const std::wstring &v, const std::wstring &page = L"")
+{
+    EnterCriticalSection(&g_cs); g_updVer = v; g_updPage = page; LeaveCriticalSection(&g_cs);
+}
+static bool AutoCheckUpdates() { return GetPrivateProfileIntW(L"Lanceur", L"CheckUpdates", 1, g_iniLauncher.c_str()) != 0; }
 static bool ChannelNightly()
 {
     wchar_t b[16] = L"";
@@ -1116,10 +1152,15 @@ static const Note *PickRelease(const std::vector<Note> &rel, bool nightly)
     for (const Note &n : rel) if (!n.zip.empty() && (nightly || !n.pre) && (!best || CmpVer(n.ver, best->ver) > 0)) best = &n;
     return best;
 }
-// A installer : plus recente, ou retour en Stable depuis une Nightly (meme plus ancienne).
 static bool WantVer(const std::wstring &remote, const std::wstring &local, bool nightly)
 {
     return local.empty() || CmpVer(remote, local) > 0 || (!nightly && IsNightlyVer(local) && remote != local);
+}
+static int CheckResult(int response, const Note *release, const std::wstring &local, bool nightly)
+{
+    if (response == REL_OFFLINE) return CHECK_FAILED;
+    if (!release) return CHECK_EMPTY;
+    return WantVer(release->ver, local, nightly) ? CHECK_AVAILABLE : CHECK_CURRENT;
 }
 static std::vector<Note> ChannelNotes(const std::vector<Note> &rel, bool nightly)
 {
@@ -1128,181 +1169,69 @@ static std::vector<Note> ChannelNotes(const std::vector<Note> &rel, bool nightly
     for (const Note &n : rel) if (!n.pre) out.push_back(n);
     return out;
 }
-
 static DWORD WINAPI UpdateThread(void *param)
 {
-    int mode = (int)(INT_PTR)param;
-    bool quiet = mode == UPD_QUIET;
-    struct Done { bool q; ~Done() { if (q) g_updChecking = false; } } done = { quiet };
-    if (!quiet) {
-        SetStatus(K_NORMAL, T(L"Recherche de mises \u00E0 jour\u2026", L"Checking for updates\u2026"));
-        g_progress = -2;
-    }
+    bool quiet = (int)(INT_PTR)param == UPD_QUIET;
+    struct Done { ~Done() { g_updChecking = false; } } done;
     std::string json;
-    std::wstring local = g_localVer, label = ModLabel();
-    bool mod = g_modOk, nightly = ChannelNightly();
+    bool nightly = ChannelNightly();
     int rs = FetchReleases(json);
-    std::vector<Note> rel = json.empty() ? std::vector<Note>() : ParseReleases(json);
+    std::vector<Note> rel = ParseReleases(json);
     const Note *pick = PickRelease(rel, nightly);
+    int result = CheckResult(rs, pick, LauncherVersion(), nightly);
+    bool changed = result == CHECK_AVAILABLE && UpdAvail() != pick->ver;
     EnterCriticalSection(&g_cs);
     g_notes = ChannelNotes(rel, nightly);
     LeaveCriticalSection(&g_cs);
     g_relState = rs;
     g_notesDone = true;
-    if (quiet) {   // (verification periodique : seulement le bouton, s'il y a du nouveau)
-        std::wstring remote = pick ? pick->ver : L"";
-        if (rs != REL_OFFLINE && !remote.empty() && !local.empty() && WantVer(remote, local, nightly) && UpdAvail() != remote) {
-            UpdSet(remote);
-            SetStatus(K_WARN, T(L"%s \u00B7 nouvelle version %s disponible", L"%s \u00B7 new version %s available"), label.c_str(), remote.c_str());
-        }
-        return 0;
-    }
-    if (rs == REL_OFFLINE) {
-        g_progress = -1;
-        if (!mod) SetStatus(K_ERR, T(L"Hors ligne : MWCoop n'est pas install\u00E9 ici", L"Offline: MWCoop is not installed here"));
-        else if (g_relCode == 403 || g_relCode == 429) SetStatus(K_WARN, T(L"GitHub limite les demandes : r\u00E9essaie dans quelques minutes \u00B7 %s", L"GitHub rate limit: try again in a few minutes \u00B7 %s"), label.c_str());
-        else if (g_relCode) SetStatus(K_WARN, T(L"GitHub r\u00E9pond mal (code %lu) \u00B7 %s", L"GitHub error (code %lu) \u00B7 %s"), g_relCode, label.c_str());
-        else SetStatus(K_WARN, T(L"Hors ligne (GitHub injoignable, erreur %lu) \u00B7 %s", L"Offline (GitHub unreachable, error %lu) \u00B7 %s"), g_relErr, label.c_str());
-        g_busy = false;
-        return 0;
-    }
-    std::wstring remote = pick ? pick->ver : L"", zipUrl = pick ? pick->zip : L"";   // la plus recente du canal, avec un paquet
-    if (remote.empty() || zipUrl.empty()) {   // pas encore de release : rien a installer
-        g_progress = -1;
-        if (!mod) SetStatus(K_WARN, T(L"Aucune version de MWCoop publi\u00E9e pour l'instant", L"No MWCoop release published yet"));
-        else SetStatus(K_OK, T(L"%s \u00B7 aucune version publi\u00E9e", L"%s \u00B7 no release published"), label.c_str());
-        g_busy = false;
-        return 0;
-    }
-    if (!local.empty() && !WantVer(remote, local, nightly)) {
-        g_progress = -1;
-        UpdSet(L"");
-        SetStatus(K_OK, T(L"%s \u00B7 \u00E0 jour", L"%s \u00B7 up to date"), label.c_str());
-        g_busy = false;
-        return 0;
-    }
-    if (mode == UPD_CHECK && !local.empty()) {   // deja installe : on propose, le joueur choisit quand
-        g_progress = -1;
-        UpdSet(remote);
-        SetStatus(K_WARN, T(L"%s \u00B7 nouvelle version %s disponible", L"%s \u00B7 new version %s available"), label.c_str(), remote.c_str());
-        g_busy = false;
-        return 0;
-    }
-    UpdSet(L"");
-
-    wchar_t tmp[MAX_PATH];
-    GetTempPathW(MAX_PATH, tmp);
-    // Dossier propre a ce lanceur (un reste verrouille d'une tentative precedente faisait echouer le telechargement)
-    std::wstring work = std::wstring(tmp) + L"MWCoop-maj-" + std::to_wstring(GetCurrentProcessId());
-    DeleteTree(work);
-    CreateDirectoryW(work.c_str(), NULL);
-    std::wstring zip = work + L"\\MWCoop.zip", ext = work + L"\\x";
-    SetStatus(K_NORMAL, T(L"T\u00E9l\u00E9chargement de MWCoop %s\u2026", L"Downloading MWCoop %s\u2026"), remote.c_str());
-    bool got = false;
-    DWORD err = 0;
-    for (int attempt = 0; attempt < 3 && !got; attempt++) {   // trois essais (serveurs de GitHub parfois lents a repondre)
-        if (attempt) {
-            SetStatus(K_NORMAL, T(L"T\u00E9l\u00E9chargement de MWCoop %s\u2026 (essai %d / 3)", L"Downloading MWCoop %s\u2026 (try %d / 3)"), remote.c_str(), attempt + 1);
-            Sleep(1500);
-        }
-        g_progress = 0;
-        got = HttpGet(zipUrl, NULL, zip, true);
-        if (!got) err = GetLastError();
-    }
-    if (!got) {
-        g_progress = -1;
-        SetStatus(K_ERR, T(L"Mise \u00E0 jour impossible (t\u00E9l\u00E9chargement, erreur %lu)", L"Update failed (download, error %lu)"), err);
-        DeleteTree(work);
-        g_busy = false;
-        return 0;
-    }
-    SetStatus(K_NORMAL, T(L"Installation de MWCoop %s\u2026", L"Installing MWCoop %s\u2026"), remote.c_str());
-    g_progress = -2;
-    CreateDirectoryW(ext.c_str(), NULL);
-    std::string why;
-    if (!Unzip(zip, ext, &why)) {
-        TestLog("mise a jour : zip illisible (%s)", why.c_str());
-        g_progress = -1;
-        SetStatus(K_ERR, T(L"Mise \u00E0 jour impossible (archive)", L"Update failed (archive)"));
-        DeleteTree(work);
-        g_busy = false;
-        return 0;
-    }
-    if (!FileExists(ext + L"\\MWCoop\\version.txt")) {   // pas un paquet de MWCoop (ou zip range dans un sous-dossier)
-        g_progress = -1;
-        SetStatus(K_ERR, T(L"Mise \u00E0 jour impossible (paquet incomplet : MWCoop\\version.txt manquant)", L"Update failed (incomplete package: MWCoop\\version.txt missing)"));
-        DeleteTree(work);
-        g_busy = false;
-        return 0;
-    }
-    bool self = false;
-    std::wstring failed;
-    std::wstring gd =g_gameDir.substr(0, g_gameDir.size() - 1);
-    bool ok = CopyTree(ext, gd, &self, &failed);
-    // version.txt seulement si tout est en place : une installation interrompue sera reprise au prochain lancement
-    CreateDirectoryW((g_gameDir + L"MWCoop").c_str(), NULL);
-    if (ok && !CopyFileW((ext + L"\\MWCoop\\version.txt").c_str(), (g_gameDir + L"MWCoop\\version.txt").c_str(), FALSE)) { ok = false; failed = L"version.txt"; }
-    DeleteTree(work);
-    g_progress = -1;
-    if (!ok && g_copyError == ERROR_ACCESS_DENIED && !IsWritableDir(g_gameDir)) {
-        SetStatus(K_ERR, T(L"Dossier du jeu prot\u00E9g\u00E9 : lance SummerCoop-Launcher.exe en administrateur pour mettre \u00E0 jour", L"Game folder is protected: run SummerCoop-Launcher.exe as administrator to update"));
-        g_busy = false;
-        return 0;
-    }
-    if (!ok) {
-        SetStatus(K_ERR, T(L"%s est occup\u00E9 : ferme le jeu, puis relance le lanceur", L"%s is in use: close the game, then restart the launcher"), failed.c_str());
-        g_busy = false;
-        return 0;
-    }
-    LoadLocalVersion();
-    SetStatus(K_OK, T(L"Mis \u00E0 jour \u00B7 MWCoop %s", L"Updated \u00B7 MWCoop %s"), g_localVer.empty() ? remote.c_str() : g_localVer.c_str());
-    g_busy = false;
-    if (self) PostMessageW(g_wnd, WM_APP_RELAUNCH, 0, 0);
+    if (result == CHECK_AVAILABLE) UpdSet(pick->ver, pick->page);
+    else if (result != CHECK_FAILED) UpdSet(L"");
+    g_updState = result;
+    if (quiet && !changed) return 0;
+    if (result == CHECK_AVAILABLE)
+        SetStatus(K_WARN, T(L"SummerCoop %s disponible", L"SummerCoop %s available"), pick->ver.c_str());
+    else if (result == CHECK_CURRENT)
+        SetStatus(K_OK, T(L"SummerCoop %s est à jour", L"SummerCoop %s is up to date"), LauncherVersion().c_str());
+    else if (result == CHECK_EMPTY)
+        SetStatus(K_NORMAL, T(L"Aucune version de SummerCoop publiée", L"No SummerCoop release published"));
+    else if (g_relCode == 403 || g_relCode == 429)
+        SetStatus(K_WARN, T(L"Limite GitHub : réessaie plus tard", L"GitHub rate limit: try again later"));
+    else
+        SetStatus(K_WARN, T(L"Impossible de vérifier la version (HTTP %lu, WinHTTP %lu)", L"Version check failed (HTTP %lu, WinHTTP %lu)"), g_relCode, g_relErr);
     return 0;
 }
-
-// Sans jeu : les notes quand meme.
-static DWORD WINAPI NotesOnlyThread(void *)
+static void StartUpdate(bool download = false)
 {
-    std::string json;
-    int rs = FetchReleases(json);
-    std::vector<Note> rel = json.empty() ? std::vector<Note>() : ParseReleases(json);
-    EnterCriticalSection(&g_cs);
-    g_notes = ChannelNotes(rel, ChannelNightly());
-    LeaveCriticalSection(&g_cs);
-    g_relState = rs;
-    g_notesDone = true;
-    return 0;
-}
-
-// install : bouton METTRE A JOUR ; sinon regarder seulement (installer d'office si [Lanceur] MajAuto=1).
-static void StartUpdate(bool install = false)
-{
-    if (g_gameDir.empty() || g_busy) return;
-    if (!install && GetPrivateProfileIntW(L"Lanceur", L"MajAuto", 0, g_iniLauncher.c_str()) != 0) install = true;
-    g_busy = true;
+    if (download) {
+        EnterCriticalSection(&g_cs); std::wstring page = g_updPage; LeaveCriticalSection(&g_cs);
+        if (page.empty()) page = L"https://github.com/" + g_repo + L"/releases";
+        if ((INT_PTR)ShellExecuteW(g_wnd, L"open", page.c_str(), NULL, NULL, SW_SHOWNORMAL) <= 32)
+            SetStatus(K_WARN, T(L"Impossible d'ouvrir la page de téléchargement", L"Could not open the download page"));
+        return;
+    }
+    if (g_updChecking.exchange(true)) return;
     g_updCheckT = GetTickCount();
-    if (install) UpdSet(L"");
-    HANDLE t = CreateThread(NULL, 0, UpdateThread, (void *)(INT_PTR)(install ? UPD_INSTALL : UPD_CHECK), 0, NULL);
-    if (t) CloseHandle(t); else g_busy = false;
+    g_updState = CHECK_RUNNING;
+    SetStatus(K_NORMAL, T(L"Recherche de mises à jour…", L"Checking for updates…"));
+    HANDLE t = CreateThread(NULL, 0, UpdateThread, (void *)(INT_PTR)UPD_CHECK, 0, NULL);
+    if (t) CloseHandle(t);
+    else { g_updChecking = false; g_updState = CHECK_FAILED; }
 }
-
-// Toutes les 30 min, lanceur au menu : regarder sans bruit (le bouton apparait s'il sort une version entre-temps).
 static void UpdateTick()
 {
-    if (g_gameDir.empty() || g_busy || g_updChecking || GetTickCount() - g_updCheckT < 30u * 60u * 1000u) return;
+    if (!AutoCheckUpdates() || g_busy || g_lobby != LB_NONE || GetTickCount() - g_updCheckT < 30u * 60u * 1000u) return;
+    if (g_updChecking.exchange(true)) return;
     g_updCheckT = GetTickCount();
-    g_updChecking = true;
     HANDLE t = CreateThread(NULL, 0, UpdateThread, (void *)(INT_PTR)UPD_QUIET, 0, NULL);
     if (t) CloseHandle(t); else g_updChecking = false;
 }
-
 // ---------------------------------------------------------------- boutons
 // Pages (lanceur 2026, barre de navigation a gauche : ui.inc). TAB_COOP : les reglages ; TAB_SKIN : la tenue.
 enum { TAB_HOME, TAB_LOBBY, TAB_SKIN, TAB_CAR, TAB_CONTENT, TAB_MODS, TAB_NOTES, TAB_LOGS, TAB_COOP, TAB_API, TAB_GFX, TAB_CREDITS, TAB_WIKI, TAB_VHS, TAB_ALBUM, TAB_SAVES, TAB_COUNT };
 static int g_tab = TAB_HOME;
 
-enum { B_HOST, B_JOIN, B_SOLO, B_EXE, B_BUY, B_THEME, B_CLOSE, B_MIN, B_LOGS, B_COLOR, B_LOGDIR, B_LOGZIP, B_GITHUB, B_KOFI, B_NETIP, B_NETSTEAM, B_UPDATE, B_LANG, B_DISCORD, B_COUNT };
+enum { B_HOST, B_JOIN, B_SOLO, B_EXE, B_BUY, B_THEME, B_CLOSE, B_MIN, B_LOGS, B_COLOR, B_LOGDIR, B_LOGZIP, B_GITHUB, B_KOFI, B_NETIP, B_NETSTEAM, B_UPDATE, B_LANG, B_COUNT };
 // Reseau de la partie : IP (adresse:port, salon TCP du lanceur, UDP en jeu) ou Steam (salon et invitations Steam en
 // jeu, pair-a-pair par les relais de Valve : ni port ni pare-feu). Garde dans [Lanceur] Reseau, passe au mod par
 // lancement.ini (Reseau=).
@@ -1327,9 +1256,8 @@ static void Layout()
     g_fields[0].maxLen = 23; g_fields[0].address = false;
     g_fields[1].maxLen = 63; g_fields[1].address = true;
     // (les autres boutons sont places par leur page en se dessinant : ui.inc)
-    g_btn[B_DISCORD].r = RectF(28, 726, 104, 44);   // Discord (nom et logo), GitHub et Ko-fi (logos)
-    g_btn[B_GITHUB].r = RectF(136, 726, 48, 44);
-    g_btn[B_KOFI].r = RectF(188, 726, 48, 44);
+    g_btn[B_GITHUB].r = RectF(28, 726, 48, 44);     // GitHub et Ko-fi (logos)
+    g_btn[B_KOFI].r = RectF(80, 726, 48, 44);
 }
 
 static void UpdateButtons()
@@ -1343,7 +1271,7 @@ static void UpdateButtons()
     g_btn[B_SOLO].enabled = can;
     g_btn[B_EXE].enabled = menu && !busy;
     g_btn[B_CLOSE].enabled = g_btn[B_MIN].enabled = g_btn[B_BUY].enabled = g_btn[B_THEME].enabled = g_btn[B_LANG].enabled = true;
-    g_btn[B_GITHUB].enabled = g_btn[B_KOFI].enabled = g_btn[B_DISCORD].enabled = true;
+    g_btn[B_GITHUB].enabled = g_btn[B_KOFI].enabled = true;
     g_btn[B_BUY].visible = false;
     g_btn[B_LOGS].visible = false;
     bool home = g_tab == TAB_HOME;
@@ -1356,7 +1284,7 @@ static void UpdateButtons()
     g_btn[B_LOGDIR].enabled = g_btn[B_LOGZIP].enabled = true;
     g_btn[B_NETIP].visible = g_btn[B_NETSTEAM].visible = menu && game && home && lobby == LB_NONE && !g_goWait;
     g_btn[B_NETIP].enabled = g_btn[B_NETSTEAM].enabled = !busy;
-    g_btn[B_UPDATE].visible = menu && game && !busy && !g_goWait && !UpdAvail().empty();
+    g_btn[B_UPDATE].visible = menu && !busy && !g_goWait && !UpdAvail().empty();
     g_btn[B_UPDATE].enabled = lobby == LB_NONE;   // (pendant un salon : on finit d'abord la partie)
 }
 
@@ -4008,27 +3936,56 @@ static Bitmap *LoadPngRes(int id)
     const BYTE *p = h ? (const BYTE *)LockResource(h) : NULL;
     return p ? LoadPngMem(p, SizeofResource(NULL, r), 1 << 14, 1 << 14) : NULL;
 }
-static Bitmap *GetSummerBg()
+static Bitmap *GetSummerBg(bool dark = false, bool *hasDark = NULL)
 {
-    if (g_bgSummer) return g_bgSummer;
-    g_bgSummer = LoadPngRes(6);
-    if (!g_bgSummer) {
-        std::wstring p = g_dir + L"summer-background.png";
-        if (FileExists(p)) g_bgSummer = LoadAnyImage(p, NULL);
+    if (dark) {
+        if (!g_bgSummerDark) {
+            g_bgSummerDark = LoadPngRes(9);
+            if (!g_bgSummerDark) {
+                std::wstring p = g_dir + L"summer-background-dark.png";
+                if (FileExists(p)) g_bgSummerDark = LoadAnyImage(p, NULL);
+            }
+            if (!g_bgSummerDark && !g_gameDir.empty()) {
+                std::wstring p = g_gameDir + L"summer-background-dark.png";
+                if (FileExists(p)) g_bgSummerDark = LoadAnyImage(p, NULL);
+            }
+            if (!g_bgSummerDark) {
+                std::wstring p = g_dir + L"assets\\summer-background-dark.png";
+                if (FileExists(p)) g_bgSummerDark = LoadAnyImage(p, NULL);
+            }
+            if (!g_bgSummerDark) {
+                std::wstring p = g_dir + L"assets\\background-dark.png";
+                if (FileExists(p)) g_bgSummerDark = LoadAnyImage(p, NULL);
+            }
+            if (g_bgSummerDark) g_bgSummerHasDark = true;
+        }
+        if (g_bgSummerDark) {
+            if (hasDark) *hasDark = true;
+            return g_bgSummerDark;
+        }
     }
-    if (!g_bgSummer && !g_gameDir.empty()) {
-        std::wstring p = g_gameDir + L"summer-background.png";
-        if (FileExists(p)) g_bgSummer = LoadAnyImage(p, NULL);
+
+    if (!g_bgSummerLight) {
+        g_bgSummerLight = LoadPngRes(6);
+        if (!g_bgSummerLight) {
+            std::wstring p = g_dir + L"summer-background.png";
+            if (FileExists(p)) g_bgSummerLight = LoadAnyImage(p, NULL);
+        }
+        if (!g_bgSummerLight && !g_gameDir.empty()) {
+            std::wstring p = g_gameDir + L"summer-background.png";
+            if (FileExists(p)) g_bgSummerLight = LoadAnyImage(p, NULL);
+        }
+        if (!g_bgSummerLight) {
+            std::wstring p = g_dir + L"assets\\summer-background.png";
+            if (FileExists(p)) g_bgSummerLight = LoadAnyImage(p, NULL);
+        }
+        if (!g_bgSummerLight) {
+            std::wstring p = g_dir + L"assets\\background.png";
+            if (FileExists(p)) g_bgSummerLight = LoadAnyImage(p, NULL);
+        }
     }
-    if (!g_bgSummer) {
-        std::wstring p = g_dir + L"assets\\summer-background.png";
-        if (FileExists(p)) g_bgSummer = LoadAnyImage(p, NULL);
-    }
-    if (!g_bgSummer) {
-        std::wstring p = g_dir + L"assets\\background.png";
-        if (FileExists(p)) g_bgSummer = LoadAnyImage(p, NULL);
-    }
-    return g_bgSummer;
+    if (hasDark) *hasDark = false;
+    return g_bgSummerLight;
 }
 static Bitmap *PersoThumb(int k)
 {
@@ -4376,91 +4333,15 @@ static bool CopyText(const std::wstring &t)
     CloseClipboard();
     return ok;
 }
-// ---------------------------------------------------------------- invitation au Discord
-// Demande de JD (08/10) : bouton Discord dans la barre de gauche, et au premier lancement (apres la visite guidee) une
-// fenetre propose de rejoindre le serveur ([Lanceur] DiscordPropose=1 ensuite : une seule fois). Meme mecanique que le
-// guide Steam (g_guide), autre contenu (g_guideKind 1).
-// Lien d'invitation : jamais dans le code public (robots qui fouillent GitHub, demande de JD, 11/10) -- son code est dans
-// launcher/discord.local.h (ignore par git, sur le PC qui compile), brouille. Sans ce fichier : la page GitHub du projet.
-#if __has_include("discord.local.h")
-#include "discord.local.h"
-#define MWC_HAS_DISCORD 1
-#endif
-static std::wstring DiscordUrlBuild()
-{
-#ifdef MWC_HAS_DISCORD
-    std::wstring code;
-    for (unsigned char c : kDiscordCodeX) code += (wchar_t)(c ^ 0x5A);
-    return L"https://discord" L".gg/" + code;
-#else
-    return L"https://github.com/frd21313123123/SummerCoop";
-#endif
-}
-static const std::wstring g_discordUrl = DiscordUrlBuild();
-static const wchar_t *kDiscordUrl = g_discordUrl.c_str();
-static const RectF kDiscCard(390, 166, 500, 476), kDiscJoin(430, 486, 420, 54), kDiscLater(430, 552, 420, 44), kDiscClose(836, 182, 40, 40);
-static int g_guideKind;   // 0 guide Steam, 1 invitation au Discord
-static void DiscordAskOpen() { g_guide = true; g_guideKind = 1; g_guideHot = 0; g_focus = -1; }
-static void DiscordAskMaybe()
-{
-    return;
-}
-static int DiscordHit(float x, float y)
-{
-    if (kDiscJoin.Contains(x, y)) return 1;
-    if (kDiscLater.Contains(x, y)) return 2;
-    if (kDiscClose.Contains(x, y)) return 4;
-    return kDiscCard.Contains(x, y) ? 0 : -1;
-}
-static void DrawDiscordAsk(Graphics &g)
-{
-    SolidBrush db(Color(g_dark ? 150 : 110, 2, 6, 18));
-    g.FillPath(&db, CardPath());
-    RectF c = kDiscCard;
-    GlassLive(g, c, 24);
-    {   // fermer
-        RectF r = kDiscClose;
-        GraphicsPath p; RoundRect(p, r, 13);
-        SolidBrush b(g_guideHot == 4 ? TH(btn2Hot) : TH(btn2)); g.FillPath(&b, &p);
-        Icon(g, IC_CLOSE, r.X + 20, r.Y + 20, 17, kInk, 2.2f);
-    }
-    RectF logo(c.X + c.Width / 2 - 44, c.Y + 44, 88, 88);
-    SolidBrush lb(kDiscordBlue); g.FillEllipse(&lb, logo);
-    Icon(g, IC_DISCORD, logo.X + 44, logo.Y + 46, 50, Color(255, 255, 255, 255));
-    Title(g, T(L"Rejoins-nous sur Discord !", L"Join us on Discord!"), RectF(c.X, c.Y + 150, c.Width, 36), 25, kInk, StringAlignmentCenter);
-    Para(g, T(L"De l'aide, les bugs à signaler, les nouveautés en avant-première et des joueurs pour faire équipe. Salons en anglais, plus un salon en français.",
-              L"Help, bug reports, early news and players to team up with. English channels, plus a French one."),
-         RectF(c.X + 44, c.Y + 200, c.Width - 88, 70), 14, kGrey, StringAlignmentNear);
-    Para(g, T(L"Pour un souci en jeu : envoie tes journaux (bouton Journaux, en haut) dans #bug-reports.", L"Trouble in game? Send your logs (Logs button, top right) in #bug-reports."),
-         RectF(c.X + 44, c.Y + 270, c.Width - 88, 44), 12.5f, kGrey, StringAlignmentNear);
-    {
-        RectF r = kDiscJoin;
-        GraphicsPath p; RoundRect(p, r, 16);
-        SolidBrush fb(kDiscordBlue); g.FillPath(&fb, &p);
-        if (g_guideHot == 1) { SolidBrush hb(Color(50, 255, 255, 255)); g.FillPath(&hb, &p); }
-        Icon(g, IC_DISCORD, r.X + 120, r.Y + r.Height / 2, 24, Color(255, 255, 255, 255));
-        Text(g, T(L"REJOINDRE LE DISCORD", L"JOIN THE DISCORD"), RectF(r.X + 140, r.Y, r.Width - 150, r.Height), 15, FontStyleBold, Color(255, 255, 255, 255), StringAlignmentNear);
-    }
-    {
-        RectF r = kDiscLater;
-        GraphicsPath p; RoundRect(p, r, 14);
-        SolidBrush fb(g_guideHot == 2 ? TH(btn2Hot) : TH(btn2)); g.FillPath(&fb, &p);
-        Text(g, T(L"Plus tard", L"Later"), r, 14, FontStyleBold, kInk);
-    }
-    Text(g, T(L"Toujours à portée : le bouton Discord en bas à gauche.", L"Always one click away: the Discord button, bottom left."), RectF(c.X, c.Y + c.Height - 32, c.Width, 20), 12, FontStyleRegular, kGrey);
-}
-
-static void SteamGuideOpen() { g_guide = true; g_guideKind = 0; g_guideHot = 0; g_guideNoMore = false; g_guideCopiedT = 0; g_focus = -1; }
+static void SteamGuideOpen() { g_guide = true; g_guideHot = 0; g_guideNoMore = false; g_guideCopiedT = 0; g_focus = -1; }
 static void SteamGuideClose()
 {
     g_guide = false;
     g_guideHot = 0;
-    if (g_guideKind == 1) WritePrivateProfileStringW(L"Lanceur", L"DiscordPropose", L"1", g_iniLauncher.c_str());   // (proposee : plus jamais d'elle-meme)
-    else if (g_guideNoMore) WritePrivateProfileStringW(L"Lanceur", L"GuideSteam", L"0", g_iniLauncher.c_str());
+    if (g_guideNoMore) WritePrivateProfileStringW(L"Lanceur", L"GuideSteam", L"0", g_iniLauncher.c_str());
 }
 static int SteamGuideHit(float x, float y)
 {
-    if (g_guideKind == 1) return DiscordHit(x, y);
     if (kGuideCopy.Contains(x, y)) return 1;
     if (kGuideOk.Contains(x, y)) return 2;
     if (kGuideNoMore.Contains(x, y)) return 3;
@@ -4470,11 +4351,6 @@ static int SteamGuideHit(float x, float y)
 static void SteamGuideClick(float x, float y)
 {
     int h = SteamGuideHit(x, y);
-    if (g_guideKind == 1) {   // invitation au Discord
-        if (h == 1) ShellExecuteW(g_wnd, L"open", kDiscordUrl, NULL, NULL, SW_SHOWNORMAL);
-        if (h == 1 || h == 2 || h == 4 || h < 0) SteamGuideClose();
-        return;
-    }
     if (h == 1) {
         if (CopyText(SteamLaunchLine())) {
             g_guideCopiedT = GetTickCount() | 1;
@@ -4486,7 +4362,6 @@ static void SteamGuideClick(float x, float y)
 static void DrawSteamGuide(Graphics &g)
 {
     if (!g_guide) return;
-    if (g_guideKind == 1) { DrawDiscordAsk(g); return; }
     SolidBrush db(Color(g_dark ? 150 : 110, 2, 6, 18));
     g.FillPath(&db, CardPath());
     RectF c = kGuideCard;
@@ -4590,7 +4465,7 @@ static void ChooseExe()
     SetGame(dir);
     WritePrivateProfileStringW(L"Lanceur", L"Jeu", g_gameDir.c_str(), g_iniLauncher.c_str());
     SetStatus(K_NORMAL, L"%s", ModLabel().c_str());
-    StartUpdate();
+    if (AutoCheckUpdates()) StartUpdate();
 }
 
 // Processus et fenetres du jeu (mysummercar.exe : celui lance, ou celui que Steam a relance a sa place).
@@ -5054,6 +4929,7 @@ static bool WriteLaunchFile(int mode, const std::wstring &addr, int port, const 
     t += "Port=" + std::to_string(port) + "\r\n";
     t += "Pseudo=" + Narrow(PlayerName(), CP_UTF8) + "\r\n";
     t += "Apparence=" + skin + "\r\n";
+    t += "LauncherDir=" + Narrow(g_gameDir + L"MWCoop", CP_UTF8) + "\r\n";
     t += std::string("Profil=") + (mode == MODE_GUEST ? "invite" : mode == MODE_HOST ? Narrow(SaveCurrentProf(), CP_UTF8) : "") + "\r\n";   // (saves.inc)
     if ((mode == MODE_SOLO || mode == MODE_HOST) && (!partie || !*partie)) partie = "continuer";
     if (partie && *partie) t += std::string("Partie=") + partie + "\r\n";
@@ -5373,6 +5249,7 @@ static void Launch(int mode, const char *partie = NULL)
     if (partie && *partie) args += L" -mwcoop-partie " + Widen(partie, CP_UTF8);
     else args += L" -mwcoop-partie continuer";
     args += L" --summercoop-auto";
+    args += L" --summercoop-launcher-dir \"" + g_gameDir + L"MWCoop\"";
     if (mode == MODE_GUEST) args += (g_steamNet ? std::wstring() : L" -mwcoop-adresse " + addr) + L" -mwcoop-profil invite";
     // Ray tracing (MWCoopRT.dll) : Unity doit dessiner sur un seul fil pour que le mod s'insere dans son rendu.
     if (GetPrivateProfileIntW(L"Graphismes", L"RayTracing", 0, ModIni().c_str()) == 1) { args += L" -force-gfx-direct"; LaunchLog("ray tracing demande : -force-gfx-direct"); }
@@ -5675,8 +5552,8 @@ static void VersionMismatch(const std::wstring &his)
     if (mine != L"dev" && CmpVer(his, mine) > 0) {
         SetStatus(K_ERR, T(L"Version diff\u00E9rente (toi %s, h\u00F4te %s) : mets \u00E0 jour", L"Different version (you %s, host %s): update"), mine.c_str(), his.c_str());
         wchar_t q[600];
-        swprintf_s(q, T(L"L'h\u00F4te a SummerCoop %s et toi %s : il faut la m\u00EAme version pour jouer ensemble.\n\nMettre \u00E0 jour maintenant ? Le lanceur se relance tout seul, puis tu pourras rejoindre.",
-                        L"The host has SummerCoop %s and you have %s: you need the same version to play together.\n\nUpdate now? The launcher restarts by itself, then you can join."), his.c_str(), mine.c_str());
+        swprintf_s(q, T(L"L'hôte a SummerCoop %s et toi %s : il faut la même version pour jouer ensemble.\n\nOuvrir la page de téléchargement ?",
+                        L"The host has SummerCoop %s and you have %s: you need the same version to play together.\n\nOpen the download page?"), his.c_str(), mine.c_str());
         TestLog("salon : version de l'hote %s, la mienne %s : mise a jour proposee", Narrow(his, CP_UTF8).c_str(), Narrow(mine, CP_UTF8).c_str());
         if (MessageBoxW(g_wnd, q, L"SummerCoop", MB_YESNO | MB_ICONQUESTION) == IDYES) StartUpdate(true);
         return;
@@ -7493,7 +7370,6 @@ static void OnButton(int id)
     case B_BUY: ShellExecuteW(g_wnd, L"open", kStoreUrl, NULL, NULL, SW_SHOWNORMAL); break;
     case B_GITHUB: ShellExecuteW(g_wnd, L"open", L"https://github.com/frd21313123123/SummerCoop", NULL, NULL, SW_SHOWNORMAL); break;
     case B_KOFI: ShellExecuteW(g_wnd, L"open", L"https://ko-fi.com/parricidium", NULL, NULL, SW_SHOWNORMAL); break;
-    case B_DISCORD: ShellExecuteW(g_wnd, L"open", kDiscordUrl, NULL, NULL, SW_SHOWNORMAL); break;
     case B_UPDATE: StartUpdate(true); break;
     case B_COLOR: CarPickColor(); break;
     case B_LOGDIR: LogsOpenFolder(); break;
@@ -7538,10 +7414,10 @@ static void Tick()
         if (g_alpha <= 0) { DestroyWindow(g_wnd); return; }
     } else if (g_alpha < 1) g_alpha = min(g_alpha + dt * 5, 1.0f);
     // Apercu de la voiture : rotation lente, arretee pendant un glisser et 2,5 s apres
-    if (g_tab == TAB_CAR && g_state == ST_IDLE && !g_carDrag && now - g_carIdleT > 2500) g_carYaw = fmodf(g_carYaw + dt * 0.45f, 6.2831853f);
+    if (g_tab == TAB_CAR && LookEditable() && !g_carDrag && now - g_carIdleT > 2500) g_carYaw = fmodf(g_carYaw + dt * 0.45f, 6.2831853f);
     // Tenue : un tour en 10 s ; arretee pendant un glisser, et 1,5 s apres (ou apres un changement : de face)
     // (accueil : deux fois plus lent, l'apercu y est refait moins souvent)
-    if ((g_tab == TAB_SKIN || g_tab == TAB_HOME) && g_state == ST_IDLE && !g_skinDrag && now - g_skinIdleT > 1500) g_skinYaw = fmodf(g_skinYaw + dt * (g_tab == TAB_HOME ? 0.8f : 1.6f), 16.0f);
+    if ((g_tab == TAB_SKIN || g_tab == TAB_HOME) && LookEditable() && !g_skinDrag && now - g_skinIdleT > 1500) g_skinYaw = fmodf(g_skinYaw + dt * (g_tab == TAB_HOME ? 0.8f : 1.6f), 16.0f);
 
     // Ecran d'attente : jusqu'a la fenetre du jeu. Le processus lance peut se fermer tout de suite si Steam relance
     // le jeu lui-meme : on ne conclut a un echec qu'apres 15 s sans aucun mysummercar.exe.
@@ -7697,19 +7573,19 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         bool free = g_uiHot < 0;   // (pas sur une zone de l'interface : les elements des pages)
         g_hot = free ? HitButton(x, y) : -1;
         g_logRowHot = free && idle && g_tab == TAB_LOGS ? LogRowAt(x, y, &g_logPart) : -1;
-        g_carHot = free && idle && g_tab == TAB_CAR ? CarSwatchAt(x, y) : -1;
+        g_carHot = free && LookEditable() && g_tab == TAB_CAR ? CarSwatchAt(x, y) : -1;
         g_lobbyHot = free && idle && g_tab == TAB_LOBBY ? LobbyChoiceAt(x, y) : -1;
         g_mscHot = free && idle && g_tab == TAB_MODS ? MscAt(x, y) : -1;
         g_contentHot = free && idle && g_tab == TAB_CONTENT ? ContentAt(x, y) : -1;
         g_srvHot = free ? SrvAt(x, y) : -1;
-        bool skinTab = free && idle && g_tab == TAB_SKIN;
+        bool skinTab = free && LookEditable() && g_tab == TAB_SKIN;
         g_skinRowHot = skinTab ? PersoRowAt(x, y) : -1;
         g_skinHot = skinTab && g_perso.state != 1 ? SkinCellAt(x, y) : -1;
         g_skinArrowHot = skinTab && g_perso.state != 1 ? SkinArrowAt(x, y) : 0;
         bool noteImg = free && !NoteImgAt(x, y).empty();
         TRACKMOUSEEVENT tme = { sizeof(tme), TME_LEAVE, h, 0 };
         TrackMouseEvent(&tme);
-        bool carView = free && idle && g_tab == TAB_CAR && g_car.state == 1 && kCarView.Contains(x, y) && g_carHot < 0;
+        bool carView = free && LookEditable() && g_tab == TAB_CAR && g_car.state == 1 && kCarView.Contains(x, y) && g_carHot < 0;
         bool skinView = skinTab && !g_skinArrowHot && g_skinRowHot < 0 && kSkinView.Contains(x, y);
         bool hand = g_uiHot > UI_NONE || (g_hot >= 0 && g_btn[g_hot].enabled) || g_logRowHot >= 0 || g_carHot >= 0 || g_lobbyHot >= 0 || g_skinHot >= 0 || g_skinArrowHot
                     || g_skinRowHot >= 0 || g_mscHot >= 0 || g_contentHot >= 0 || g_srvHot >= 0 || noteImg;
@@ -7728,7 +7604,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         if (TutoKey(wp)) return 0;
         if (g_guide && (wp == VK_ESCAPE || wp == VK_RETURN)) { SteamGuideClose(); return 0; }
         if (wp == VK_ESCAPE && g_lobbyOpts) { g_lobbyOpts = false; return 0; }
-        if ((wp == VK_LEFT || wp == VK_RIGHT) && g_tab == TAB_SKIN && g_state == ST_IDLE && g_focus < 0) { SkinStep(wp == VK_LEFT ? -1 : 1); return 0; }
+        if ((wp == VK_LEFT || wp == VK_RIGHT) && g_tab == TAB_SKIN && LookEditable() && g_focus < 0) { SkinStep(wp == VK_LEFT ? -1 : 1); return 0; }
         break;
     case WM_MOUSEWHEEL:
         if (!g_guide && g_tuto < 0 && g_state == ST_IDLE) {
@@ -7753,15 +7629,17 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         if (b >= 0) { g_pressed = b; SetCapture(h); return 0; }
         if (f >= 0) { g_focus = f; g_time = 0; return 0; }
         g_focus = -1;
-        if (g_state == ST_RUNNING && SrvClick(x, y)) return 0;
+        if (g_state == ST_RUNNING && !RunningLook() && SrvClick(x, y)) return 0;
+        if (LookEditable()) {
+            if (g_tab == TAB_CAR && CarMouseDown(x, y)) return 0;
+            if (g_tab == TAB_SKIN && SkinMouseDown(x, y)) return 0;
+        }
         if (g_state == ST_IDLE) {
             if (g_tab == TAB_LOBBY && LobbyClick(x, y)) return 0;
             if (g_tab == TAB_MODS && MscClick(x, y)) return 0;
             if (g_tab == TAB_CONTENT && ContentAt(x, y) >= 0) { ContentClick(x, y); return 0; }
             if (g_tab == TAB_NOTES) { std::wstring u = NoteImgAt(x, y); if (!u.empty()) { ShellExecuteW(NULL, L"open", u.c_str(), NULL, NULL, SW_SHOWNORMAL); return 0; } }
             if (g_tab == TAB_LOGS && LogsMouseDown(x, y)) return 0;
-            if (g_tab == TAB_CAR && CarMouseDown(x, y)) return 0;
-            if (g_tab == TAB_SKIN && SkinMouseDown(x, y)) return 0;
         }
         // hors des cartes (en-tete, bords, pied) : glisser la fenetre
         if (y < 84 || (g_outside && g_outside->IsVisible(x, y))) {
@@ -7981,6 +7859,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
             const Note *p = PickRelease(rel, nightly != 0);
             std::wstring v = p ? p->ver : L"";
             o += std::string(nightly ? "nightly" : "stable") + " : " + Narrow(v, CP_UTF8) + (p && WantVer(v, argv[4], nightly != 0) ? " a installer" : " rien") + " ; notes " + std::to_string(ChannelNotes(rel, nightly != 0).size()) + "\r\n";
+            o += "state=" + std::to_string(CheckResult(REL_OK, p, argv[4], nightly != 0)) + " offline=" + std::to_string(CheckResult(REL_OFFLINE, p, argv[4], nightly != 0)) + " page=" + (p ? Narrow(p->page, CP_UTF8) : "") + "\r\n";
         }
         HANDLE f = CreateFileW(argv[3], GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, NULL);
         if (f != INVALID_HANDLE_VALUE) { DWORD w; WriteFile(f, o.data(), (DWORD)o.size(), &w, NULL); CloseHandle(f); }
@@ -8039,7 +7918,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
     if (argc >= 4 && !_wcsicmp(argv[1], L"/maj")) {
         std::wstring d = WithSlash(argv[2]);
         SetGame(IsGameDir(d) ? d : L"");
-        if (!g_gameDir.empty()) { g_busy = true; UpdateThread(NULL); }
+        UpdateThread(NULL); // read-only check, including when no game was found
         FILE *f = _wfopen(argv[3], L"w, ccs=UTF-8");
         wchar_t wh[MAX_PATH] = L"(pas charge)";
         if (HMODULE m = GetModuleHandleW(L"winhttp.dll")) GetModuleFileNameW(m, wh, MAX_PATH);
@@ -8212,7 +8091,6 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
         }
         else if (st == L"menu-steam") g_steamNet = true;
         else if (st == L"guide-steam") { g_steamNet = true; SteamGuideOpen(); g_guideHot = 1; }
-        else if (st == L"discord") { DiscordAskOpen(); g_guideHot = 1; }
         else if (st == L"serveur" || st == L"partie-invite") {   // partie en cours, lanceur ouvert (faux joueurs)
             bool host = st == L"serveur";
             g_state = ST_RUNNING;
@@ -8277,7 +8155,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
             g_notes = ParseReleases("[{\"tag_name\":\"v0.1.1\",\"published_at\":\"2026-10-09T10:00:00Z\",\"body\":\"- Exemple de note de version (capture).\\n- Deuxième ligne : une correction.\\n---\\n- Sample release note (capture).\\n- Second line: a fix.\\n---\\n- Пример заметки к версии (снимок).\\n- Вторая строка: исправление.\"},{\"tag_name\":\"v0.1.0\",\"published_at\":\"2026-10-02T10:00:00Z\",\"body\":\"- Première version : chargeur, joueurs visibles.\\n---\\n- First version: loader, visible players.\"}]");
             g_notesDone = true; g_relState = REL_OK; g_tab = TAB_NOTES;
         }
-        else if (st == L"notesvide") { NotesOnlyThread(NULL); g_tab = TAB_NOTES; }
+        else if (st == L"notesvide") { UpdateThread((void *)(INT_PTR)UPD_QUIET); g_tab = TAB_NOTES; }
         else if (st == L"notes-image") {   // une note avec une image (telechargee ici, avant la capture)
             std::wstring url = L"https://raw.githubusercontent.com/" + g_repo + L"/main/docs/img/lanceur-tenue.png";
             std::wstring fr = CleanNote(L"- Volet de droite pour la tenue :\n![tenue](" + url + L")\n- Et une ligne apr\u00E8s l'image.");
@@ -8411,7 +8289,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
                     int hot = g_uiHot, btn = g_hot;
                     SendMessageW(g_wnd, WM_LBUTTONDOWN, MK_LBUTTON, lp);
                     SendMessageW(g_wnd, WM_LBUTTONUP, 0, lp);
-                    if (lf) fprintf(lf, "clic %.0f,%.0f : zone %d bouton %d -> page %d menu %d champ %d partie %d zone tenue %d theme %d\n", c.first, c.second, hot, btn, g_tab, (int)g_lobbyOpts, g_focus, (int)g_partie, g_lookZone, (int)g_dark);
+                    if (lf) fprintf(lf, "clic %.0f,%.0f : zone %d bouton %d -> page %d menu %d champ %d partie %d zone tenue %d theme %d state %d look %s color %06X perso %d car %d\n", c.first, c.second, hot, btn, g_tab, (int)g_lobbyOpts, g_focus, (int)g_partie, g_lookZone, (int)g_dark, g_state, MySkin().c_str(), g_carColor, g_perso.state, g_car.state);
                 }
                 if (lf) fclose(lf);
                 g_hot = -1; g_uiHot = -1;
@@ -8432,7 +8310,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
             CLSID png;
             if (EncoderClsid(L"image/png", &png) && out.Save(argv[2], &png, NULL) == Ok) rc = 0;
         }   // (detruit avant GdiplusShutdown)
-        delete g_bg; delete g_bgDark; delete g_bgCache; SkinsFree(); SteamAvFree();
+        delete g_bg; delete g_bgDark; delete g_bgCache; delete g_bgSummerLight; delete g_bgSummerDark; SkinsFree(); SteamAvFree();
         GdiplusShutdown(gtok);
         return rc;
     }
@@ -8457,7 +8335,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
             MSG msg;
             while (GetMessageW(&msg, NULL, 0, 0) > 0) DispatchMessageW(&msg);
         }
-        delete g_bg; delete g_bgDark; delete g_bgCache; SkinsFree();
+        delete g_bg; delete g_bgDark; delete g_bgCache; delete g_bgSummerLight; delete g_bgSummerDark; SkinsFree();
         GdiplusShutdown(gtok);
         WSACleanup();
         return rc;
@@ -8522,19 +8400,14 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
     ShowWindow(g_wnd, SW_SHOW);
     SetTimer(g_wnd, 1, 16, NULL);
     if (!g_gameDir.empty() && !g_sConnect) TutoAtStartup();   // visite guidee : complete la 1re fois, puis les nouveautes
-    if (!g_sConnect && g_tuto < 0) DiscordAskMaybe();          // invitation au Discord (une fois ; sinon a la fin de la visite)
-    if (!g_gameDir.empty()) StartUpdate();
-    else {
-        HANDLE nt = CreateThread(NULL, 0, NotesOnlyThread, NULL, 0, NULL);
-        if (nt) CloseHandle(nt);
-    }
+    if (AutoCheckUpdates()) StartUpdate();
     TenuesStart();   // (tenues offertes : une fois, a part des mises a jour)
     CompatCleanAll("demarrage");
 
     MSG msg;
     while (GetMessageW(&msg, NULL, 0, 0) > 0) { TranslateMessage(&msg); DispatchMessageW(&msg); }
     if (g_proc) CloseHandle(g_proc);
-    delete g_bg; delete g_bgDark; delete g_bgCache; SkinsFree(); SteamAvFree();
+    delete g_bg; delete g_bgDark; delete g_bgCache; delete g_bgSummerLight; delete g_bgSummerDark; SkinsFree(); SteamAvFree();
     GdiplusShutdown(gtok);
     return 0;
 }

@@ -63,10 +63,10 @@ namespace MWCoop
                 StringBuilder text = new StringBuilder("Item=" + belt.name + ";ID=" + MscParts.IdOf(belt) + "\n");
                 foreach (PlayMakerFSM f in belt.GetComponents<PlayMakerFSM>()) Dump(text, f);
                 Dump(text, assembly); Dump(text, check); Dump(text, database);
-                File.WriteAllText(Path.Combine(channel, Role + "-belt-inventory.txt"), text.ToString());
+                MscProbeFiles.WriteAllText(Path.Combine(channel, Role + "-belt-inventory.txt"), text.ToString());
             }
             string clock = Path.Combine(channel, "start.txt"); long ticks;
-            if (!File.Exists(clock) || !long.TryParse(File.ReadAllText(clock), out ticks)) return;
+            if (!File.Exists(clock) || !long.TryParse(MscProbeFiles.ReadAllText(clock), out ticks)) return;
             float elapsed = (float)TimeSpan.FromTicks(DateTime.UtcNow.Ticks - ticks).TotalSeconds;
             bool actor = !Session.IsHost;
             if (actor && elapsed >= 153 && elapsed < 158 && Time.realtimeSinceStartup >= nextStep)
@@ -172,10 +172,10 @@ namespace MWCoop
             if (!actor && !File.Exists(expected)) return false;
             SortedDictionary<string, float> values = Snapshot(); List<string> rows = new List<string>();
             foreach (KeyValuePair<string, float> pair in values) rows.Add(pair.Key + "|" + pair.Value.ToString("R", C));
-            File.WriteAllLines(Path.Combine(channel, Role + "-belt-" + phase + ".txt"), rows.ToArray());
+            MscProbeFiles.WriteAllLines(Path.Combine(channel, Role + "-belt-" + phase + ".txt"), rows.ToArray());
             int mismatches = 0;
-            if (actor) File.WriteAllLines(expected, rows.ToArray());
-            else foreach (string row in File.ReadAllLines(expected))
+            if (actor) MscProbeFiles.WriteAllLines(expected, rows.ToArray());
+            else foreach (string row in MscProbeFiles.ReadAllLines(expected))
             {
                 string[] fields = row.Split('|'); float actual;
                 if (!values.TryGetValue(fields[0], out actual) || Mathf.Abs(actual - float.Parse(fields[1], C)) > .002f) { mismatches++; Results.Add("BeltMismatch=" + phase + ";" + row + ";actual=" + actual.ToString("R", C)); }
@@ -193,7 +193,7 @@ namespace MWCoop
             native.Append("PartID=").Append(MscParts.IdOf(belt)).Append("\nRemovalKey=").Append(removal != null ? MscParts.Key(removal) : "missing").Append('\n');
             foreach (PlayMakerFSM f in belt.GetComponents<PlayMakerFSM>()) Dump(native, f);
             foreach (PlayMakerFSM f in assembly.FsmVariables.FindFsmGameObject("BeltMesh").Value.GetComponentsInChildren<PlayMakerFSM>(true)) Dump(native, f);
-            File.WriteAllText(Path.Combine(channel, Role + "-belt-" + phase + "-native.txt"), native.ToString());
+            MscProbeFiles.WriteAllText(Path.Combine(channel, Role + "-belt-" + phase + "-native.txt"), native.ToString());
             string result = "Belt=" + phase + ";Role=" + (actor ? "actor" : "observer") + ";Installed=" + values["installed"] + ";Rotation=" + values["rotation"].ToString("R", C) + ";Locked=" + (pivotBolt != null && pivotBolt.FsmVariables.FindFsmInt("Stage").Value == 8) + ";Fields=" + values.Count + ";Mismatches=" + mismatches + ";StateErrors=" + stateErrors;
             Results.Add(result); Log.Info(result); return true;
         }

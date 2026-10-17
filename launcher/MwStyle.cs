@@ -81,16 +81,27 @@ namespace SummerCoop.Launcher
 
     internal sealed class MwScenePanel : Panel
     {
-        private readonly Image background;
+        private readonly Image backgroundLight;
+        private readonly Image backgroundDark;
         private Bitmap scene, blur;
         private bool cachedDark;
         internal MwScenePanel()
         {
             DoubleBuffered = true; ResizeRedraw = true; BackColor = Color.FromArgb(4,8,22);
-            background = BackgroundArt.Load(AppDomain.CurrentDomain.BaseDirectory);
+            backgroundLight = BackgroundArt.Load(AppDomain.CurrentDomain.BaseDirectory, false);
+            backgroundDark = BackgroundArt.Load(AppDomain.CurrentDomain.BaseDirectory, true);
         }
         internal void ResetScene() { if(scene!=null) scene.Dispose(); if(blur!=null) blur.Dispose(); scene=blur=null; Invalidate(true); }
-        protected override void Dispose(bool disposing) { if(disposing) { ResetScene(); background.Dispose(); } base.Dispose(disposing); }
+        protected override void Dispose(bool disposing)
+        {
+            if(disposing)
+            {
+                ResetScene();
+                if (backgroundLight != null) backgroundLight.Dispose();
+                if (backgroundDark != null && backgroundDark != backgroundLight) backgroundDark.Dispose();
+            }
+            base.Dispose(disposing);
+        }
         protected override void OnPaintBackground(PaintEventArgs e)
         {
             if(scene==null || scene.Size!=ClientSize || cachedDark!=MwStyle.Dark) Build();
@@ -118,6 +129,7 @@ namespace SummerCoop.Launcher
             if(Width<=0 || Height<=0) return;
             if(scene!=null) scene.Dispose(); if(blur!=null) blur.Dispose();
             cachedDark=MwStyle.Dark; scene=new Bitmap(Width,Height,PixelFormat.Format32bppPArgb);
+            Image background = (MwStyle.Dark && backgroundDark != null) ? backgroundDark : backgroundLight;
             using(Graphics g=Graphics.FromImage(scene)) {
                 // Cover the window without stretching the previous launcher's artwork.
                 float scale = Math.Max((float)Width / background.Width, (float)Height / background.Height);
@@ -126,7 +138,7 @@ namespace SummerCoop.Launcher
                 g.PixelOffsetMode = PixelOffsetMode.HighQuality;
                 g.DrawImage(background, new RectangleF((Width-w)/2, (Height-h)/2, w, h),
                     new RectangleF(0, 0, background.Width, background.Height), GraphicsUnit.Pixel);
-                if (MwStyle.Dark)
+                if (MwStyle.Dark && (backgroundDark == null || backgroundDark == backgroundLight))
                     using (SolidBrush shade = new SolidBrush(Color.FromArgb(48, 4, 8, 22)))
                         g.FillRectangle(shade, 0, 0, Width, Height);
             }

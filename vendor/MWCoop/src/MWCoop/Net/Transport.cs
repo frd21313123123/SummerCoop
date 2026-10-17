@@ -38,6 +38,7 @@ namespace MWCoop.Net
         readonly byte[] buf = new byte[2048];
         readonly Dictionary<string, Peer> byEnd = new Dictionary<string, Peer>();
         public readonly List<Peer> Peers = new List<Peer>();
+        Peer[] peerSnapshot = new Peer[8];
         public bool IsHost;
         public int NetVersion;
         public int LocalId;   // invite : numero donne par l'hote (l'hote est 0)
@@ -159,8 +160,12 @@ namespace MWCoop.Net
             Now = now;
             if (link == null) return;
             Receive();
-            foreach (Peer p in Peers.ToArray())
+            int peerCount = Peers.Count;
+            if (peerSnapshot.Length < peerCount) peerSnapshot = new Peer[peerCount];
+            Peers.CopyTo(peerSnapshot);
+            for (int peerIndex = 0; peerIndex < peerCount; peerIndex++)
             {
+                Peer p = peerSnapshot[peerIndex]; peerSnapshot[peerIndex] = null;
                 if (Now - p.LastHeard > Timeout) { DropPeer(p, "delai depasse"); continue; }
                 if (Now - p.LastPingSent > 1f)
                 {

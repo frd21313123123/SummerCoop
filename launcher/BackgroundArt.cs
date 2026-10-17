@@ -10,10 +10,20 @@ namespace SummerCoop.Launcher
     internal static class BackgroundArt
     {
         internal const string EmbeddedBackground = "SummerCoop.Launcher.Background";
+        internal const string EmbeddedBackgroundDark = "SummerCoop.Launcher.BackgroundDark";
 
         internal static Image Load(string exeDir)
         {
-            foreach (string name in new string[] { "background.png", "background.jpg", "background.jpeg" })
+            return Load(exeDir, false);
+        }
+
+        internal static Image Load(string exeDir, bool dark)
+        {
+            string[] names = dark
+                ? new string[] { "background-dark.png", "background-dark.jpg", "background-dark.jpeg", "summer-background-dark.png", "summer-background-dark.jpg" }
+                : new string[] { "background.png", "background.jpg", "background.jpeg", "summer-background.png", "summer-background.jpg" };
+
+            foreach (string name in names)
             {
                 try
                 {
@@ -23,6 +33,19 @@ namespace SummerCoop.Launcher
                     if (File.Exists(assets)) { using (Image art = Image.FromFile(assets)) return new Bitmap(art); }
                 }
                 catch (Exception) { }
+            }
+            if (dark)
+            {
+                try
+                {
+                    using (Stream embedded = System.Reflection.Assembly.GetExecutingAssembly().GetManifestResourceStream(EmbeddedBackgroundDark))
+                        if (embedded != null)
+                        {
+                            using (Image art = Image.FromStream(embedded)) return new Bitmap(art);
+                        }
+                }
+                catch (Exception) { }
+                return Load(exeDir, false);
             }
             try
             {

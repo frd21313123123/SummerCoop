@@ -33,6 +33,11 @@ namespace MWCoop
         {
             public string Id;
             public Rigidbody Body;
+            public Transform Transform, Parent, Root, MountCar;
+            public int MountVersion = -1;
+            public bool Following;
+            public int SeenPass;
+            public int NativeInstance;
             public int LastInst;                  // objet Unity du dernier corps (valise du mod Suitcase : recreee a chaque reapparition)
             public PlayMakerFSM Use;              // automate 'Use' qui porte l'ID (articles) : voit qu'il a disparu
             public int RemoteBy = -1;
@@ -77,6 +82,15 @@ namespace MWCoop
         static readonly List<Prop> ridingIn = new List<Prop>();    // colles ici a une copie de voiture
         static readonly List<Prop> ridingOut = new List<Prop>();   // transportes par nous
         static readonly List<Prop> vanished = new List<Prop>();
+        static readonly List<Prop> following = new List<Prop>();
+        static readonly Queue<Prop> snapshot = new Queue<Prop>();
+        static int hierarchyVersion;
+        static Rigidbody[] discovering;
+        static int discoveryCursor, discoveryPass;
+        static float discoveryBegan;
+        static bool initiallyScanned;
+        public static int DiscoveryPending { get { return discovering == null ? 0 : discovering.Length - discoveryCursor; } }
+        public static float DiscoveryAge { get { return discovering == null ? 0 : Time.realtimeSinceStartup - discoveryBegan; } }
         static readonly HashSet<string> noKey = new HashSet<string>();
         static readonly Dictionary<string, float> unknown = new Dictionary<string, float>();
         static float nextScan = -1, nextSend, nextHost, lastForced, nextRide;
@@ -86,8 +100,9 @@ namespace MWCoop
         public static void OnLevelLoaded()
         {
             props.Clear(); byBody.Clear(); settling.Clear(); worldKeys.Clear(); worldLogged = false; stored.Clear(); storedBy.Clear(); storedHere.Clear();
-            ridingIn.Clear(); ridingOut.Clear(); vanished.Clear(); unknown.Clear();
+            ridingIn.Clear(); ridingOut.Clear(); vanished.Clear(); unknown.Clear(); following.Clear(); snapshot.Clear(); hierarchyVersion++;
             hand = null; held = null;
+            discovering = null; initiallyScanned = false;
             nextScan = PlayerSync.InGame ? Time.realtimeSinceStartup + 10f : -1;
         }
 
@@ -197,7 +212,7 @@ namespace MWCoop
         {
             Prop p;
             if (!props.TryGetValue(id, out p)) { p = new Prop { Id = id }; props[id] = p; }
-            p.Body = rb;
+            BindBody(p, rb);
             // Valise du mod Suitcase recreee ici (reapparition : touche, bouton du mod, chute sous la carte -- l'ancienne est
             // detruite, la nouvelle posee devant le joueur) : sa pose part aux autres comme un objet lache.
             int inst = rb.GetInstanceID();
@@ -216,12 +231,33 @@ namespace MWCoop
 
         // Objet Unity detruit dont on garde la reference (le corps d'un article mange, empoche, jete).
         static bool Destroyed(Object o) { return !ReferenceEquals(o, null) && o == null; }
+        static void BindBody(Prop p, Rigidbody rb)
+        {
+            if (!ReferenceEquals(p.Body, rb))
+            {
+                bool controlled = p.Kinematic;
+                if (!ReferenceEquals(p.Body, null)) byBody.Remove(p.Body);
+                bool replaced = p.NativeInstance != rb.GetInstanceID();
+                if (replaced)
+                {
+                    SetKinematic(p, false); // Restore a surviving old body before replacing its native state.
+                    p.Kinematic = false; p.LayerWas = -1;
+                }
+                p.Body = rb; p.Transform = rb.transform; p.MountVersion = -1;
+                p.NativeInstance = rb.GetInstanceID();
+                if (replaced && controlled) SetKinematic(p, true); // Capture the new body's own original kinematic value.
+            }
+            if (p.RemoteBy >= 0 && p.RideCar < 0 && !p.Following) { p.Following = true; following.Add(p); }
+            p.SeenPass = discoveryPass;
+        }
 
         static void Scan()
         {
             // Le Rigidbody d'une piece disparait quand elle est montee et revient au demontage :
             // la table est refaite a chaque passage, seuls les objets physiques actifs y sont.
             float now = Time.realtimeSinceStartup;
+            discovering = null; initiallyScanned = true; discoveryPass++;
+            hierarchyVersion++;
             byBody.Clear();
             foreach (Prop p in props.Values)
             {
@@ -231,29 +267,7 @@ namespace MWCoop
             }
             bool census = Config.GetInt("Test", "JournalSansId", 0) != 0 && !censusDone;
             var noId = census ? new Dictionary<string, int>() : null;
-            foreach (Rigidbody rb in Object.FindObjectsOfType<Rigidbody>())
-            {
-                if (Game.RootName(rb.transform) == "PLAYER" && MscParts.IdOf(rb.gameObject).Length == 0 && rb.transform.parent.name != "ItemPivot") continue;
-                if (Garage.Owns(rb)) continue;   // levage d'un cric (corps rajoute par le jeu) : Garage, pas Props (recalage de l'hote sinon)
-                string bagKey = SleepingBags.KeyOf(rb) ?? Kauppa.KeyOf(rb) ?? Kauppa.ItemKeyOf(rb);   // (sacs de couchage de MWCoop, sacs de courses de la boutique)
-                if (bagKey != null) { Register(rb, bagKey, null); continue; }
-                PlayMakerFSM use = null;
-                string pre;
-                if (Jobs.JoinedLog(rb.gameObject)) continue;
-                string id = worldKeys.TryGetValue(rb.gameObject, out pre) && pre.StartsWith("w:cbx:") ? pre : ItemId(rb.gameObject, out use);   // (objets de Cheatbox++ : leur cle)
-                if (id.Length == 0) id = PackageKey(rb.gameObject);
-                if (id.Length == 0) id = WorldKey(rb) ?? "";
-                if (id.Length == 0)
-                {
-                    if (census && !rb.isKinematic && rb.GetComponent("CarDynamics") == null)
-                    {
-                        string k = rb.transform.root == rb.transform ? rb.name : Game.RootName(rb.transform) + "/.../" + rb.name;
-                        int c; noId.TryGetValue(k, out c); noId[k] = c + 1;
-                    }
-                    continue;
-                }
-                Register(rb, id, use);
-            }
+            foreach (Rigidbody rb in Object.FindObjectsOfType<Rigidbody>()) ScanBody(rb, census, noId);
             if (census)
             {
                 censusDone = true;
@@ -271,6 +285,52 @@ namespace MWCoop
                 GameObject h = Game.PlayerPart("Pivot/AnimPivot/Camera/FPSCamera/1Hand_Assemble/Hand");
                 if (h != null) hand = Game.FsmOn(h, "PickUp");
             }
+        }
+        static void ScanBody(Rigidbody rb, bool census, Dictionary<string, int> noId)
+        {
+                if (rb == null) return;
+                if (Game.RootName(rb.transform) == "PLAYER" && MscParts.IdOf(rb.gameObject).Length == 0 && (rb.transform.parent == null || rb.transform.parent.name != "ItemPivot")) return;
+                if (Garage.Owns(rb)) return;
+                string bagKey = SleepingBags.KeyOf(rb) ?? Kauppa.KeyOf(rb) ?? Kauppa.ItemKeyOf(rb);   // (sacs de couchage de MWCoop, sacs de courses de la boutique)
+                if (bagKey != null) { Register(rb, bagKey, null); return; }
+                PlayMakerFSM use = null;
+                string pre;
+                if (Jobs.JoinedLog(rb.gameObject)) return;
+                string id = worldKeys.TryGetValue(rb.gameObject, out pre) && pre.StartsWith("w:cbx:") ? pre : ItemId(rb.gameObject, out use);   // (objets de Cheatbox++ : leur cle)
+                if (id.Length == 0) id = PackageKey(rb.gameObject);
+                if (id.Length == 0) id = WorldKey(rb) ?? "";
+                if (id.Length == 0)
+                {
+                    if (census && !rb.isKinematic && rb.GetComponent("CarDynamics") == null)
+                    {
+                        string k = rb.transform.root == rb.transform ? rb.name : Game.RootName(rb.transform) + "/.../" + rb.name;
+                        int c; noId.TryGetValue(k, out c); noId[k] = c + 1;
+                    }
+                    return;
+                }
+                Register(rb, id, use);
+        }
+        static void Discover()
+        {
+            if (discovering == null) return;
+            while (discoveryCursor < discovering.Length && MscMaintenance.Available)
+            {
+                long started = MscMaintenance.Begin();
+                try { ScanBody(discovering[discoveryCursor++], false, null); }
+                finally { MscMaintenance.End(started); }
+            }
+            if (discoveryCursor < discovering.Length) return;
+            // Commit once: interpolation keeps the preceding body map throughout discovery.
+            long commitStarted = MscMaintenance.Begin();
+            byBody.Clear();
+            foreach (Prop p in props.Values)
+            {
+                if (Destroyed(p.Body)) Gone(p, Time.realtimeSinceStartup);
+                if (p.Body != null && (p.SeenPass == discoveryPass || p.Hidden)) byBody[p.Body] = p;
+                else p.Body = null;
+            }
+            discovering = null; hierarchyVersion++; nextScan = Time.realtimeSinceStartup + 10;
+            MscMaintenance.End(commitStarted);
         }
 
         // Objet d'un mod suivi sous une cle donnee (Cheatbox++ : bois et sacs de sable), tout de suite.
@@ -296,6 +356,7 @@ namespace MWCoop
             if (nextScan < 0 || go == null || Jobs.JoinedLog(go)) return;
             Rigidbody rb = go.GetComponent<Rigidbody>();
             if (rb == null || byBody.ContainsKey(rb)) return;
+            MscParts.Changed(go); // Native purchase/spawn: index the new object before the periodic fallback.
             PlayMakerFSM use;
             string id = ItemId(go, out use);
             if (id.Length == 0) id = PackageKey(go);
@@ -313,7 +374,12 @@ namespace MWCoop
         {
             if (!Session.Active || !PlayerSync.InGame || nextScan < 0) return;
             float now = Time.realtimeSinceStartup;
-            if (now >= nextScan) { nextScan = now + 10f; Scan(); }
+            if (now >= nextScan && discovering == null)
+            {
+                if (!initiallyScanned) { nextScan = now + 10f; Scan(); }
+                else { discoveryPass++; discoveryCursor = 0; discoveryBegan = now; discovering = Object.FindObjectsOfType<Rigidbody>(); }
+            }
+            Discover();
 
             // Piece tenue localement
             Prop h = null;
@@ -399,7 +465,7 @@ namespace MWCoop
                     Prop sp;
                     if (rb != null && props.TryGetValue(back, out sp) && sp != held)
                     {
-                        sp.Body = rb; byBody[rb] = sp;
+                        BindBody(sp, rb); byBody[rb] = sp;
                         sp.SettleUntil = now + 5f;
                         if (!settling.Contains(sp)) settling.Add(sp);
                         Send(sp, 2, true);
@@ -421,7 +487,7 @@ namespace MWCoop
             {
                 nextHost = now + 2f;
                 foreach (Prop p in props.Values)
-                    if (HostResends(p) && (p.Body.position - p.LastSentPos).sqrMagnitude >= 0.04f) Send(p, 0);
+                    if (p.Body != null && (p.Body.position - p.LastSentPos).sqrMagnitude >= 0.04f && HostResends(p)) Send(p, 0);
             }
             // Invite : ce qu'il a pousse sans le prendre (tables et chaises du pub, en marchant ou en voiture) ne partait jamais --
             // seul l'hote recale ; la table restait deplacee chez lui seul (retour de CBetoy, 13/10). Une fois immobile, a moins
@@ -451,16 +517,36 @@ namespace MWCoop
             if (Session.IsHost && resendAt > 0f && now >= resendAt)
             {
                 resendAt = 0f;
-                int n = 0;
-                foreach (Prop p in props.Values) if (HostResends(p)) { Send(p, 0, true); n++; }
-                Log.Info("objets : pose de " + n + " objets au repos renvoyee (invite arrive en jeu)");
+                snapshot.Clear();
+                foreach (Prop p in props.Values) snapshot.Enqueue(p);
+                Log.Info("objets : instantane reparti sur les images, " + snapshot.Count + " candidats");
+            }
+            // Background full snapshots never monopolize an image or fill the reliable queue.
+            if (snapshot.Count > 0 && !ReliableBusy() && MscMaintenance.Available)
+            {
+                long started = System.Diagnostics.Stopwatch.GetTimestamp();
+                double remaining = System.Math.Min(.25, MscMaintenance.RemainingMilliseconds);
+                for (int n = 0; n < 16 && snapshot.Count > 0; n++)
+                {
+                    Prop p = snapshot.Dequeue();
+                    if (HostResends(p)) Send(p, 0, true);
+                    if ((System.Diagnostics.Stopwatch.GetTimestamp() - started) * 1000.0 / System.Diagnostics.Stopwatch.Frequency >= remaining) break;
+                }
+                MscMaintenance.End(started);
             }
 
             foreach (Prop p in props.Values)
             {
                 if (p.Body == null) { if (p.GoneAt == 0f && Destroyed(p.Body)) Gone(p, now); continue; }
+                // An idle local body has no remote interpolation/physics state to release.
+                if (p.RemoteBy < 0 && p.RideCar < 0 && p.RideOut < 0 && !p.Kinematic && p.LayerWas < 0 && p != held) continue;
                 if (Mounted(p)) { ReleaseMounted(p); continue; }
-                if (p.RemoteBy < 0 || p.RideCar >= 0) continue;   // transporte : place apres la physique (LateUpdate)
+            }
+            for (int i = following.Count - 1; i >= 0; i--)
+            {
+                Prop p = following[i];
+                if (p.Body == null || p.RemoteBy < 0 || p.RideCar >= 0)
+                { p.Following = false; following.RemoveAt(i); continue; }
                 if (now - p.LastRemote > 1.5f) { p.RemoteBy = -1; SetKinematic(p, false); continue; }
                 Follow(p);
             }
@@ -489,9 +575,29 @@ namespace MWCoop
         static float resendAt;
         public static void ScheduleSnapshot() { if (Session.IsHost) resendAt = Time.realtimeSinceStartup + 20f; }
 
+        static bool ReliableBusy()
+        {
+            if (Session.T == null) return true;
+            foreach (Peer peer in Session.T.Peers) if (peer.waiting.Count > 256) return true;
+            return false;
+        }
+        public static int SnapshotPending { get { return snapshot.Count; } }
+        public static void InvalidateHierarchy() { hierarchyVersion++; }
+
         static bool Mounted(Prop p)
         {
-            return p.Body != null && p.Body.transform.parent != null && !Game.UnderPlayer(p.Body.transform) && VehicleSync.CarRoot(p.Body.transform) != null;
+            if (p.Body == null) return false;
+            Transform t = p.Transform;
+            if (t == null) p.Transform = t = p.Body.transform;
+            Transform parent = t.parent;
+            if (parent == null) return false;
+            Transform root = t.root;
+            if (p.MountVersion != hierarchyVersion || p.Parent != parent || p.Root != root)
+            {
+                p.Parent = parent; p.Root = root; p.MountVersion = hierarchyVersion;
+                p.MountCar = Game.UnderPlayer(t) ? null : VehicleSync.CarRoot(t);
+            }
+            return p.MountCar != null;
         }
         static void ReleaseMounted(Prop p)
         {
@@ -583,12 +689,15 @@ namespace MWCoop
             if (p.Body == null) return;
             if (Mounted(p)) { ReleaseMounted(p); return; }
             p.LastSentPos = p.Body.position;
-            var w = new NetWriter(Msg.Prop).U8(Session.LocalId).Str(p.Id).U8(state)
+            using (var w = NetWriter.Rent(Msg.Prop))
+            {
+            w.U8(Session.LocalId).Str(p.Id).U8(state)
                 .Vec(p.Body.position).Quat(p.Body.rotation).Vec(p.Body.velocity);
             if (state != STORED) stored.Remove(p.Id);
             if (state == 0) InCarPose(p, w);
             else if (state == 1 || state == 2) RidePose(p, w);
             Session.SendAll(w, reliable);
+            }
         }
 
         // Lache en passager dans la copie d'une voiture conduite ailleurs : pas de chute ici (la copie, deplacee a chaque
@@ -915,6 +1024,7 @@ namespace MWCoop
                 if (p.RemoteBy != who) Log.Info("piece " + id + " deplacee par #" + who);
                 p.RemoteBy = who;
                 p.LastRemote = Time.realtimeSinceStartup;
+                if (!p.Following) { p.Following = true; following.Add(p); }
                 SetKinematic(p, true);
                 return;
             }

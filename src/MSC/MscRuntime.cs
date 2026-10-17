@@ -26,19 +26,30 @@ namespace MWCoop
         };
         sealed class Failure { public int Count; public float Retry; public string Message; }
         static readonly Dictionary<string, Failure> failures = new Dictionary<string, Failure>();
+        static readonly string[] arguments = Environment.GetCommandLineArgs();
+        static readonly Dictionary<MethodInfo, Invocation> invocations = new Dictionary<MethodInfo, Invocation>();
+        public sealed class Invocation
+        {
+            internal Action Action;
+            internal string Key;
+            internal bool Supported;
+        }
+        public static Invocation Prepare(Action action)
+        {
+            return new Invocation { Action = action, Key = action.Method.DeclaringType.Name + "." + action.Method.Name, Supported = Supports(action.Method.DeclaringType) };
+        }
         public static IEnumerable<string> Failures
         {
             get { foreach (KeyValuePair<string, Failure> item in failures) yield return item.Key + ": " + item.Value.Message; }
         }
         public static string Argument(string key)
         {
-            string[] args = Environment.GetCommandLineArgs(); int i = Array.IndexOf(args, key);
-            return i >= 0 && i + 1 < args.Length ? args[i + 1] : "";
+            int i = Array.IndexOf(arguments, key);
+            return i >= 0 && i + 1 < arguments.Length ? arguments[i + 1] : "";
         }
         public static bool HasArgument(string key)
         {
-            string[] args = Environment.GetCommandLineArgs();
-            return Array.IndexOf(args, key) >= 0;
+            return Array.IndexOf(arguments, key) >= 0;
         }
         public static void TouchLoaderTrace()
         {
@@ -92,6 +103,7 @@ namespace MWCoop
                     break;
                 }
             }
+            MscLauncher.Initialize(gameDir, data, target);
             TouchLoaderTrace();
         }
         public static void Configure()
@@ -123,6 +135,7 @@ namespace MWCoop
             string partie = Config.Get("Arg", "partie", Config.Get("Coop", "Partie", "")).ToLowerInvariant();
             bool auto = HasArgument("--summercoop-auto") || Config.HasArg("auto") || partie == "continuer" || partie == "nouvelle";
             AutoStart = host || guest || auto;
+            CarColor.NewGame = !guest && partie == "nouvelle";
 
             Config.Override("Coop", "Mode", guest ? "client" : (host || AutoStart) && mode != "solo" ? "host" : "solo");
             Config.Override("Coop", "Reseau", steamHost || steamLobby.Length > 0 || rawReseau == "steam" ? "steam" : "ip");
@@ -170,9 +183,17 @@ namespace MWCoop
         public static bool Supports(Type module) { return module == null || !excluded.Contains(module.Name); }
         public static void Run(Action action)
         {
-            if (!Supports(action.Method.DeclaringType)) return;
-            if (action.Method.DeclaringType == typeof(Studio) && action.Method.Name == "Update" && !Menu.Open) return;
-            string key = action.Method.DeclaringType.Name + "." + action.Method.Name;
+            Invocation invocation;
+            if (!invocations.TryGetValue(action.Method, out invocation))
+                invocations[action.Method] = invocation = Prepare(action);
+            // Metadata is reusable; the caller's delegate target is not.
+            Run(invocation, action);
+        }
+        public static void Run(Invocation invocation) { Run(invocation, invocation.Action); }
+        static void Run(Invocation invocation, Action action)
+        {
+            if (!invocation.Supported) return;
+            string key = invocation.Key;
             Failure failure;
             if (failures.TryGetValue(key, out failure) && Time.realtimeSinceStartup < failure.Retry) return;
             try { action(); failures.Remove(key); }

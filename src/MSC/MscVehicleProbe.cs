@@ -22,6 +22,14 @@ namespace MWCoop
         static long startTicks;
         static int respawnStage;
         static float respawnAt;
+        static Rigidbody controlled;
+        static bool collisionBefore, gravityBefore, satsumaLifted;
+        static RigidbodyConstraints constraintsBefore;
+        static void RestoreFixture()
+        {
+            if (controlled != null) { controlled.detectCollisions = collisionBefore; controlled.useGravity = gravityBefore; controlled.constraints = constraintsBefore; }
+            controlled = null;
+        }
 
         public static void Update()
         {
@@ -42,23 +50,34 @@ namespace MWCoop
             string clock = Path.Combine(channel, "start.txt");
             if (startTicks == 0)
             {
-                if (Session.IsHost && !File.Exists(clock)) File.WriteAllText(clock, DateTime.UtcNow.AddSeconds(6).Ticks.ToString(CultureInfo.InvariantCulture));
-                if (!File.Exists(clock) || !long.TryParse(File.ReadAllText(clock), out startTicks)) return;
+                if (Session.IsHost && !File.Exists(clock)) MscProbeFiles.WriteAllText(clock, DateTime.UtcNow.AddSeconds(6).Ticks.ToString(CultureInfo.InvariantCulture));
+                if (!File.Exists(clock) || !long.TryParse(MscProbeFiles.ReadAllText(clock), out startTicks)) return;
             }
             float elapsed = (float)TimeSpan.FromTicks(DateTime.UtcNow.Ticks - startTicks).TotalSeconds;
             if (elapsed < 0) return;
             int current = (int)(elapsed / 14f);
-            if (current >= vehicles.Length * 2) { CheckRespawns(); return; }
+            if (current >= vehicles.Length * 2) { RestoreFixture(); CheckRespawns(); return; }
             float phase = elapsed - current * 14f;
             string name = vehicles[current / 2];
             bool driver = (current % 2 == 0) != Session.IsHost;
             Rigidbody body = VehicleSync.Body(name);
             if (current != stage)
             {
+                if (name != "SATSUMA") RestoreFixture();
                 stage = current; approached = entered = captured = false;
                 distance = 0; correctAuthority = received = 0; entry = exit = "";
                 first = body != null ? body.position : Vector3.zero;
                 Log.Info("MSC vehicle probe stage " + stage + " " + name + (driver ? " DRIVER" : " OBSERVER"));
+            }
+            if (name == "SATSUMA" && body != null && controlled != body)
+            {
+                controlled = body; collisionBefore = body.detectCollisions; gravityBefore = body.useGravity; constraintsBefore = body.constraints;
+                body.detectCollisions = false; body.useGravity = false; body.constraints |= RigidbodyConstraints.FreezeRotation;
+                if (Session.IsHost && !satsumaLifted)
+                {
+                    satsumaLifted = true; body.position += Vector3.up * 3;
+                    body.rotation = Quaternion.Euler(0, body.rotation.eulerAngles.y, 0);
+                }
             }
             if (driver && !approached)
             {
@@ -109,7 +128,8 @@ namespace MWCoop
                 captured = true;
                 bool ok = body != null && received >= 5 && correctAuthority >= received * .8f && distance > 4f;
                 string result = "VehicleProbe=" + name + ",driver=" + (current % 2 == 0 ? "guest" : "host") + ",role=" + (driver ? "driver" : "observer")
-                    + ",pass=" + ok + ",distance=" + distance.ToString("F2", CultureInfo.InvariantCulture) + ",ownerSamples=" + correctAuthority + "/" + received + ",entry=" + entry + ",exit=" + exit;
+                    + ",pass=" + ok + ",distance=" + distance.ToString("F2", CultureInfo.InvariantCulture) + ",ownerSamples=" + correctAuthority + "/" + received
+                    + ",fixture=" + (name == "SATSUMA" ? "airborne controlled velocity" : "ground controlled velocity") + ",entry=" + entry + ",exit=" + exit;
                 Results.Add(result); Log.Info(result);
             }
         }

@@ -99,7 +99,7 @@ namespace MWCoop
         }
 
         // Modules de la boucle, dans l'ordre ; delegues crees une fois (un par module et par image sinon : allocations).
-        struct Mod { public readonly string Name; public readonly System.Action Run; public Mod(string n, System.Action r) { Name = n; Run = r; } }
+        struct Mod { public readonly string Name; public readonly MscRuntime.Invocation Run; public Mod(string n, System.Action r) { Name = n; Run = MscRuntime.Prepare(r); } }
         static readonly Mod[] mods =
         {
             new Mod("session", Session.Update),
@@ -119,6 +119,7 @@ namespace MWCoop
             new Mod("menu", Menu.Update),
             new Mod("mscloader", MscMods.Update),
             new Mod("lanceur", MWCoop.Net.Admin.Update),
+            new Mod("file IO", MscIo.Update),
             new Mod("supports MSC", MscPlatforms.Update),
             new Mod("kilju MSC", MscBrewing.Update),
             new Mod("sommeil MSC", MscSleep.Update),
@@ -185,6 +186,7 @@ namespace MWCoop
             new Mod("graphismes", Gfx.Update),
             new Mod("rallye", Rally.Update),
             new Mod("couleur", CarColor.Update),
+            new Mod("lanceur MSC", MscLauncher.Update),
             new Mod("peinture", CustomPaint.Update),
             new Mod("carburant", FuelPrices.Update),
             new Mod("telephone", PhoneKeys.Update),
@@ -209,7 +211,7 @@ namespace MWCoop
         // [Test] SautModules=a,b,... : ces modules ne tournent plus apres 60 s de jeu ("*" : tous sauf session, joueurs, deroule, autotest) -- mesures.
         static System.Collections.Generic.HashSet<string> skip;
         static bool skipAll;
-        static void Step(string what, System.Action a)
+        static void Step(string what, MscRuntime.Invocation a)
         {
             if (skip == null)
             {
@@ -343,6 +345,7 @@ namespace MWCoop
             // Le lanceur cherche cette ligne : absente a la fin du journal, le jeu s'est arrete brutalement (crash,
             // processus tue) et l'icone des journaux porte un "!" rouge.
             if (!closed) { closed = true; Log.Info("jeu ferme normalement"); }
+            Log.Close();
         }
 
         // (aussi a la destruction de ce module, qui ne survient qu'a la fermeture du jeu : au cas ou Unity sauterait
@@ -351,6 +354,7 @@ namespace MWCoop
         void OnDestroy()
         {
             if (!closed) { closed = true; Log.Info("jeu ferme normalement"); }
+            Log.Close();
         }
     }
 }

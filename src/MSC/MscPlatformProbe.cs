@@ -42,9 +42,9 @@ namespace MWCoop
                 direction = motor.GetType().GetField("inputMoveDirection"); jump = motor.GetType().GetField("inputJump");
                 movement = motor.GetType().GetField("movement").GetValue(motor);
                 string ready = Path.Combine(channel, Session.IsHost ? "host-ready.txt" : "guest-ready.txt");
-                if (!File.Exists(ready)) File.WriteAllText(ready, MscPlatforms.NativeState ?? "waiting");
-                if (Session.IsHost && File.Exists(Path.Combine(channel, "guest-ready.txt")) && !File.Exists(clock)) File.WriteAllText(clock, DateTime.UtcNow.AddSeconds(4).Ticks.ToString(C));
-                if (!File.Exists(clock) || !long.TryParse(File.ReadAllText(clock), out ticks)) return;
+                if (!File.Exists(ready)) MscProbeFiles.WriteAllText(ready, MscPlatforms.NativeState ?? "waiting");
+                if (Session.IsHost && File.Exists(Path.Combine(channel, "guest-ready.txt")) && !File.Exists(clock)) MscProbeFiles.WriteAllText(clock, DateTime.UtcNow.AddSeconds(4).Ticks.ToString(C));
+                if (!File.Exists(clock) || !long.TryParse(MscProbeFiles.ReadAllText(clock), out ticks)) return;
             }
             float elapsed = (float)TimeSpan.FromTicks(DateTime.UtcNow.Ticks - ticks).TotalSeconds;
             if (elapsed < 0) return;
@@ -68,7 +68,7 @@ namespace MWCoop
                     if (name == "BOAT")
                     {
                         Freeze(lead); MoveBody(lead, new Vector3(current * 35, 35, 0)); prepared = true;
-                        File.WriteAllText(Path.Combine(channel, "carrier-" + stage + ".txt"), name);
+                        MscProbeFiles.WriteAllText(Path.Combine(channel, "carrier-" + stage + ".txt"), name);
                     }
                     if (name != "FLATBED") VehicleSync.TestEnter(leadName, false);
                 }
@@ -83,7 +83,7 @@ namespace MWCoop
                 // The previous driver can still have release packets in flight.
                 // Set the fixture pose only after native entry claims authority.
                 Freeze(lead); MoveBody(lead, new Vector3(current * 35, 35, 0)); prepared = true;
-                File.WriteAllText(Path.Combine(channel, "carrier-" + stage + ".txt"), name);
+                MscProbeFiles.WriteAllText(Path.Combine(channel, "carrier-" + stage + ".txt"), name);
             }
             if (driver && phase >= 6 && phase < 20 && !lead.isKinematic)
             {
@@ -100,7 +100,7 @@ namespace MWCoop
                     if (!Floor(carrier, out point)) throw new InvalidOperationException("Native vehicle has no walkable collider: " + name);
                     Teleport(point + Vector3.up * .04f);
                     start = carrier.position; rest = carrier.transform.InverseTransformPoint(PlayerSync.BuildLocal().Feet);
-                    File.WriteAllText(Path.Combine(channel, "point-" + stage + ".txt"), rest.x.ToString("R", C) + "|" + rest.y.ToString("R", C) + "|" + rest.z.ToString("R", C));
+                    MscProbeFiles.WriteAllText(Path.Combine(channel, "point-" + stage + ".txt"), rest.x.ToString("R", C) + "|" + rest.y.ToString("R", C) + "|" + rest.z.ToString("R", C));
                 }
                 direction.SetValue(motor, phase >= 12 && phase < 14 ? carrier.transform.forward * .07f : Vector3.zero);
                 jump.SetValue(motor, phase >= 15 && phase < 15.8f);
@@ -157,8 +157,8 @@ namespace MWCoop
                     + ";Walk=" + walk.ToString("F3", C) + ";Jump=" + jumped + ";Left=" + detached + ";Remote=" + remoteAttached + "/" + remoteSamples
                     + ";Rendered=" + remoteRendered + "/" + remoteSamples + ";RenderGap=" + renderGap.ToString("F3", C);
                 Results.Add(result); Log.Info(result);
-                File.WriteAllText(Path.Combine(channel, (Session.IsHost ? "host-" : "guest-") + stage + ".txt"), result);
-                if (!driver) File.WriteAllLines(Path.Combine(channel, "diagnostic-" + stage + ".txt"), diagnostics.ToArray());
+                MscProbeFiles.WriteAllText(Path.Combine(channel, (Session.IsHost ? "host-" : "guest-") + stage + ".txt"), result);
+                if (!driver) MscProbeFiles.WriteAllLines(Path.Combine(channel, "diagnostic-" + stage + ".txt"), diagnostics.ToArray());
             }
         }
         static void Freeze(Rigidbody b)

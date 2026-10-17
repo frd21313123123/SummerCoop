@@ -9,7 +9,8 @@ namespace MWCoop
     // Studio photo des apparences (tenues) : un personnage seul (Avatar.CreatePreview), loin sous le monde, sur une
     // couche a lui que rien d'autre n'utilise, eclaire par ses propres lumieres (allumees le temps du rendu) et filme
     // par une camera desactivee, rendue a la main dans une RenderTexture.
-    //  - Apercus du lanceur (format fixe, lu par MWCoop.exe) : en partie, ~30 s apres le chargement, si le cache est
+    //  - Apercus du lanceur (format fixe, lu par MWCoop.exe) : maillages prepares par etapes au chargement ;
+    //    bandes PNG preparees dans le menu d'apparence, si le cache est
     //    absent ou perime (version du mod, liste des tenues, [Test] RefaireTenues=1), dans <MWCOOP_DIR>\cache\skins\ :
     //      <tenue>.png : bande de 16 vues de 160 x 320 (2560 x 320), fond transparent ; vue i = personnage tourne de
     //        i x 22,5 degres vers SA gauche (vue 0 de face) : 0..15 = un plateau tournant. Pieds a ~8 px du bas,
@@ -58,6 +59,9 @@ namespace MWCoop
         static float checkAt = -1;
         static int tries;
         static bool forcePending, testing;
+        static bool previewRequested;
+        static bool meshOnly, exportReady;
+        static IEnumerator exporter;
         static List<string> todo;
         static int skinIdx, step, written;
         static float jobT0;
@@ -76,11 +80,37 @@ namespace MWCoop
             sceneLights = null;
             layer = -1;
             tries = 0;
-            checkAt = PlayerSync.InGame ? Time.realtimeSinceStartup + 30f : -1;
+            previewRequested = false;
+            exportReady = false;
+            meshOnly = MscRuntime.Enabled;
+            checkAt = PlayerSync.InGame ? Time.realtimeSinceStartup + (meshOnly ? 1f : 30f) : -1;
         }
 
         public static void Update()
         {
+            if (exporter != null)
+            {
+                if (!MscMaintenance.Available) return;
+                long began = MscMaintenance.Begin();
+                try
+                {
+                    if (!exporter.MoveNext())
+                    {
+                        ((System.IDisposable)exporter).Dispose(); exporter = null;
+                        exportReady = true;
+                        Log.Info("apparences : apercu du lanceur exporte, " + Looks.ExportSummary);
+                        checkAt = Time.realtimeSinceStartup;
+                    }
+                }
+                catch (System.Exception e)
+                {
+                    ((System.IDisposable)exporter).Dispose(); exporter = null;
+                    Log.Warn("apparences : export de l'apercu : " + e);
+                    Retry("export incomplet");
+                }
+                finally { MscMaintenance.End(began); }
+                return;
+            }
             if (!PlayerSync.InGame || todo != null || checkAt < 0 || Time.realtimeSinceStartup < checkAt) return;
             checkAt = -1;
             TryStart(forcePending);
@@ -95,14 +125,20 @@ namespace MWCoop
 
         static void TryStart(bool force)
         {
-            if (todo != null) return;
+            if (todo != null || exporter != null) return;
             bool forced = force || Config.GetInt("Test", "RefaireTenues", 0) != 0;
             forcePending = force;
-            if (forced || !Looks.PreviewFresh())   // corps, accessoires et matieres pour l'apercu 3D du lanceur (volet TENUE)
+            if (!exportReady && (forced || !Looks.PreviewFresh()))
             {
                 if (layer < 0) layer = PickLayer();
-                try { Log.Info("apparences : apercu du lanceur exporte, " + Looks.Export(layer)); }
-                catch (System.Exception e) { Log.Warn("apparences : export de l'apercu : " + e); }
+                exporter = Looks.ExportSteps(layer);
+                return;
+            }
+            if (meshOnly && !forced) return;
+            if (MscRuntime.Enabled && !Menu.Open && !forced)
+            {
+                checkAt = Time.realtimeSinceStartup + 1f;
+                return;
             }
             if (!forced && Config.GetInt("Coop", "ApercuTenues", 1) == 0) { Log.Info("tenues : apercus du lanceur desactives ([Coop] ApercuTenues=0)"); return; }
             var list = new List<string>();
@@ -181,6 +217,7 @@ namespace MWCoop
 
         static void EndJob()
         {
+            if (exporter != null) { ((System.IDisposable)exporter).Dispose(); exporter = null; }
             todo = null;
             if (frameRt != null) frameRt.Release();
             if (portraitRt != null) portraitRt.Release();
@@ -277,7 +314,7 @@ namespace MWCoop
         // Apres les animations : tenue, angle et pose de chaque personnage a photographier dans cette image.
         public static void LateUpdate()
         {
-            if (todo != null)
+            if (todo != null && (!MscRuntime.Enabled || Menu.Open || testing))
             {
                 if (gen == null || !gen.Alive || cam == null) { Log.Warn("tenues : studio perdu, apercus interrompus"); EndJob(); }
                 else Pose(gen, todo[skinIdx], step >= Frames ? -15f : -22.5f * step, 0f);   // vers sa gauche
@@ -342,7 +379,7 @@ namespace MWCoop
                     try { LiveStep(); }
                     catch (System.Exception e) { Log.Error("tenues (menu) : " + e); liveBroken = true; }
                 }
-                idle = any || todo != null ? 0 : idle + 1;
+                idle = any || (todo != null && (!MscRuntime.Enabled || Menu.Open || testing)) ? 0 : idle + 1;
             }
             loopRunning = false;
         }
@@ -580,6 +617,14 @@ namespace MWCoop
         // precedente, null tant qu'il n'y en a pas.
         public static Texture Live(string skin, int w, int h)
         {
+            // Meshes are already prepared at load; thumbnail rendering is requested by appearance UI.
+            if (MscRuntime.Enabled && !previewRequested)
+            {
+                previewRequested = true;
+                meshOnly = false;
+                checkAt = Time.realtimeSinceStartup;
+            }
+            if (todo != null) StartLoop();
             liveFrame = Time.frameCount;
             liveSkin = skin ?? "";
             liveW = Mathf.Clamp(w, 16, 1024);
@@ -610,6 +655,7 @@ namespace MWCoop
                 Log.Info("autotest : tenues regeneration forcee");
                 checkAt = -1;
                 tries = 0;
+                exportReady = false;
                 if (todo != null) Log.Info("autotest : tenues deja en cours");
                 else TryStart(true);
             }

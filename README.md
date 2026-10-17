@@ -53,6 +53,10 @@
 
 ## Готовые файлы
 
+Оптимизация действующего движка MWCoop, методика измерения 2560×1440 и границы
+проверки: [PERFORMANCE-MWCOOP.md](docs/PERFORMANCE-MWCOOP.md),
+[результаты](docs/PERFORMANCE-MWCOOP-RESULTS.md).
+
 Локальная сборка и установочные файлы создаются в `dist`:
 
 - `SummerCoop-Launcher.exe` — единственный установочный файл: лаунчер находит игру, сам

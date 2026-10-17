@@ -41,13 +41,13 @@ namespace MWCoop
                 GameObject juice = products["Juice"][0]; PlayMakerFSM use = Game.FsmOn(juice, "Use");
                 use.FsmVariables.FindFsmBool("ContainsJuice").Value = false; use.FsmVariables.FindFsmBool("ContainsKilju").Value = false;
                 Replay.Depth++; try { use.SendEvent("GLOBALEVENT"); } finally { Replay.Depth--; }
-                File.WriteAllText(Path.Combine(channel, role + "-ready.txt"), "ready");
+                MscProbeFiles.WriteAllText(Path.Combine(channel, role + "-ready.txt"), "ready");
             }
             string clockFile = Path.Combine(channel, "start.txt");
             if (ticks == 0)
             {
-                if (Session.IsHost && File.Exists(Path.Combine(channel, "guest-ready.txt")) && !File.Exists(clockFile)) File.WriteAllText(clockFile, DateTime.UtcNow.AddSeconds(3).Ticks.ToString(C));
-                if (!File.Exists(clockFile) || !long.TryParse(File.ReadAllText(clockFile), out ticks)) return;
+                if (Session.IsHost && File.Exists(Path.Combine(channel, "guest-ready.txt")) && !File.Exists(clockFile)) MscProbeFiles.WriteAllText(clockFile, DateTime.UtcNow.AddSeconds(3).Ticks.ToString(C));
+                if (!File.Exists(clockFile) || !long.TryParse(MscProbeFiles.ReadAllText(clockFile), out ticks)) return;
             }
             float t = (float)TimeSpan.FromTicks(DateTime.UtcNow.Ticks - ticks).TotalSeconds; if (t < 0) return;
             Run(channel, t);
@@ -73,7 +73,7 @@ namespace MWCoop
                     .Append(" active=").Append(f.gameObject.activeInHierarchy).Append(" owner=").Append(Replay.Owner(f) ?? "none").Append('\n');
                 Recon.AppendFsm(text, "", f, true);
             }
-            File.WriteAllText(Path.Combine(channel, role + "-native.txt"), text.ToString());
+            MscProbeFiles.WriteAllText(Path.Combine(channel, role + "-native.txt"), text.ToString());
             Results.Add("ActivitiesInspection=Fsms=" + all.Count);
         }
         static PlayMakerFSM Fsm(string path, string name)
@@ -85,10 +85,38 @@ namespace MWCoop
         {
             brew = MscBrewing.Bucket; if (brew == null) throw new InvalidOperationException("MSC brewing adapter did not resolve its bucket");
             water = Fsm("ITEMS/bucket(itemx)/BucketTrigger", "Level"); ingredient = Fsm("ITEMS/bucket(itemx)/TriggerIngredients", "Level"); fill = Fsm("ITEMS/bucket(itemx)/TriggerFill", "Fill");
-            lidOn = Fsm("ITEMS/bucket(itemx)/trigger_lid", "Assembly"); lidOff = Fsm("ITEMS/bucket lid(itemx)", "Removal");
+            lidOn = Fsm("ITEMS/bucket(itemx)/trigger_lid", "Assembly");
+            foreach (UnityEngine.Object item in Game.AllFsms())
+            {
+                PlayMakerFSM f = item as PlayMakerFSM;
+                if (f != null && f.hideFlags == HideFlags.None && f.name == "bucket lid(itemx)" && f.FsmName == "Removal")
+                {
+                    if (lidOff != null && lidOff != f) throw new InvalidOperationException("Ambiguous bucket lid fixture");
+                    lidOff = f;
+                }
+            }
+            if (lidOff == null) throw new InvalidOperationException("Native bucket lid removal fixture absent");
             stove = Fsm("COTTAGE/Sauna/Stove/WoodTrigger", "Trigger"); fire = Fsm("COTTAGE/Sauna/Stove/SetFire", "Use"); heat = Fsm("COTTAGE/Sauna/Stove/Simulation", "Time"); steam = Fsm("COTTAGE/Sauna/Stove/StoveTrigger", "Steam");
             logwall = Fsm("COTTAGE/Logging/Logwall", "Use"); grill = Fsm("COTTAGE/Grill/Fireplace/SausageTrigger", "Logic");
             pan = Fsm("ITEMS/coffee pan(itemx)", "Data"); cup = Fsm("ITEMS/coffee cup(itemx)", "Use");
+            // A copied profile may start with a mounted lid and some water.
+            // Normalize before the timed steps; the native empty state on an inactive
+            // trigger can otherwise run later, after the test has already filled the bucket.
+            Replay.Depth++;
+            try
+            {
+                Rigidbody fixtureBody = brew.GetComponent<Rigidbody>();
+                if (fixtureBody != null) { fixtureBody.isKinematic = true; fixtureBody.useGravity = false; }
+                brew.transform.rotation = Quaternion.identity;
+                brew.transform.position = new Vector3(0, 50, 0);
+                Lid(false);
+                foreach (string key in new[] { "Alcohol", "Sugar", "Sweetness", "Time", "Vinegar", "Water", "Yeast" }) FireTools.SetF(brew, key, 0);
+                brew.FsmVariables.FindFsmBool("KiljuFinished").Value = false;
+                brew.FsmVariables.FindFsmBool("LidOn").Value = false;
+                brew.SendEvent("GLOBALEVENT");
+            }
+            finally { Replay.Depth--; }
+            Log.Info("Activity fixture bucket reset: " + BucketDetails());
             FireTools.SetF(brew, "BrewTime", 20); FireTools.SetF(fire, "BurnTime", 30);
             foreach (var entry in new[] { "Sugar:2", "Yeast:1", "Juice:1", "Sausages:1" })
             {
@@ -104,6 +132,12 @@ namespace MWCoop
                     list.Add(go);
                 }
             }
+        }
+        static string BucketDetails()
+        {
+            BrewState state = MscBrewing.Capture();
+            return "Water=" + state.Water + ";Sugar=" + state.Sugar + ";Yeast=" + state.Yeast + ";Alcohol=" + state.Alcohol
+                + ";Sweetness=" + state.Sweetness + ";Time=" + state.Time + ";Vinegar=" + state.Vinegar + ";State=" + brew.ActiveStateName;
         }
         static bool At(int step, float t, float at) { return t >= at && steps.Add(step); }
         static GameObject Obj(PlayMakerFSM f, string name) { FsmGameObject value = f.FsmVariables.FindFsmGameObject(name); return value != null ? value.Value : null; }
@@ -187,7 +221,7 @@ namespace MWCoop
         static void Record(string channel, string name, bool pass, string detail)
         {
             string line = "Activity=" + name + ";Pass=" + pass + ";" + detail;
-            Results.Add(line); Log.Info(line); File.WriteAllText(Path.Combine(channel, role + "-" + name + ".txt"), line);
+            Results.Add(line); Log.Info(line); MscProbeFiles.WriteAllText(Path.Combine(channel, role + "-" + name + ".txt"), line);
         }
         static void Run(string channel, float t)
         {

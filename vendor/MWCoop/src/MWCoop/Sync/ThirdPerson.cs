@@ -78,7 +78,7 @@ namespace MWCoop
             if (handCam != null && handCam.enabled && Active) handCam.enabled = false;
             PlayerInfo pi = Session.Me;
             if (pi == null) return;
-            if (me != null && (me.Root == null || meSkin != pi.Skin && me.Body != Looks.Parse(pi.Skin).Body)) { me.Destroy(); me = null; }
+            if (me != null && (me.Root == null || meSkin != pi.Skin && me.Body != pi.BodyKey)) { me.Destroy(); me = null; }
             if (me == null)
             {
                 me = Avatar.Create(pi);

@@ -22,6 +22,8 @@ namespace MWCoop
         static float preparedAt = -1, nextStep;
         static long clockTicks;
         static int phaseIndex = -1, step;
+        static int busyBoltStates, boltInputs;
+        static readonly Dictionary<PlayMakerFSM, int> boltAttempts = new Dictionary<PlayMakerFSM, int>();
         static bool initialized, recorded;
         static string Role { get { return Session.IsHost ? "host" : "guest"; } }
         public static void Update()
@@ -60,21 +62,21 @@ namespace MWCoop
                 tuners.Sort((a, b) => string.CompareOrdinal(MscParts.Key(a), MscParts.Key(b)));
                 bolts.Sort((a, b) => string.CompareOrdinal(MscParts.Key(a), MscParts.Key(b)));
                 Inspect(channel);
-                File.WriteAllText(Path.Combine(channel, Role + "-ready.txt"), "tuners=" + tuners.Count + ";bolts=" + bolts.Count);
+                MscProbeFiles.WriteAllText(Path.Combine(channel, Role + "-ready.txt"), "tuners=" + tuners.Count + ";bolts=" + bolts.Count);
             }
             string clock = Path.Combine(channel, "start.txt");
             if (clockTicks == 0)
             {
-                if (Session.IsHost && File.Exists(Path.Combine(channel, "guest-ready.txt")) && !File.Exists(clock)) File.WriteAllText(clock, DateTime.UtcNow.AddSeconds(4).Ticks.ToString(C));
-                if (!File.Exists(clock) || !long.TryParse(File.ReadAllText(clock), out clockTicks)) return;
+                if (Session.IsHost && File.Exists(Path.Combine(channel, "guest-ready.txt")) && !File.Exists(clock)) MscProbeFiles.WriteAllText(clock, DateTime.UtcNow.AddSeconds(4).Ticks.ToString(C));
+                if (!File.Exists(clock) || !long.TryParse(MscProbeFiles.ReadAllText(clock), out clockTicks)) return;
             }
             float elapsed = (float)TimeSpan.FromTicks(DateTime.UtcNow.Ticks - clockTicks).TotalSeconds;
             if (elapsed < 0 || elapsed >= 88) return;
             int current = (int)(elapsed / 22);
             float phase = elapsed - current * 22;
             bool actor = (current == 0 || current == 3) != Session.IsHost;
-            if (phaseIndex != current) { phaseIndex = current; step = 0; nextStep = 0; recorded = false; }
-            if (actor && phase >= 2 && step < 8 && Time.realtimeSinceStartup >= nextStep)
+            if (phaseIndex != current) { phaseIndex = current; step = busyBoltStates = boltInputs = 0; boltAttempts.Clear(); nextStep = 0; recorded = false; }
+            if (actor && phase >= 2 && phase < 12 && Time.realtimeSinceStartup >= nextStep)
             {
                 nextStep = Time.realtimeSinceStartup + .3f;
                 bool tighten = current == 0 || current == 2;
@@ -83,13 +85,20 @@ namespace MWCoop
                     for (Transform p = f.transform; p != null; p = p.parent) p.gameObject.SetActive(true);
                     int stage = f.FsmVariables.FindFsmInt("Stage").Value;
                     if (stage == (tighten ? 8 : 0)) continue;
+                    int attempts; boltAttempts.TryGetValue(f, out attempts);
+                    if (attempts >= 8) continue;
+                    // Native scroll input is read from Idle. Re-entering an
+                    // unfinished pose/storage chain drops native continuations
+                    // on slow frames. Keep the same eight-input limit per bolt.
+                    if (f.ActiveStateName != "Idle") { busyBoltStates++; continue; }
                     string state = tighten ? "Screw 2" : "Unscrew 2";
                     if (f.Fsm.GetState(state) == null) state = tighten ? "Screw" : "Unscrew";
-                    Game.SetState(f, state);
+                    if (!Game.SetState(f, state)) throw new InvalidOperationException("Native bolt input state missing: " + MscParts.Key(f));
+                    boltAttempts[f] = attempts + 1; boltInputs++;
                 }
                 for (int i = 0; i < tuners.Count; i++)
                 {
-                    if (step >= 1 + i % 3) continue;
+                    if (step >= 8 || step >= 1 + i % 3) continue;
                     PlayMakerFSM f = tuners[i];
                     string state = MscTuning.IsTiming(f) ? "Adjust" : f.FsmName == "HandRotate" ? tighten ? "Clockwise" : "Counterwise" : tighten ? "Unscrew 2" : "Screw 2";
                     if (f.Fsm.GetState(state) == null) state = tighten ? "Unscrew" : "Screw";
@@ -104,10 +113,10 @@ namespace MWCoop
                 SortedDictionary<string, float> snapshot = Snapshot();
                 List<string> rows = new List<string>();
                 foreach (KeyValuePair<string, float> pair in snapshot) rows.Add(pair.Key + "|" + pair.Value.ToString("R", C));
-                File.WriteAllLines(Path.Combine(channel, Role + "-state-" + current + ".txt"), rows.ToArray());
+                MscProbeFiles.WriteAllLines(Path.Combine(channel, Role + "-state-" + current + ".txt"), rows.ToArray());
                 int mismatches = 0;
-                if (actor) File.WriteAllLines(expected, rows.ToArray());
-                else foreach (string row in File.ReadAllLines(expected))
+                if (actor) MscProbeFiles.WriteAllLines(expected, rows.ToArray());
+                else foreach (string row in MscProbeFiles.ReadAllLines(expected))
                 {
                     int at = row.LastIndexOf('|'); string key = row.Substring(0, at); float value = float.Parse(row.Substring(at + 1), C), actual;
                     float error = snapshot.TryGetValue(key, out actual) ? key.Contains("angle.") ? Mathf.Abs(Mathf.DeltaAngle(value, actual)) : Mathf.Abs(value - actual) : float.MaxValue;
@@ -117,6 +126,8 @@ namespace MWCoop
                 foreach (PlayMakerFSM f in bolts) if (f.FsmVariables.FindFsmInt("Stage").Value != (current == 0 || current == 2 ? 8 : 0)) wrongStages++;
                 string result = "Workshop=" + current + ";Role=" + (actor ? "actor" : "observer") + ";Tuners=" + tuners.Count + ";Bolts=" + bolts.Count + ";Fields=" + rows.Count + ";Mismatches=" + mismatches + ";WrongStages=" + wrongStages;
                 Results.Add(result); Log.Info(result);
+                string pacing = "WorkshopPacing=" + current + ";Inputs=" + boltInputs + ";BusyStates=" + busyBoltStates;
+                Results.Add(pacing); Log.Info(pacing);
             }
         }
         static bool FixtureBolt(PlayMakerFSM f)
@@ -207,7 +218,7 @@ namespace MWCoop
                     catch (Exception e) { text.Append("UNINITIALIZED ").Append(e.Message).Append('\n'); }
                 }
             }
-            File.WriteAllText(Path.Combine(channel, Session.IsHost ? "host-inventory.txt" : "guest-inventory.txt"), text.ToString());
+            MscProbeFiles.WriteAllText(Path.Combine(channel, Session.IsHost ? "host-inventory.txt" : "guest-inventory.txt"), text.ToString());
             Results.Add("WorkshopInventory=Screws=" + screws + ";Other=" + adjustments);
         }
     }

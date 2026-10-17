@@ -23,12 +23,18 @@ static void SceneDraw(Graphics &g)
 {
     bool dk = g_dark;
     RectF c(0, 0, kCardW, kCardH);
-    if (Bitmap *bg = GetSummerBg()) {
+    bool hasDark = false;
+    if (Bitmap *bg = GetSummerBg(dk, &hasDark)) {
         g.SetInterpolationMode(InterpolationModeHighQualityBicubic);
         g.DrawImage(bg, RectF(0, 0, kCardW, kCardH), 0, 0, (REAL)bg->GetWidth(), (REAL)bg->GetHeight(), UnitPixel);
         if (dk) {
-            LinearGradientBrush tint(RectF(0, 0, kCardW, kCardH), Color(130, 8, 16, 36), Color(175, 4, 8, 22), LinearGradientModeVertical);
-            g.FillRectangle(&tint, c);
+            if (hasDark) {
+                LinearGradientBrush tint(RectF(0, 0, kCardW, kCardH), Color(25, 4, 8, 22), Color(60, 2, 4, 14), LinearGradientModeVertical);
+                g.FillRectangle(&tint, c);
+            } else {
+                LinearGradientBrush tint(RectF(0, 0, kCardW, kCardH), Color(130, 8, 16, 36), Color(175, 4, 8, 22), LinearGradientModeVertical);
+                g.FillRectangle(&tint, c);
+            }
         } else {
             LinearGradientBrush vig(RectF(0, 0, kCardW, kCardH), Color(15, 255, 240, 200), Color(40, 0, 10, 30), LinearGradientModeVertical);
             g.FillRectangle(&vig, c);
@@ -326,14 +332,17 @@ static void DrawSceneAnim(Graphics &g)
 static void ContentSnapshot(bool restore);   // (modsync.inc)
 static void MscScan();                       // (mods.inc)
 static bool PageSnap(int p) { return p == TAB_SKIN || p == TAB_CAR || p == TAB_CONTENT; }
+static bool LookEditable() { return g_state == ST_IDLE || g_state == ST_RUNNING; }
+static bool RunningLook() { return g_state == ST_RUNNING && (g_tab == TAB_SKIN || g_tab == TAB_CAR); }
 static bool PageEnabled(int p)
 {
+    if (g_state == ST_RUNNING) return p == TAB_HOME || (!g_gameDir.empty() && (p == TAB_SKIN || p == TAB_CAR));
     if (g_state != ST_IDLE) return false;
     if (g_gameDir.empty()) return p == TAB_HOME || p == TAB_NOTES || p == TAB_COOP || p == TAB_API || p == TAB_CREDITS || p == TAB_WIKI || p == TAB_ALBUM;
     if (p == TAB_LOBBY) return g_lobby != LB_NONE;
     return true;
 }
-static int PageBack() { return g_lobby != LB_NONE ? TAB_LOBBY : TAB_HOME; }
+static int PageBack() { return g_state != ST_RUNNING && g_lobby != LB_NONE ? TAB_LOBBY : TAB_HOME; }
 static void GoPage(int p)
 {
     if (p == g_tab) return;
@@ -408,7 +417,7 @@ static RectF g_navR[TAB_COUNT];   // (bulles de la visite)
 
 static void DrawNavItem(Graphics &g, RectF r, int page, int icon, const wchar_t *label)
 {
-    bool en = PageEnabled(page), on = g_tab == page && g_state == ST_IDLE, hot = en && g_uiHot == UI_NAV + page;
+    bool en = PageEnabled(page), on = g_tab == page && LookEditable(), hot = en && g_uiHot == UI_NAV + page;
     g_navR[page] = r;
     float a = en ? 1.0f : 0.38f;
     if (on || hot) {
@@ -453,7 +462,7 @@ static void DrawRail(Graphics &g)
         g.DrawImage(g_logo, RectF(kRail.X + (kRail.Width - lw) / 2, 26, lw, lh));
     }
     // version (plus de pastille PRE-ALPHA depuis 0.75.35, demande de JD ; un ancien suffixe "-prealpha" n'est pas montre)
-    std::wstring ver = g_localVer.empty() ? L"" : L"v" + g_localVer.substr(0, g_localVer.find(L'-'));
+    std::wstring ver = L"v" + LauncherVersion();
     float vw = ver.empty() ? 0 : PillW(ver, 10.5f), x = kRail.X + (kRail.Width - vw) / 2;
     if (vw > 0) Pill(g, RectF(x, 104, vw, 20), TH(cardSel), ver, kInk, 10.5f);
     float y0 = 132;
@@ -470,7 +479,7 @@ static void DrawRail(Graphics &g)
         size_t dash = v.find(L'-');
         if (dash != std::wstring::npos) v.resize(dash);
         Icon(g, IC_DOWNLOAD, b.r.X + 20, b.r.Y + b.r.Height / 2, 17, kOnAcc, 2.2f);
-        Text(g, std::wstring(T(L"Mettre à jour · ", L"Update · ")) + v, RectF(b.r.X + 34, b.r.Y, b.r.Width - 40, b.r.Height), 13, FontStyleBold, kOnAcc, StringAlignmentNear);
+        Text(g, std::wstring(T(L"Télécharger · ", L"Download · ")) + v, RectF(b.r.X + 34, b.r.Y, b.r.Width - 40, b.r.Height), 13, FontStyleBold, kOnAcc, StringAlignmentNear);
         y0 = 180;
     }
     // groupes jusqu'a Reglages (674) : lignes de 44 px, ou de 40 quand le bouton de mise a jour prend de la place
@@ -501,16 +510,9 @@ static void DrawRail(Graphics &g)
         y += gap;
     }
     DrawNavItem(g, RectF(28, 674, 208, 44), TAB_COOP, IC_GEAR, T(L"Réglages", L"Settings"));
-    for (int id : { B_DISCORD, B_GITHUB, B_KOFI }) {
+    for (int id : { B_GITHUB, B_KOFI }) {
         Button &b = g_btn[id];
         GraphicsPath p; RoundRect(p, b.r, 12);
-        if (id == B_DISCORD) {   // Discord : bleu Discord, logo et nom
-            SolidBrush fb(kDiscordBlue); g.FillPath(&fb, &p);
-            if (b.hover > 0.01f) { SolidBrush hb(Color((BYTE)(55 * b.hover), 255, 255, 255)); g.FillPath(&hb, &p); }
-            Icon(g, IC_DISCORD, b.r.X + 24, b.r.Y + b.r.Height / 2, 20, Color(255, 255, 255, 255));
-            Text(g, L"Discord", RectF(b.r.X + 40, b.r.Y, b.r.Width - 44, b.r.Height), 13, FontStyleBold, Color(255, 255, 255, 255), StringAlignmentNear);
-            continue;
-        }
         SolidBrush fb(Mix(TH(card), TH(cardSel), b.hover)); g.FillPath(&fb, &p);
         Pen pen(TH(choiceBorder), 1.0f); g.DrawPath(&pen, &p);
         bool gh = id == B_GITHUB;
@@ -566,7 +568,7 @@ static void RgbStar(Graphics &g, float cx, float cy, float size, float t, bool o
 // Page ouverte par un bouton de l'en-tete (Journaux, API moddeurs) : comme ceux de la fenetre, contour colore si ouverte.
 static void HeadPage(Graphics &g, RectF r, int page, int icon)
 {
-    bool en = PageEnabled(page), on = g_tab == page && g_state == ST_IDLE, hot = en && g_uiHot == UI_NAV + page;
+    bool en = PageEnabled(page), on = g_tab == page && LookEditable(), hot = en && g_uiHot == UI_NAV + page;
     g_navR[page] = r;
     GraphicsPath p; RoundRect(p, r, 14);
     SolidBrush fb(on ? TH(cardSel) : Mix(TH(btn2), TH(btn2Hot), hot ? 1.0f : 0.0f)); g.FillPath(&fb, &p);
@@ -585,7 +587,7 @@ static void HeadPage(Graphics &g, RectF r, int page, int icon)
 static void DrawHeader(Graphics &g)
 {
     std::wstring title, sub;
-    if (g_state == ST_RUNNING) { title = T(L"Partie en cours", L"Game running"); sub = g_launchInfo; }
+    if (g_state == ST_RUNNING && !RunningLook()) { title = T(L"Partie en cours", L"Game running"); sub = g_launchInfo; }
     else if (g_state == ST_LAUNCH || g_state == ST_CLOSING) { title = T(L"Lancement", L"Starting"); sub = g_launchInfo; }
     else switch (g_tab) {
     case TAB_HOME: title = g_gameDir.empty() ? std::wstring(T(L"Bienvenue", L"Welcome")) : Greeting(); sub = T(L"Prêt pour un été à plusieurs ?", L"Ready for a summer together?"); break;
@@ -636,7 +638,7 @@ static void DrawHeader(Graphics &g)
         HeadPage(g, RectF(right - 44, 22, 44, 44), TAB_LOGS, IC_FILE);
         right -= 54;
     }
-    if (g_state == ST_IDLE) {
+    if (g_state == ST_IDLE || RunningLook()) {
         if (g_tab == TAB_SKIN || g_tab == TAB_CAR || g_tab == TAB_CONTENT || g_tab == TAB_MODS) {
             bool look = g_tab == TAB_SKIN || g_tab == TAB_CAR;
             std::vector<std::wstring> lab;
@@ -989,7 +991,7 @@ static void DrawNotesPage(Graphics &g)
     Title(g, L"SummerCoop " + n.ver.substr(0, n.ver.find(L'-')), RectF(b.X + 28, b.Y + 22, 400, 38), 28, kInk);
     Text(g, n.date, RectF(b.X + 28, b.Y + 58, 300, 20), 13, FontStyleRegular, kGrey, StringAlignmentNear);
     int cmp = g_localVer.empty() ? 1 : CmpVer(n.ver, g_localVer);
-    if (cmp > 0 && !UpdAvail().empty()) UiButton(g, RectF(b.X + b.Width - 200, b.Y + 26, 172, 44), T(L"Mettre à jour", L"Update"), UI_NOTE_UPDATE, true, IC_DOWNLOAD);
+    if (cmp > 0 && !UpdAvail().empty()) UiButton(g, RectF(b.X + b.Width - 200, b.Y + 26, 172, 44), T(L"Télécharger", L"Download"), UI_NOTE_UPDATE, true, IC_DOWNLOAD);
     else if (cmp == 0) { const wchar_t *lab = T(L"INSTALLÉE", L"INSTALLED"); float w = PillW(lab, 11); Pill(g, RectF(b.X + b.Width - 28 - w, b.Y + 36, w, 24), WithA(kOk, 0.2f), lab, kOk); }
     Pen sep(TH(sep), 1); g.DrawLine(&sep, b.X + 28, b.Y + 84, b.X + b.Width - 28, b.Y + 84);
     // corps : puces, paragraphes, images (defilement)
@@ -1172,7 +1174,7 @@ static void DrawLogsPage(Graphics &g)
         SolidBrush rb(kRed); g.FillEllipse(&rb, d);
         Text(g, L"!", d, 14, FontStyleBold, Color(255, 255, 255, 255));
         Text(g, T(L"La dernière partie s'est arrêtée brutalement.", L"The last game stopped abruptly."), RectF(a.X + 52, a.Y + 7, a.Width - 70, 22), 14, FontStyleBold, kInk, StringAlignmentNear);
-        Text(g, T(L"Crée un zip et envoie-le (GitHub, Discord) pour qu'on regarde.", L"Create a zip and send it (GitHub, Discord) so we can take a look."), RectF(a.X + 52, a.Y + 29, a.Width - 70, 20), 12.5f, FontStyleRegular, kGrey, StringAlignmentNear);
+        Text(g, T(L"Crée un zip et envoie-le sur GitHub pour qu'on regarde.", L"Create a zip and send it to GitHub so we can take a look."), RectF(a.X + 52, a.Y + 29, a.Width - 70, 20), 12.5f, FontStyleRegular, kGrey, StringAlignmentNear);
         y += 70;
     }
     kLogsR = RectF(c.X + 24, y, c.Width - 48, c.Y + c.Height - 18 - y);
@@ -1240,19 +1242,22 @@ static void DrawSettings(Graphics &g)
         GraphicsPath p; RoundRect(p, box, 14);
         SolidBrush fb(av.empty() ? TH(card) : WithA(kAcc, 0.14f)); g.FillPath(&fb, &p);
         Pen pen(av.empty() ? TH(choiceBorder) : WithA(kAcc, 0.5f), 1); g.DrawPath(&pen, &p);
-        std::wstring l1, l2 = g_localVer.empty() ? std::wstring(T(L"SummerCoop n'est pas installé", L"SummerCoop is not installed")) : std::wstring(T(L"Tu as la ", L"You have ")) + g_localVer;
+        std::wstring l1, l2 = std::wstring(T(L"Tu as la ", L"You have ")) + LauncherVersion();
         if (!av.empty()) l1 = std::wstring(T(L"Version ", L"Version ")) + av + T(L" disponible", L" available");
-        else if (g_busy) l1 = T(L"Recherche ou installation en cours…", L"Checking or installing…");
-        else l1 = T(L"SummerCoop est à jour", L"SummerCoop is up to date");
+        else if (g_updChecking) l1 = T(L"Recherche de mises à jour…", L"Checking for updates…");
+        else if (g_updState == CHECK_CURRENT) l1 = T(L"SummerCoop est à jour", L"SummerCoop is up to date");
+        else if (g_updState == CHECK_EMPTY) l1 = T(L"Aucune version publiée", L"No release published");
+        else if (g_updState == CHECK_FAILED) l1 = T(L"Vérification impossible", L"Version check unavailable");
+        else l1 = T(L"Version pas encore vérifiée", L"Version not checked yet");
         Text(g, l1, RectF(box.X + 16, box.Y + 10, box.Width - 200, 22), 14, FontStyleBold, kInk, StringAlignmentNear);
         Text(g, l2, RectF(box.X + 16, box.Y + 33, box.Width - 200, 20), 12, FontStyleRegular, kGrey, StringAlignmentNear);
-        if (!av.empty()) UiButton(g, RectF(box.X + box.Width - 172, box.Y + 12, 160, 40), T(L"Mettre à jour", L"Update"), UI_NOTE_UPDATE, true, IC_DOWNLOAD, g_lobby == LB_NONE && !g_busy);
-        else UiButton(g, RectF(box.X + box.Width - 172, box.Y + 12, 160, 40), T(L"Vérifier", L"Check"), UI_SET_CHECK, false, -1, !g_busy);
+        if (!av.empty()) UiButton(g, RectF(box.X + box.Width - 172, box.Y + 12, 160, 40), T(L"Télécharger", L"Download"), UI_NOTE_UPDATE, true, IC_DOWNLOAD, g_lobby == LB_NONE && !g_busy);
+        else UiButton(g, RectF(box.X + box.Width - 172, box.Y + 12, 160, 40), T(L"Vérifier", L"Check"), UI_SET_CHECK, false, -1, !g_updChecking);
     }
     {
         RectF row(up.X + 20, up.Y + 128, up.Width - 40, 52);
-        bool on = GetPrivateProfileIntW(L"Lanceur", L"MajAuto", 0, g_iniLauncher.c_str()) != 0;
-        SetRowText(g, RectF(row.X, row.Y, row.Width - 70, row.Height), T(L"Installer automatiquement", L"Install automatically"), T(L"À chaque démarrage, sans demander", L"At every start, without asking"));
+        bool on = AutoCheckUpdates();
+        SetRowText(g, RectF(row.X, row.Y, row.Width - 70, row.Height), T(L"Vérifier automatiquement", L"Check automatically"), T(L"Au démarrage et toutes les 30 minutes", L"At startup and every 30 minutes"));
         UiToggle(g, RectF(row.X + row.Width - 50, row.Y + 12, 50, 28), on, g_uiHot == UI_SET_AUTO);
         HotZone(row, UI_SET_AUTO);
     }
@@ -1440,8 +1445,8 @@ static void DrawCreditsPage(Graphics &g)
     }
     g_credContentH = y + sc - area.Y;
     g.Restore(st);
-    Para(g, T(L"Tu as fait quelque chose pour MWCoop ? Partage-le sur le Discord (bouton en bas à gauche) : tu seras crédité ici et dans les notes de version.",
-              L"Made something for MWCoop? Share it on the Discord (button at the bottom left): you'll be credited here and in the release notes."),
+    Para(g, T(L"Tu as fait quelque chose pour SummerCoop ? Partage-le sur GitHub (bouton en bas à gauche) : tu seras crédité ici et dans les notes de version.",
+              L"Made something for SummerCoop? Share it on GitHub (button at the bottom left): you'll be credited here and in the release notes."),
          RectF(c.X + 28, c.Y + c.Height - 56, c.Width - 56, 40), 12.5f, kGrey);
 }
 
@@ -1482,7 +1487,7 @@ static void DrawUI(Graphics &g)
     LeaveCriticalSection(&g_cs);
     float prog = g_progress;
     DrawRail(g);
-    if (g_state == ST_RUNNING) DrawServer(g);
+    if (g_state == ST_RUNNING && !RunningLook()) DrawServer(g);
     else if (g_state == ST_LAUNCH || g_state == ST_CLOSING) DrawLaunchPage(g);
     else switch (g_tab) {
     case TAB_LOBBY: DrawLobby(g); break;
@@ -1533,15 +1538,17 @@ static bool UiClick(int id)
     case UI_PAGE_OK: PageOk(); return true;
     case UI_PAGE_CANCEL: PageCancel(); return true;
     case UI_NOTE_UPDATE: if (g_lobby == LB_NONE && !g_busy) StartUpdate(true); return true;
-    case UI_SET_CHECK: if (!g_busy) StartUpdate(false); return true;
+    case UI_SET_CHECK: StartUpdate(false); return true;
     case UI_SET_CANAL: case UI_SET_CANAL + 1:
+        if (g_updChecking) return true;
         if ((id == UI_SET_CANAL + 1) != ChannelNightly() && ChannelSet(id == UI_SET_CANAL + 1, false)) {
-            if (g_lobby == LB_NONE && !g_busy && !GameProcessRunning()) StartUpdate(true); else StartUpdate(false);
+            StartUpdate(false);
         }
         return true;
     case UI_SET_AUTO: {
-        bool on = GetPrivateProfileIntW(L"Lanceur", L"MajAuto", 0, g_iniLauncher.c_str()) != 0;
-        WritePrivateProfileStringW(L"Lanceur", L"MajAuto", on ? L"0" : L"1", g_iniLauncher.c_str());
+        bool on = AutoCheckUpdates();
+        WritePrivateProfileStringW(L"Lanceur", L"CheckUpdates", on ? L"0" : L"1", g_iniLauncher.c_str());
+        if (!on) StartUpdate(false);
         return true;
     }
     case UI_SET_DARK: case UI_SET_LIGHT:

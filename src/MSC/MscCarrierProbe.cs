@@ -61,13 +61,13 @@ namespace MWCoop
                 }
                 if (carrier == null) throw new InvalidOperationException("Carrier fixture missing");
                 creator = Game.FsmOn(Game.FindAny("COTTAGE/Logging/Logwall"), "Use");
-                File.WriteAllText(Path.Combine(channel, Session.IsHost ? "host-ready.txt" : "guest-ready.txt"), "ready");
+                MscProbeFiles.WriteAllText(Path.Combine(channel, Session.IsHost ? "host-ready.txt" : "guest-ready.txt"), "ready");
             }
             string start = Path.Combine(channel, "start.txt");
             if (clock == 0)
             {
-                if (Session.IsHost && File.Exists(Path.Combine(channel, "guest-ready.txt")) && !File.Exists(start)) File.WriteAllText(start, DateTime.UtcNow.AddSeconds(5).Ticks.ToString());
-                if (!File.Exists(start) || !long.TryParse(File.ReadAllText(start), out clock)) return;
+                if (Session.IsHost && File.Exists(Path.Combine(channel, "guest-ready.txt")) && !File.Exists(start)) MscProbeFiles.WriteAllText(start, DateTime.UtcNow.AddSeconds(5).Ticks.ToString());
+                if (!File.Exists(start) || !long.TryParse(MscProbeFiles.ReadAllText(start), out clock)) return;
             }
             float t = (float)TimeSpan.FromTicks(DateTime.UtcNow.Ticks - clock).TotalSeconds;
             if (t < 0) return;

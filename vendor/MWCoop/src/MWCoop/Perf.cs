@@ -13,10 +13,16 @@ namespace MWCoop
         static readonly System.Diagnostics.Stopwatch part = new System.Diagnostics.Stopwatch();
         static int frames;
         static float since = -1, worst, lastFrame, period = -1;
+        static int workFrame = -1;
+        static double frameMilliseconds;
+        public static double FrameMilliseconds { get { return workFrame == Time.frameCount ? frameMilliseconds : 0; } }
 
         static readonly Dictionary<string, double> peak = new Dictionary<string, double>();
         public static void Add(string what, double ms)
         {
+            if (workFrame != Time.frameCount) { workFrame = Time.frameCount; frameMilliseconds = 0; }
+            if (!what.StartsWith("[", System.StringComparison.Ordinal)) frameMilliseconds += ms;
+            MscPerformanceProbe.ModuleTime(what, ms);
             double v;
             acc.TryGetValue(what, out v);
             acc[what] = v + ms;

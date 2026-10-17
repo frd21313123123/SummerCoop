@@ -277,7 +277,7 @@ namespace MWCoop
                                     // Pieces et points de montage : Parts (comme WorldFsms). Une piece montee est sous la voiture : son
                                     // automate Data (sauvegarde) etait suivi ici aussi -- clics de demontage / montage rejoues en double,
                                     // la piece montee chez l'un restait en l'air chez l'autre (Hall0wMan, 11/10 : reservoir 19 L, siege).
-                                    && !(f.FsmName == "Data" && Parts.IdOf(f.gameObject).Length > 0) && !on.StartsWith("VINP") && !MscTuning.Owns(f)
+                                    && !(f.FsmName == "Data" && Parts.IdOf(f.gameObject).Length > 0) && !on.StartsWith("VINP") && !MscParts.Owns(f) && !MscTuning.Owns(f)
                                     && !MscFluids.Owns(f) && !MscSleep.Owns(f) && !MscIsland.Owns(f) && !MscShop.Owns(f);
                         c = new Classified { Path = keep ? Recon.Path(f.transform) + "::" + f.FsmName : null, Control = control };
                         classified[f] = c;

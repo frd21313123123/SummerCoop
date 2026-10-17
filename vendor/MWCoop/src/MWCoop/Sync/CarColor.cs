@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using HutongGames.PlayMaker;
@@ -24,17 +25,20 @@ namespace MWCoop
     {
         static float exportAt = -1, applyAt = -1;
         static bool exported, applied;
+        static IEnumerator exporter;
+        static string exportTag, exportSummary;
         public static bool NewGame;      // une nouvelle partie vient d'etre lancee depuis le menu
 
         public static string MeshPath
         {
-            get { return Path.Combine(Path.Combine(System.Environment.GetEnvironmentVariable("MWCOOP_DIR") ?? "MWCoop", "cache"), "corris.mesh"); }
+            get { return Path.Combine(Path.Combine(System.Environment.GetEnvironmentVariable("MWCOOP_LAUNCHER_DIR") ?? System.Environment.GetEnvironmentVariable("MWCOOP_DIR") ?? "MWCoop", "cache"), "corris.mesh"); }
         }
 
         public static void OnLevelLoaded()
         {
+            if (exporter != null) { ((System.IDisposable)exporter).Dispose(); exporter = null; }
             exported = applied = false;
-            exportAt = PlayerSync.InGame ? Time.realtimeSinceStartup + 20f : -1;
+            exportAt = PlayerSync.InGame ? Time.realtimeSinceStartup + (MscRuntime.Enabled ? 4f : 20f) : -1;
             applyAt = PlayerSync.InGame && NewGame ? Time.realtimeSinceStartup + 12f : -1;
             if (PlayerSync.InGame) NewGame = false;
         }
@@ -55,19 +59,42 @@ namespace MWCoop
                 return;
             }
             if (applyAt > 0 && Time.realtimeSinceStartup >= applyAt) { applyAt = -1; ApplyChosen(); }
+            if (exporter != null)
+            {
+                if (!MscMaintenance.Available) return;
+                long began = MscMaintenance.Begin();
+                try
+                {
+                    if (!exporter.MoveNext())
+                    {
+                        ((System.IDisposable)exporter).Dispose(); exporter = null;
+                        File.WriteAllText(MeshPath + ".version", exportTag);
+                        Log.Info("voiture : apercu exporte, " + exportSummary);
+                    }
+                }
+                catch (System.Exception e)
+                {
+                    if (exporter != null) { ((System.IDisposable)exporter).Dispose(); exporter = null; }
+                    exported = false; exportAt = Time.realtimeSinceStartup + 10f;
+                    Log.Warn("voiture : export " + e.Message);
+                }
+                finally { MscMaintenance.End(began); }
+                return;
+            }
             if (exportAt < 0 || Time.realtimeSinceStartup < exportAt) return;
             if (!exported)
             {
                 exported = true;
                 // (voiture de serie : le meme apercu d'une partie a l'autre -- refait seulement si MWCoop ou le reglage changent ;
                 // l'export prenait ~100 ms d'un coup, 20 s apres le chargement)
-                string tag = Version.Text + " " + Config.GetInt("Coop", "ApercuComplet", 1), tagFile = MeshPath + ".version";
+                string tag = Version.Text + " MSC 1 " + Config.GetInt("Coop", "ApercuComplet", 1), tagFile = MeshPath + ".version";
                 bool fresh = false;
                 try { fresh = Config.GetInt("Coop", "ApercuComplet", 1) != 0 && File.Exists(MeshPath) && File.Exists(tagFile) && File.ReadAllText(tagFile) == tag; } catch { }
                 if (fresh) Log.Info("voiture : apercu a jour");
                 else
                 {
-                    try { Log.Info("voiture : apercu exporte, " + Export()); File.WriteAllText(tagFile, tag); } catch (System.Exception e) { Log.Warn("voiture : export " + e.Message); }
+                    exportTag = tag;
+                    exporter = ExportSteps();
                 }
             }
         }
@@ -79,10 +106,12 @@ namespace MWCoop
             return false;
         }
 
-        static string Export()
+        static IEnumerator ExportSteps()
         {
-            GameObject car = GameObject.Find("CORRIS");
-            if (car == null) return "CORRIS introuvable";
+            Rigidbody mscCar = VehicleSync.Body("SATSUMA");
+            GameObject car = mscCar != null ? mscCar.gameObject : GameObject.Find("CORRIS");
+            if (car == null) throw new System.IO.IOException("Satsuma preview: car not loaded");
+            bool msc = mscCar != null;
             Transform root = car.transform;
             var parts = new List<Piece>();
             var extra = new List<Piece>();
@@ -90,30 +119,37 @@ namespace MWCoop
             // pas montrer la sauvegarde) : chaque point de montage recoit la piece de serie que son createur y pose
             // (automates 'Spawn' : Prefab -> VINP), les roues sont les jantes acier 13". Ce qui est monte sur ces
             // points, le tuning et les pieces qui trainent sont ignores. [Coop] ApercuComplet=0 : l'etat de la partie.
-            bool stockOnly = Config.GetInt("Coop", "ApercuComplet", 1) != 0;
+            bool stockOnly = !msc && Config.GetInt("Coop", "ApercuComplet", 1) != 0;
             Dictionary<Transform, GameObject> stock = stockOnly ? StockParts(root) : new Dictionary<Transform, GameObject>();
             foreach (MeshFilter mf in car.GetComponentsInChildren<MeshFilter>())
             {
                 Renderer r = mf.GetComponent<Renderer>();
                 if (r != null && r.enabled && mf.sharedMesh != null && !Replaced(r.transform, root, stock, stockOnly))
                     parts.Add(new Piece { R = r, M = mf.sharedMesh, ToCar = root.worldToLocalMatrix * r.transform.localToWorldMatrix, Paint = IsPaintable(r.transform, root) });
+                yield return null;
             }
             foreach (SkinnedMeshRenderer s in car.GetComponentsInChildren<SkinnedMeshRenderer>())
+            {
                 if (s.enabled && s.sharedMesh != null && !Replaced(s.transform, root, stock, stockOnly))
                     parts.Add(new Piece { R = s, M = s.sharedMesh, ToCar = root.worldToLocalMatrix * s.transform.localToWorldMatrix, Paint = IsPaintable(s.transform, root) });
+                yield return null;
+            }
             HashSet<Transform> points;
             if (stockOnly)
             {
                 points = new HashSet<Transform>(stock.Keys);
                 foreach (KeyValuePair<Transform, GameObject> kv in stock) AddPrefab(root, kv.Key, kv.Value, parts);
             }
-            else points = AddLooseParts(root, parts);
-            AddPointMeshes(root, points, extra);
-            if (!stockOnly || !AddStockWheels(root, parts)) AddWheels(car, root, extra);
+            else points = msc ? new HashSet<Transform>() : AddLooseParts(root, parts);
+            if (!msc) {
+                AddPointMeshes(root, points, extra);
+                if (!stockOnly || !AddStockWheels(root, parts)) AddWheels(car, root, extra);
+            }
 
             Directory.CreateDirectory(Path.GetDirectoryName(MeshPath));
             int written = 0, tris = 0;
-            using (var w = new BinaryWriter(File.Create(MeshPath)))
+            string tmp = MeshPath + ".tmp";
+            using (var w = new MscPreviewWriter(File.Create(tmp)))
             {
                 w.Write(new[] { (byte)'M', (byte)'W', (byte)'C', (byte)'M' });
                 w.Write(1);
@@ -156,20 +192,29 @@ namespace MWCoop
                     w.Write(c.r); w.Write(c.g); w.Write(c.b);
                     w.Write(v.Length);
                     Matrix4x4 toCar = r == null ? Matrix4x4.identity : pc.ToCar;
-                    foreach (Vector3 p in v)
+                    for (int vertex = 0; vertex < v.Length; vertex++)
                     {
-                        Vector3 q = toCar.MultiplyPoint3x4(p);
+                        Vector3 q = toCar.MultiplyPoint3x4(v[vertex]);
                         w.Write(q.x); w.Write(q.y); w.Write(q.z);
+                        if (vertex % 512 == 511) yield return null;
                     }
                     w.Write(idx.Length);
-                    foreach (int i in idx) w.Write(i);
+                    for (int index = 0; index < idx.Length; index++)
+                    {
+                        w.Write(idx[index]);
+                        if (index % 2048 == 2047) yield return null;
+                    }
                     written++;
                     tris += idx.Length / 3;
+                    yield return null;
                 }
                 w.BaseStream.Position = countPos;
                 w.Write(written);
             }
-            return written + " morceaux, " + tris + " triangles, " + MeshPath;
+            if (written == 0) throw new System.IO.IOException("Satsuma preview: no readable meshes");
+            if (File.Exists(MeshPath)) File.Delete(MeshPath);
+            File.Move(tmp, MeshPath);
+            exportSummary = written + " morceaux, " + tris + " triangles, " + MeshPath;
         }
 
         // Points de montage de la CORRIS (hors tuning) -> piece de serie (prefab VIN..., premier par nom).
@@ -444,6 +489,11 @@ namespace MWCoop
         static void ApplyChosen()
         {
             if (applied || (Session.Active && !Session.IsHost)) return;   // invite : la couleur vient de l'hote
+            Rigidbody car = VehicleSync.Body("SATSUMA");
+            if (car != null) {
+                foreach (PlayMakerFSM f in car.GetComponentsInChildren<PlayMakerFSM>(true))
+                    if (f.FsmName == "Paint" && IsBodyPaint(f)) { TryOverride(f); return; }
+            }
             GameObject body = Game.FindAny("CORRIS/BODY/car body(xxxxx)");
             PlayMakerFSM paint = body != null ? Game.FsmOn(body, "Paint") : null;
             if (paint == null) { Log.Warn("voiture : carrosserie introuvable"); return; }
@@ -454,18 +504,24 @@ namespace MWCoop
         public static bool TryOverride(PlayMakerFSM paint)
         {
             if (applied || (Session.Active && !Session.IsHost)) return false;
-            if (paint.transform.root.name != "CORRIS" || !paint.name.StartsWith("car body")) return false;
+            if (!IsBodyPaint(paint)) return false;
             Color c;
             if (!Parse(Config.Get("Coop", "CouleurVoiture", ""), out c)) return false;
-            applied = true;
             FsmColor col = paint.FsmVariables.FindFsmColor("Color");
             if (col == null) return false;
+            applied = true;
             col.Value = c;
             FsmInt type = paint.FsmVariables.FindFsmInt("PaintType");
             if (type != null && type.Value > 2) type.Value = 1;   // couleur speciale tiree : brillant
             Log.Info("voiture : couleur choisie " + c + " appliquee a la nouvelle CORRIS");
             paint.SendEvent("REPAINT");
             return true;
+        }
+
+        static bool IsBodyPaint(PlayMakerFSM paint)
+        {
+            string root = paint.transform.root.name;
+            return (root == "CORRIS" || root.StartsWith("SATSUMA")) && paint.name.ToLowerInvariant().Contains("body");
         }
 
         public static bool Parse(string hex, out Color c)

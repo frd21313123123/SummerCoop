@@ -91,6 +91,9 @@ namespace MWCoop
         static readonly List<W> pending = new List<W>();
         static float nextPending;
         static readonly List<KeyValuePair<float, Peer>> snapshots = new List<KeyValuePair<float, Peer>>();
+        sealed class SnapshotJob { public Peer Peer; public List<W> Objects; public readonly W[] Batch = new W[8]; public int Cursor, Phase; }
+        static readonly List<SnapshotJob> snapshotJobs = new List<SnapshotJob>();
+        public static int SnapshotPending { get { return snapshots.Count + snapshotJobs.Count; } }
         static readonly Dictionary<string, float> houseSent = new Dictionary<string, float>();
         static float nextScan = -1, nextMirror, loadedAt, nextWarn, lastInput = -100, nextStopCheck;
         static bool applying;
@@ -189,12 +192,24 @@ namespace MWCoop
         public static void OnLevelLoaded()
         {
             byKey.Clear(); hooked.Clear(); rejected.Clear(); snapshots.Clear(); houseSent.Clear(); known.Clear(); pending.Clear(); pathOf.Clear(); mutedList.Clear(); alias.Clear();
+            snapshotJobs.Clear(); rootFsms = null;
             hostTvOn = false; scanIdx = -1; scanRoots = null; rootsDirty = true; npcLeft = npcLogged = 0;
             loadedAt = Time.realtimeSinceStartup;
             nextScan = PlayerSync.InGame ? loadedAt + 16f : -1;
         }
 
-        public static void ScheduleSnapshot(Peer p) { snapshots.Add(new KeyValuePair<float, Peer>(Time.realtimeSinceStartup + 22f, p)); }
+        public static void ScheduleSnapshot(Peer p)
+        {
+            if (p == null || !p.Accepted || Session.T == null) return;
+            for (int i = snapshots.Count - 1; i >= 0; i--)
+            {
+                if (!snapshots[i].Value.Accepted || !Session.T.Peers.Contains(snapshots[i].Value)) snapshots.RemoveAt(i);
+                else if (snapshots[i].Value == p) return;
+            }
+            for (int i = snapshotJobs.Count - 1; i >= 0; i--)
+                if (snapshotJobs[i].Peer == p || !snapshotJobs[i].Peer.Accepted || !Session.T.Peers.Contains(snapshotJobs[i].Peer)) snapshotJobs.RemoveAt(i);
+            snapshots.Add(new KeyValuePair<float, Peer>(Time.realtimeSinceStartup + 22f, p));
+        }
 
         // ---------------------------------------------------------------- choix des automates
         static bool Skip(PlayMakerFSM f)
@@ -335,6 +350,9 @@ namespace MWCoop
         static bool rootsDirty = true;
         static int scanIdx = -1;
         static Dictionary<string, int> scanSeen;
+        static PlayMakerFSM[] rootFsms;
+        static GameObject scanningRoot;
+        static int rootCursor;
         static readonly System.Diagnostics.Stopwatch scanWatch = new System.Diagnostics.Stopwatch();
 
         static void StartScan()
@@ -348,6 +366,7 @@ namespace MWCoop
                 if (sw.ElapsedMilliseconds > 25) Log.Info("monde : racines relevees en " + sw.ElapsedMilliseconds + " ms");
             }
             scanIdx = 0;
+            rootFsms = null; rootCursor = 0;
             scanSeen = new Dictionary<string, int>();
         }
 
@@ -355,29 +374,35 @@ namespace MWCoop
         static bool ScanStep()
         {
             scanWatch.Reset(); scanWatch.Start();
-            while (scanIdx < scanRoots.Count && scanWatch.ElapsedMilliseconds < 4)
+            while ((scanIdx < scanRoots.Count || rootFsms != null) && MscMaintenance.Available)
             {
-                GameObject root = scanRoots[scanIdx++];
-                long t0 = scanWatch.ElapsedMilliseconds;
-                if (root != null) ScanRoot(root, scanSeen);
-                if (scanWatch.ElapsedMilliseconds - t0 > 25 && root != null) Log.Info("monde : releve de " + root.name + " " + (scanWatch.ElapsedMilliseconds - t0) + " ms");
+                long started = MscMaintenance.Begin();
+                try
+                {
+                    if (rootFsms == null)
+                    {
+                        scanningRoot = scanRoots[scanIdx++]; rootCursor = 0;
+                        if (scanningRoot != null) rootFsms = scanningRoot.GetComponentsInChildren<PlayMakerFSM>(true);
+                    }
+                    else if (rootCursor < rootFsms.Length) ScanFsm(scanningRoot, rootFsms[rootCursor++], scanSeen);
+                    if (rootFsms != null && rootCursor >= rootFsms.Length) rootFsms = null;
+                }
+                finally { MscMaintenance.End(started); }
             }
-            if (scanIdx < scanRoots.Count) return false;
+            if (scanIdx < scanRoots.Count || rootFsms != null) return false;
             scanIdx = -1;
             LogAdded();
             return true;
         }
 
-        static void ScanRoot(GameObject root, Dictionary<string, int> seen)
+        static void ScanFsm(GameObject root, PlayMakerFSM f, Dictionary<string, int> seen)
         {
-                foreach (PlayMakerFSM f in root.GetComponentsInChildren<PlayMakerFSM>(true))
-                {
-                    if (f.hideFlags != HideFlags.None) continue;
+                    if (root == null || f == null || f.hideFlags != HideFlags.None) return;
                     string path;
                     if (!pathOf.TryGetValue(f, out path)) { path = Recon.Path(f.transform) + "::" + f.FsmName; pathOf[f] = path; }
                     int k; seen.TryGetValue(path, out k); seen[path] = k + 1;
-                    if (known.Contains(f) || rejected.Contains(f)) continue;
-                    if (Skip(f)) { if (root.activeInHierarchy) rejected.Add(f); continue; }
+                    if (known.Contains(f) || rejected.Contains(f)) return;
+                    if (Skip(f)) { if (root.activeInHierarchy) rejected.Add(f); return; }
                     // Miroir aussi des petites annonces de pieces (PhoneNumbers, tirees au hasard chaque semaine), des
                     // commandes en attente (IsOrder) et de la poste (avis de colis lu : guichet ouvert).
                     bool mirror = MirrorRoots.Contains(root.name) || f.FsmName == "Fuelprices" || path.Contains("/PhoneNumbers/")
@@ -386,7 +411,6 @@ namespace MWCoop
                     known.Add(f);
                     // Objet inactif : ses actions ne sont pas chargees ; on le reprend quand il s'active.
                     if (!f.gameObject.activeInHierarchy || !TryHook(w)) pending.Add(w);
-                }
         }
 
         static int addedSinceLog, npcLeft, npcLogged;
@@ -886,21 +910,15 @@ namespace MWCoop
             if (!Session.IsHost || Session.RemoteCount == 0) return;
             for (int i = snapshots.Count - 1; i >= 0; i--)
             {
-                if (now < snapshots[i].Key) continue;
+                if (now < snapshots[i].Key || scanIdx >= 0) continue;
                 Peer p = snapshots[i].Value;
                 snapshots.RemoveAt(i);
                 if (p.Accepted && Session.T.Peers.Contains(p))
                 {
-                    Mirror(p, true);
-                    foreach (W x in byKey.Values)
-                        if (x.HostDriven && x.F != null && !string.IsNullOrEmpty(x.F.ActiveStateName))
-                        {
-                            var w = new NetWriter(Msg.WorldFsm).U8(Session.LocalId).Str(x.Key).Str("").Str("").U8(2).Str(x.F.ActiveStateName);
-                            WriteVars(x.F, w, false);
-                            if (w.Length <= MaxMsg) Session.T.SendReliable(p, w.ToArray());
-                        }
+                    snapshotJobs.Add(new SnapshotJob { Peer = p, Objects = new List<W>(byKey.Values) });
                 }
             }
+            PumpSnapshots();
             if (now < nextMirror) return;
             nextMirror = now + 1f;
             Mirror(null, false);
@@ -917,13 +935,52 @@ namespace MWCoop
         // Lot : [cle][nb][(type, nom, valeur)...] ; cle "" = globales de la maison.
         static void Mirror(Peer only, bool all)
         {
+            Mirror(only, all, byKey.Values, true);
+        }
+        static void PumpSnapshots()
+        {
+            if (snapshotJobs.Count == 0 || !MscMaintenance.Available) return;
+            SnapshotJob job = snapshotJobs[0];
+            if (!job.Peer.Accepted || !Session.T.Peers.Contains(job.Peer)) { snapshotJobs.RemoveAt(0); return; }
+            if (job.Peer.waiting.Count > 256) return;
+            long started = MscMaintenance.Begin();
+            try
+            {
+                if (job.Phase == 0)
+                {
+                    System.Array.Clear(job.Batch, 0, job.Batch.Length);
+                    for (int i = 0; i < job.Batch.Length && job.Cursor < job.Objects.Count; i++) job.Batch[i] = job.Objects[job.Cursor++];
+                    bool last = job.Cursor >= job.Objects.Count;
+                    Mirror(job.Peer, true, job.Batch, last);
+                    if (last) { job.Cursor = 0; job.Phase = 1; }
+                }
+                else
+                {
+                    for (int i = 0; i < 8 && job.Cursor < job.Objects.Count; i++)
+                    {
+                        W x = job.Objects[job.Cursor++];
+                        if (!x.HostDriven || x.F == null || string.IsNullOrEmpty(x.F.ActiveStateName)) continue;
+                        using (var w = NetWriter.Rent(Msg.WorldFsm))
+                        {
+                            w.U8(Session.LocalId).Str(x.Key).Str("").Str("").U8(2).Str(x.F.ActiveStateName);
+                            WriteVars(x.F, w, false);
+                            if (w.Length <= MaxMsg) Session.T.SendReliable(job.Peer, w.ToArray());
+                        }
+                    }
+                    if (job.Cursor >= job.Objects.Count) snapshotJobs.RemoveAt(0);
+                }
+            }
+            finally { MscMaintenance.End(started); }
+        }
+        static void Mirror(Peer only, bool all, IEnumerable<W> objects, bool globals)
+        {
             NetWriter w = null;
             int n = 0;
             System.Action flush = () => { if (w == null) return; if (only != null) Session.T.SendReliable(only, w.ToArray()); else Session.SendAll(w, true); w = null; };
             var entries = new List<KeyValuePair<string, object>>();
-            foreach (W j in byKey.Values)
+            foreach (W j in objects)
             {
-                if (!j.Persistent || !j.Mirror || j.F == null) continue;
+                if (j == null || !j.Persistent || !j.Mirror || j.F == null) continue;
                 entries.Clear();
                 foreach (FsmFloat x in j.F.FsmVariables.FloatVariables) if (!SkipVar(x.Name) && (all || Changed(j.Sent, x.Name, x.Value))) entries.Add(new KeyValuePair<string, object>(x.Name, x.Value));
                 foreach (FsmInt x in j.F.FsmVariables.IntVariables) if (!SkipVar(x.Name) && !LoopVar(j, x.Name) && (all || Changed(j.Sent, "i:" + x.Name, x.Value))) entries.Add(new KeyValuePair<string, object>(x.Name, x.Value));
@@ -946,11 +1003,11 @@ namespace MWCoop
                 AddEntries(ref w, ref n, j.Key, entries, flush);
             }
             entries.Clear();
-            foreach (FsmFloat x in FsmVariables.GlobalVariables.FloatVariables) if (x.Name.StartsWith("House") && (all || Changed(houseSent, x.Name, x.Value))) entries.Add(new KeyValuePair<string, object>(x.Name, x.Value));
-            foreach (FsmBool x in FsmVariables.GlobalVariables.BoolVariables) if (x.Name.StartsWith("House") && (all || Changed(houseSent, "b:" + x.Name, x.Value ? 1 : 0))) entries.Add(new KeyValuePair<string, object>(x.Name, x.Value));
+            if (globals) foreach (FsmFloat x in FsmVariables.GlobalVariables.FloatVariables) if (x.Name.StartsWith("House") && (all || Changed(houseSent, x.Name, x.Value))) entries.Add(new KeyValuePair<string, object>(x.Name, x.Value));
+            if (globals) foreach (FsmBool x in FsmVariables.GlobalVariables.BoolVariables) if (x.Name.StartsWith("House") && (all || Changed(houseSent, "b:" + x.Name, x.Value ? 1 : 0))) entries.Add(new KeyValuePair<string, object>(x.Name, x.Value));
             if (entries.Count > 0) AddEntries(ref w, ref n, "", entries, flush);
             flush();
-            if (all) Log.Info("monde : etat de " + byKey.Count + " automates envoye a " + only);
+            if (all && globals) Log.Info("monde : etat de " + byKey.Count + " automates envoye a " + only);
         }
 
         // Chaque entree est encodee a part pour connaitre sa taille exacte ; un automate trop gros

@@ -8,6 +8,8 @@ namespace MWCoop.Net
     {
         public int Id;
         public string Name = "?", Skin = "";
+        string bodySource, bodyKey = "";
+        public string BodyKey { get { if (bodySource != Skin) { bodySource = Skin; bodyKey = Looks.Parse(Skin).Body; } return bodyKey; } }
         public Peer Peer;              // hote : le pair de cet invite
         public bool Local;
         public int Level;              // 0 menu, 1 en partie
@@ -31,6 +33,7 @@ namespace MWCoop.Net
     {
         public const int NetVersion = 1046;   // MSC: versioned assembly, chassis replacement parts and timing marks.
         static readonly HashSet<int> authenticated = new HashSet<int>();
+        internal static bool AuthenticatedForSave(Peer peer) { return peer != null && peer.Accepted && authenticated.Contains(peer.Id); }
         public static Transport T;
         public static bool Active, IsHost;
         public static int LocalId;
@@ -349,10 +352,10 @@ namespace MWCoop.Net
                 Players.Remove(from.Id);
                 return;
             }
-            authenticated.Add(from.Id);
+            bool firstHello = authenticated.Add(from.Id);
             Hud.Toast(pi.Name + Lang.T(" a rejoint la partie", " joined the game"));
             SendRoster();
-            SaveTransfer.Queue(from);
+            if (firstHello) SaveTransfer.Queue(from);
         }
 
         // Pseudo/apparence changes en cours de partie : l'invite previent l'hote, qui renvoie la liste.

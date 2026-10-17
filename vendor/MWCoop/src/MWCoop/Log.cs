@@ -8,6 +8,7 @@ namespace MWCoop
     {
         static StreamWriter w;
         static readonly object gate = new object();
+        public static int DroppedEntries;
         public static string DataDir;
 
         public static void Open()
@@ -40,8 +41,17 @@ namespace MWCoop
             lock (gate)
             {
                 if (w == null) return;
-                w.WriteLine(DateTime.Now.ToString("HH:mm:ss.fff") + " " + level + msg);
+                string line = DateTime.Now.ToString("HH:mm:ss.fff") + " " + level + msg;
+                StreamWriter target = w;
+                if (!MscIo.TryQueue(delegate { target.WriteLine(line); })) DroppedEntries++;
             }
+        }
+
+        public static void Close()
+        {
+            // All writes are ordered by the worker. Only close after it has drained.
+            if (!MscIo.Shutdown()) return;
+            lock (gate) { if (w != null) { w.Flush(); w.Dispose(); w = null; } }
         }
 
         public static void Info(string msg) { Write("", msg); }

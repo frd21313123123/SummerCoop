@@ -59,23 +59,48 @@ namespace MWCoop.Net
         // ---- etat pour le lanceur
         static float next;
         static string dir;
+        static volatile bool pendingIo;
+        static readonly Queue<string> commands = new Queue<string>();
+        static readonly object commandGate = new object();
 
         public static void Update()
         {
+            // IO polls once a second; apply completed commands on the next main-thread image.
+            Commands();
             if (Time.realtimeSinceStartup < next) return;
             next = Time.realtimeSinceStartup + 1f;
             try
             {
                 if (dir == null) dir = Environment.GetEnvironmentVariable("MWCOOP_DATA") ?? Path.Combine(Environment.GetEnvironmentVariable("MWCOOP_DIR") ?? "MWCoop", "");
-                Commands();
-                WriteState();
+                if (!pendingIo)
+                {
+                    string snapshot = BuildState(); string directory = dir;
+                    pendingIo = true;
+                    if (!MscIo.TryQueue(delegate {
+                        try
+                        {
+                            WriteState(directory, snapshot);
+                            string path = Path.Combine(directory, "commandes.txt");
+                            if (!File.Exists(path)) return;
+                            string[] lines = File.ReadAllLines(path);
+                            lock (commandGate)
+                            {
+                                if (lines.Length > 256) throw new IOException("Launcher command batch exceeded 256 lines");
+                                if (commands.Count + lines.Length > 256) return;
+                                File.Delete(path);
+                                foreach (string line in lines) commands.Enqueue(line);
+                            }
+                        }
+                        finally { pendingIo = false; }
+                    })) pendingIo = false;
+                }
             }
             catch (Exception e) { Log.Warn("etat pour le lanceur : " + e.Message); next += 10f; }
         }
 
         static string Clean(string s) { return (s ?? "").Replace('\t', ' ').Replace('\r', ' ').Replace('\n', ' '); }
 
-        static void WriteState()
+        static string BuildState()
         {
             var sb = new StringBuilder();
             long now = (long)(DateTime.UtcNow - new DateTime(1970, 1, 1)).TotalSeconds;
@@ -89,20 +114,22 @@ namespace MWCoop.Net
                 sb.Append("joueur\t").Append(pi.Id).Append('\t').Append(Clean(pi.Name)).Append('\t').Append(ping).Append('\t').Append(pi.Level == 1 ? 1 : 0).Append('\t')
                   .Append(pi.SteamId).Append('\t').Append(Clean(pi.Skin)).Append('\t').Append(pi.Local ? 1 : 0).Append('\n');
             }
-            string path = Path.Combine(dir, "serveur.txt"), tmp = path + ".tmp";
-            File.WriteAllText(tmp, sb.ToString(), new UTF8Encoding(false));
+            return sb.ToString();
+        }
+        static void WriteState(string directory, string snapshot)
+        {
+            string path = Path.Combine(directory, "serveur.txt"), tmp = path + ".tmp";
+            File.WriteAllText(tmp, snapshot, new UTF8Encoding(false));
             if (File.Exists(path)) File.Delete(path);
             File.Move(tmp, path);
         }
 
         static void Commands()
         {
-            string path = Path.Combine(dir, "commandes.txt");
-            if (!File.Exists(path)) return;
-            string[] lines = File.ReadAllLines(path);
-            File.Delete(path);
-            foreach (string l in lines)
+            while (true)
             {
+                string l;
+                lock (commandGate) { if (commands.Count == 0) return; l = commands.Dequeue(); }
                 string[] f = l.Split('\t');
                 int id;
                 if (f.Length < 2 || !int.TryParse(f[1], out id)) continue;

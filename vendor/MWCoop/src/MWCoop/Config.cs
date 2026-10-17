@@ -14,22 +14,15 @@ namespace MWCoop
 
         public static void Load()
         {
+            values.Clear();
             resolved.Clear();
             string dir = Environment.GetEnvironmentVariable("MWCOOP_DIR");
             if (string.IsNullOrEmpty(dir)) dir = Path.Combine(Environment.CurrentDirectory, "MWCoop");
-            IniPath = Path.Combine(dir, "mwcoop.ini");
-            if (File.Exists(IniPath))
-            {
-                string section = "";
-                foreach (string raw in File.ReadAllLines(IniPath))
-                {
-                    string l = raw.Trim();
-                    if (l.Length == 0 || l[0] == ';' || l[0] == '#') continue;
-                    if (l[0] == '[') { section = l.Trim('[', ']'); continue; }
-                    int eq = l.IndexOf('=');
-                    if (eq > 0) values[section + "." + l.Substring(0, eq).Trim()] = l.Substring(eq + 1).Trim();
-                }
-            }
+            IniPath = Environment.GetEnvironmentVariable("MWCOOP_CONFIG") ?? Path.Combine(dir, "mwcoop.ini");
+            // Preserve profile-specific settings (including diagnostics) while
+            // the launcher's shared INI supplies the player's current choices.
+            ReadIni(Path.Combine(dir, "mwcoop.ini"));
+            if (!string.Equals(IniPath, Path.Combine(dir, "mwcoop.ini"), StringComparison.OrdinalIgnoreCase)) ReadIni(IniPath);
             // MWCoop\lancement.ini (MWCoop.exe, juste avant de lancer le jeu) : passe devant [Coop],
             // valable 3 minutes, puis renomme pour qu'un lancement par Steam ne le reprenne pas.
             string launch = Path.Combine(dir, "lancement.ini");
@@ -55,6 +48,20 @@ namespace MWCoop
             for (int i = 0; i + 1 < args.Length; i++)
                 if (args[i].StartsWith("-mwcoop-", StringComparison.OrdinalIgnoreCase) && !args[i + 1].StartsWith("-"))
                     values["Arg." + args[i].Substring(8)] = args[i + 1];
+        }
+
+        static void ReadIni(string path)
+        {
+            if (!File.Exists(path)) return;
+            string section = "";
+            foreach (string raw in File.ReadAllLines(path))
+            {
+                string line = raw.Trim();
+                if (line.Length == 0 || line[0] == ';' || line[0] == '#') continue;
+                if (line[0] == '[') { section = line.Trim('[', ']'); continue; }
+                int eq = line.IndexOf('=');
+                if (eq > 0) values[section + "." + line.Substring(0, eq).Trim()] = line.Substring(eq + 1).Trim();
+            }
         }
 
         // L'argument -mwcoop-cle passe devant "Section.Cle" ; une valeur vide vaut 'def'.

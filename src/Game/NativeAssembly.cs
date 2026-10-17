@@ -51,6 +51,16 @@ namespace SummerCoop.Game
             }
             return null;
         }
+        public static SetParent MountAction(FsmStateAction[] actions)
+        {
+            for (int i = 0; i < actions.Length; i++)
+            {
+                SetParent mount = actions[i] as SetParent;
+                if (mount != null && mount.gameObject.OwnerOption == OwnerDefaultOption.SpecifyGameObject
+                    && mount.gameObject.GameObject.Name == "Part") return mount;
+            }
+            return null;
+        }
         public static GameObject MountParent(FsmBinding binding, string state)
         {
             FsmState native = binding.Component.Fsm.GetState(state);
@@ -114,6 +124,25 @@ namespace SummerCoop.Game
         }
         public static void Complete(FsmBinding binding, string state, GameObject part)
         {
+            Complete(binding, state, part, new string[8]);
+        }
+        public static Vector3 LocalOffset(FsmStateAction[] actions, Vector3 value)
+        {
+            for (int i = 0; i < actions.Length; i++)
+            {
+                SetPosition position = actions[i] as SetPosition;
+                if (position == null || position.gameObject.OwnerOption != OwnerDefaultOption.SpecifyGameObject
+                    || position.gameObject.GameObject.Name != "Part" || position.space != Space.Self) continue;
+                if (!position.vector.IsNone) value = position.vector.Value;
+                if (!position.x.IsNone) value.x = position.x.Value;
+                if (!position.y.IsNone) value.y = position.y.Value;
+                if (!position.z.IsNone) value.z = position.z.Value;
+            }
+            return value;
+        }
+        public static void Complete(FsmBinding binding, string state, GameObject part, string[] seen)
+        {
+            if (seen == null || seen.Length < 8) throw new ArgumentException("Native mount scratch space requires eight states", "seen");
             SetParent action = MountAction(binding.Component.Fsm.GetState(state).Actions);
             if (action == null || action.parent.Value == null || part == null) throw new InvalidOperationException("Native mount parent is unavailable");
             Transform parent = action.parent.Value.transform;
@@ -125,9 +154,13 @@ namespace SummerCoop.Game
             // Several native End states apply a local offset after SetParent (engine
             // internals included). Read that offset from the game, not a mod table.
             FsmState current = binding.Component.Fsm.GetState(state);
-            HashSet<string> seen = new HashSet<string>();
-            for (int hop = 0; current != null && hop < 8 && seen.Add(current.Name); hop++)
+            int count = 0;
+            while (current != null && count < 8)
             {
+                bool repeated = false;
+                for (int i = 0; i < count; i++) if (seen[i] == current.Name) { repeated = true; break; }
+                if (repeated) break;
+                seen[count++] = current.Name;
                 part.transform.localPosition = LocalOffset(current.Actions, part.transform.localPosition);
                 string next = null; foreach (FsmTransition t in current.Transitions) if (t.EventName == "FINISHED") { next = t.ToState; break; }
                 current = next == null ? null : binding.Component.Fsm.GetState(next);

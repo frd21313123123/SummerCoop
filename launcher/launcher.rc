@@ -7,6 +7,7 @@
 6 RCDATA "summer-background.png"
 7 RCDATA "..\\build\\SummerCoop.dll"
 8 RCDATA "..\\build\\SummerCoop.Core.dll"
+9 RCDATA "summer-background-dark.png"
 
 1 VERSIONINFO
 FILEVERSION MWV_NUM
