@@ -563,10 +563,13 @@ static bool HttpGet(const std::wstring &url, std::string *out, const std::wstrin
 
     std::wstring customHdr;
     if (toFile.empty()) customHdr += L"Accept: application/vnd.github+json\r\n";
-    wchar_t tok[256] = L"";
-    if (!g_iniLauncher.empty()) GetPrivateProfileStringW(L"Lanceur", L"GitHubToken", L"", tok, 256, g_iniLauncher.c_str());
-    if (!tok[0]) GetEnvironmentVariableW(L"GITHUB_TOKEN", tok, 256);
-    if (tok[0]) customHdr += L"Authorization: Bearer " + std::wstring(tok) + L"\r\n";
+    bool isGitHubHost = (_wcsicmp(host, L"api.github.com") == 0 || _wcsicmp(host, L"github.com") == 0);
+    if (isGitHubHost) {
+        wchar_t tok[256] = L"";
+        if (!g_iniLauncher.empty()) GetPrivateProfileStringW(L"Lanceur", L"GitHubToken", L"", tok, 256, g_iniLauncher.c_str());
+        if (!tok[0]) GetEnvironmentVariableW(L"GITHUB_TOKEN", tok, 256);
+        if (tok[0]) customHdr += L"Authorization: Bearer " + std::wstring(tok) + L"\r\n";
+    }
     const wchar_t *hdr = customHdr.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : customHdr.c_str();
 
     if (r && WinHttpSendRequest(r, hdr, customHdr.empty() ? 0 : (DWORD)-1, WINHTTP_NO_REQUEST_DATA, 0, 0, 0)
