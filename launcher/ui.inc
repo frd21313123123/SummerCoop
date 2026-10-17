@@ -939,18 +939,7 @@ static void DrawHomeLook(Graphics &g, RectF stage)
 // Lignes "a puces" d'une note (sans les images), pour l'accueil.
 static std::vector<std::wstring> NoteBullets(const Note &n, int maxN)
 {
-    std::vector<std::wstring> out;
-    const std::wstring &body = NoteBody(n);
-    for (size_t at = 0; at < body.size() && (int)out.size() < maxN;) {
-        size_t e = body.find(L'\n', at);
-        std::wstring line = body.substr(at, e == std::wstring::npos ? std::wstring::npos : e - at);
-        at = e == std::wstring::npos ? body.size() : e + 1;
-        if (line.empty() || line[0] == L'\x01') continue;
-        size_t b = line.find_first_not_of(L"•-* ");
-        if (b == std::wstring::npos) continue;
-        out.push_back(line.substr(b));
-    }
-    return out;
+    return NotePreview(n, maxN);
 }
 
 // ---- page NOUVEAUTES : versions a gauche, detail a droite (texte, images)
@@ -985,12 +974,12 @@ static void DrawNotesPage(Graphics &g)
         if (r.Y + r.Height < lr.Y || r.Y > lr.Y + lr.Height) continue;
         bool on = i == g_noteSel, hot = g_uiHot == UI_NOTE + i;
         if (on || hot) { GraphicsPath p; RoundRect(p, r, 14); SolidBrush b(on ? TH(cardSel) : TH(card)); g.FillPath(&b, &p); }
-        int cmp = g_localVer.empty() ? 1 : CmpVer(notes[i].ver, g_localVer);
+        int cmp = CmpVer(notes[i].ver, LauncherVersion());
         SolidBrush dot(cmp > 0 ? kAcc : cmp == 0 ? kOk : WithA(kGrey, 0.6f));
         g.FillEllipse(&dot, r.X + 14, r.Y + r.Height / 2 - 5, 10.0f, 10.0f);
         Text(g, notes[i].ver.substr(0, notes[i].ver.find(L'-')), RectF(r.X + 36, r.Y + 10, 120, 24), 15, FontStyleBold, kInk, StringAlignmentNear);
         Text(g, notes[i].date, RectF(r.X + 36, r.Y + 33, 140, 20), 12, FontStyleRegular, kGrey, StringAlignmentNear);
-        if (cmp >= 0 && !g_localVer.empty()) {
+        if (cmp >= 0) {
             const wchar_t *lab = cmp == 0 ? T(L"INSTALLÉE", L"INSTALLED") : T(L"NOUVELLE", L"NEW");
             float w = PillW(lab, 9.5f);
             Pill(g, RectF(r.X + r.Width - w - 10, r.Y + 22, w, 20), cmp == 0 ? WithA(kOk, 0.2f) : kAcc, lab, cmp == 0 ? kOk : kOnAcc, 9.5f);
@@ -1003,7 +992,7 @@ static void DrawNotesPage(Graphics &g)
     RectF b = kNotesBody;
     Title(g, L"SummerCoop " + n.ver.substr(0, n.ver.find(L'-')), RectF(b.X + 28, b.Y + 22, 400, 38), 28, kInk);
     Text(g, n.date, RectF(b.X + 28, b.Y + 58, 300, 20), 13, FontStyleRegular, kGrey, StringAlignmentNear);
-    int cmp = g_localVer.empty() ? 1 : CmpVer(n.ver, g_localVer);
+    int cmp = CmpVer(n.ver, LauncherVersion());
     if (cmp > 0 && !UpdAvail().empty()) UiButton(g, RectF(b.X + b.Width - 200, b.Y + 26, 172, 44), T(L"Mettre à jour", L"Update"), UI_NOTE_UPDATE, true, IC_DOWNLOAD);
     else if (cmp == 0) { const wchar_t *lab = T(L"INSTALLÉE", L"INSTALLED"); float w = PillW(lab, 11); Pill(g, RectF(b.X + b.Width - 28 - w, b.Y + 36, w, 24), WithA(kOk, 0.2f), lab, kOk); }
     Pen sep(TH(sep), 1); g.DrawLine(&sep, b.X + 28, b.Y + 84, b.X + b.Width - 28, b.Y + 84);

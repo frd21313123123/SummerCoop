@@ -45,12 +45,26 @@ if ($release -and !$release.draft) {
     Write-Output "Release already published and verified: $($release.html_url)"
     return
 }
+# Use published releases as the baseline; a failed draft must not consume notes.
+$previousTag = ''
+$publishedReleases = Api GET 'releases?per_page=100'
+foreach ($previous in $publishedReleases) {
+    if ($previous.draft -or $previous.tag_name -eq $tag -or (!$Version.Contains('-') -and $previous.prerelease)) { continue }
+    if ($previous.tag_name -notmatch '^v?[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?(?:-[0-9A-Za-z.-]+)?$') { continue }
+    & git -C $root merge-base --is-ancestor $previous.tag_name $Commit
+    if ($LASTEXITCODE -eq 0) { $previousTag = $previous.tag_name; break }
+    if ($LASTEXITCODE -ne 1) { throw 'Cannot resolve the previous release; checkout must fetch tags and full history.' }
+}
+$notesFile = Join-Path $root ('build\release-notes-' + $Version + '.md')
+$null = & (Join-Path $PSScriptRoot 'release-notes.ps1') -Version $Version -Repository $Repository -Commit $Commit -PreviousTag $previousTag -OutputPath $notesFile
+$notes = [IO.File]::ReadAllText($notesFile, [Text.Encoding]::UTF8)
 if (!$release) {
     $release = Api POST 'releases' @{
         tag_name = $tag; target_commitish = $Commit; name = "SummerCoop $Version"
-        draft = $true; prerelease = $Version.Contains('-'); generate_release_notes = $true
+        draft = $true; prerelease = $Version.Contains('-'); body = $notes
     }
 } elseif ($release.target_commitish -ne $Commit) { throw 'Existing draft belongs to another commit.' }
+else { $release = Api PATCH ('releases/' + $release.id) @{ body = $notes } }
 foreach ($file in $assets) {
     $name = [IO.Path]::GetFileName($file)
     foreach ($old in @($release.assets | Where-Object name -eq $name)) { Api DELETE "releases/assets/$($old.id)" | Out-Null }
@@ -63,3 +77,4 @@ foreach ($file in $assets) {
 $release = Api PATCH "releases/$($release.id)" @{ draft = $false; make_latest = $(if ($Version.Contains('-')) { 'false' } else { 'true' }) }
 Write-Output "Published $($release.html_url)"
 if ($env:GITHUB_STEP_SUMMARY) { "Release: [$tag]($($release.html_url))" | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding UTF8 }
+if ($env:GITHUB_STEP_SUMMARY) { @('', $notes) | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding UTF8 }

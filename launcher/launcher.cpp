@@ -984,9 +984,8 @@ static bool IsWritableDir(const std::wstring &dir)
 }
 
 // ---------------------------------------------------------------- notes des versions (onglet NOUVEAUTES)
-// Texte de chaque release GitHub : en francais, puis une ligne "---", puis en anglais. Gardees dans
-// <jeu>\MWCoop\notes-maj.json pour les lire hors ligne.
-// (depuis 0.92.3, demande de JD : encore une ligne "---" et en russe ; sans : l'anglais en russe)
+// Release bodies use named language sections; older FR --- EN --- RU bodies
+// remain supported. FetchReleases keeps the same metadata in LOCALAPPDATA.
 struct Note { std::wstring ver, date, fr, en, ru, ar, zip, page, exeUrl, sha256, checksumUrl; bool pre = false; };
 static const std::wstring &NoteBody(const Note &n) { return g_fr ? n.fr : g_ru && !n.ru.empty() ? n.ru : g_ar && !n.ar.empty() ? n.ar : n.en; }
 static std::vector<Note> g_notes;
@@ -1023,13 +1022,29 @@ static std::wstring CleanNote(const std::wstring &s)
         bool atLine = i == 0 || s[i - 1] == L'\n';
         if (atLine) {
             size_t e = s.find(L'\n', i);
-            std::wstring url = NoteImageUrl(s.substr(i, e == std::wstring::npos ? std::wstring::npos : e - i));
+            std::wstring line = s.substr(i, e == std::wstring::npos ? std::wstring::npos : e - i);
+            std::wstring trimmed = Trim(line);
+            if (trimmed == L"---" || trimmed == L"***" || trimmed == L"___") {
+                if (e == std::wstring::npos) break;
+                i = e; continue;
+            }
+            std::wstring url = NoteImageUrl(line);
             if (!url.empty()) {
                 o += L'\x01'; o += url; o += L'\n';
                 if (e == std::wstring::npos) break;
                 i = e;
                 continue;
             }
+        }
+        if (!s.compare(i, 4, L"<!--")) {
+            size_t end = s.find(L"-->", i + 4);
+            if (end == std::wstring::npos) break;
+            i = end + 2; continue;
+        }
+        if (s[i] == L'[') {
+            size_t label = s.find(L"](", i + 1);
+            size_t end = label == std::wstring::npos ? label : s.find(L')', label + 2);
+            if (end != std::wstring::npos) { o += s.substr(i + 1, label - i - 1); i = end; continue; }
         }
         bool lineStart = i == 0 || s[i - 1] == L'\n';
         if (s[i] == L'`') continue;
@@ -1040,6 +1055,47 @@ static std::wstring CleanNote(const std::wstring &s)
     }
     size_t b = o.find_first_not_of(L"\n "), e = o.find_last_not_of(L"\n ");
     return b == std::wstring::npos ? L"" : o.substr(b, e - b + 1);
+}
+
+static bool ReadLocalizedNote(const std::wstring &body, Note &note)
+{
+    std::wstring parts[4];
+    int language = -1;
+    bool found = false;
+    for (size_t at = 0; at < body.size();) {
+        size_t end = body.find(L'\n', at);
+        std::wstring line = body.substr(at, end == std::wstring::npos ? std::wstring::npos : end - at);
+        at = end == std::wstring::npos ? body.size() : end + 1;
+        std::wstring heading = Trim(line);
+        for (wchar_t &c : heading) c = (wchar_t)towlower(c);
+        int next = heading == L"## français" || heading == L"## french" || heading == L"## fr" ? 0
+                 : heading == L"## english" || heading == L"## en" ? 1
+                 : heading == L"## русский" || heading == L"## Русский" || heading == L"## russian" || heading == L"## ru" ? 2
+                 : heading == L"## العربية" || heading == L"## arabic" || heading == L"## ar" ? 3 : -1;
+        if (next >= 0) { language = next; found = true; }
+        else if (language >= 0) parts[language] += line + L'\n';
+    }
+    if (!found) return false;
+    note.fr = CleanNote(parts[0]); note.en = CleanNote(parts[1]); note.ru = CleanNote(parts[2]);
+    note.ar = ArNote(CleanNote(parts[3]));
+    return true;
+}
+
+static std::vector<std::wstring> NotePreview(const Note &note, int count)
+{
+    std::vector<std::wstring> bullets, paragraphs;
+    const std::wstring &body = NoteBody(note);
+    for (size_t at = 0; at < body.size();) {
+        size_t end = body.find(L'\n', at);
+        std::wstring line = Trim(body.substr(at, end == std::wstring::npos ? std::wstring::npos : end - at));
+        at = end == std::wstring::npos ? body.size() : end + 1;
+        if (line.empty() || line[0] == L'\x01') continue;
+        bool bullet = line[0] == L'•' || ((line[0] == L'-' || line[0] == L'*') && line.size() > 1 && line[1] == L' ');
+        std::vector<std::wstring> &target = bullet ? bullets : paragraphs;
+        size_t start = bullet ? line.find_first_not_of(L"•-* \t") : 0;
+        if (start != std::wstring::npos && (int)target.size() < count) target.push_back(line.substr(start));
+    }
+    return bullets.empty() ? paragraphs : bullets;
 }
 
 // Liste des releases (les plus recentes d'abord), brouillons exclus.
@@ -1135,8 +1191,9 @@ static std::vector<Note> ParseReleases(const std::string &source)
         if (d.size() >= 10) n.date = Widen(d.substr(8, 2) + "/" + d.substr(5, 2) + "/" + d.substr(0, 4));
         std::wstring body = Widen(JsonTextMember(json, "body"));
         size_t sep = body.find(L"\n---");
-        if (sep == std::wstring::npos) n.fr = n.en = CleanNote(body);
-        else {
+        bool localized = ReadLocalizedNote(body, n);
+        if (!localized && sep == std::wstring::npos) n.fr = n.en = CleanNote(body);
+        else if (!localized) {
             size_t enAt = body.find(L'\n', sep + 1);
             n.fr = CleanNote(body.substr(0, sep));
             std::wstring rest = enAt == std::wstring::npos ? L"" : body.substr(enAt + 1);
@@ -1155,6 +1212,13 @@ static std::vector<Note> ParseReleases(const std::string &source)
             }
             n.en = CleanNote(rest);
             if (n.en.empty()) n.en = n.fr;
+        }
+        if (n.en.empty()) n.en = !n.fr.empty() ? n.fr : !n.ru.empty() ? n.ru : n.ar;
+        if (n.fr.empty()) n.fr = n.en;
+        if (n.en.empty()) {
+            n.en = L"No description was provided for this release.";
+            n.fr = L"Aucune description pour cette version.";
+            n.ru = L"Для этого выпуска описание изменений не опубликовано.";
         }
         std::map<std::wstring, std::wstring> checksums;
         for (const std::string &asset : JsonObjects(JsonMember(json, "assets"))) {
@@ -7961,6 +8025,21 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
         {
             int argc = ac;
             wchar_t **argv = av;
+        if (argc >= 4 && !_wcsicmp(argv[1], L"/test-notes")) {
+            std::vector<unsigned char> data;
+            if (!ReadAll(argv[2], data)) { LocalFree(av); return 1; }
+            FILE *report = _wfopen(argv[3], L"w, ccs=UTF-8");
+            if (!report) { LocalFree(av); return 1; }
+            for (const Note &note : ParseReleases(std::string(data.begin(), data.end()))) {
+                fwprintf(report, L"version=%s\n", note.ver.c_str());
+                for (int lang = 0; lang < 3; ++lang) {
+                    g_fr = lang == 0; g_ru = lang == 2; g_ar = false;
+                    fwprintf(report, L"[%s]\n%s\n[preview-%s]\n", lang == 0 ? L"fr" : lang == 1 ? L"en" : L"ru", NoteBody(note).c_str(), lang == 0 ? L"fr" : lang == 1 ? L"en" : L"ru");
+                    for (const std::wstring &line : NotePreview(note, 3)) fwprintf(report, L"%s\n", line.c_str());
+                }
+            }
+            fclose(report); LocalFree(av); return 0;
+        }
         // Essai du canal : /testmaj <releases.json> <journal> <version locale> -- version choisie (Stable, Nightly) et a installer ou non
         if (argc >= 5 && !_wcsicmp(argv[1], L"/testmaj")) {
             std::vector<unsigned char> d;
