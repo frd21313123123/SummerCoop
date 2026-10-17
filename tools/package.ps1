@@ -66,5 +66,5 @@ try {
     Write-Warning ('Standalone EXE alias unavailable: ' + $standalonePath)
 }
 $sourceZip = Join-Path $root ('dist\SummerCoop-' + $version + '-source.zip')
-Compress-Archive -LiteralPath (Join-Path $root 'src'),(Join-Path $root 'vendor'),(Join-Path $root 'tests'),(Join-Path $root 'tools'),(Join-Path $root 'launcher'),(Join-Path $root 'docs'),(Join-Path $root '.github'),(Join-Path $root 'README.md'),(Join-Path $root 'LICENSE'),(Join-Path $root 'THIRD_PARTY_NOTICES.md'),(Join-Path $root '.gitignore'),(Join-Path $root '.gitattributes') -DestinationPath $sourceZip -Force
+Compress-Archive -LiteralPath (Join-Path $root 'src'),(Join-Path $root 'vendor'),(Join-Path $root 'tests'),(Join-Path $root 'tools'),(Join-Path $root 'launcher'),(Join-Path $root 'docs'),(Join-Path $root '.github'),(Join-Path $root 'AGENTS.md'),(Join-Path $root 'README.md'),(Join-Path $root 'LICENSE'),(Join-Path $root 'THIRD_PARTY_NOTICES.md'),(Join-Path $root '.gitignore'),(Join-Path $root '.gitattributes') -DestinationPath $sourceZip -Force
 Write-Output $sourceZip
