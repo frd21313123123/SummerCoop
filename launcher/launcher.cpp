@@ -7,8 +7,8 @@
 //    bibliotheques Steam (registre + steamapps\libraryfolders.vdf), sinon l'exe choisi par le joueur. Jeu reconnu :
 //    mysummercar.exe + mysummercar_Data\Managed\Assembly-CSharp.dll. Version du jeu : 1re ligne de changelog.txt.
 //  - Version checks use the compiled launcher version and SummerCoop GitHub releases.
-//    Check at startup and every 30 minutes, even without a game folder. A newer
-//    release offers a download page. Checks never install files or block play.
+//    Check at startup and every 30 minutes, even without a game folder. Verified
+//    releases download in the background and replace the launcher while idle.
 //  - Heberger ouvre un SALON (TCP sur le port de la partie ; le jeu, lui, est en UDP) : liste des joueurs, choix de
 //    la partie (continuer / nouvelle), puis LANCER : chaque lanceur demarre son jeu. Rejoindre entre dans le salon
 //    de l'adresse saisie (sinon, si l'hote joue deja, propose de rejoindre directement en jeu). Jouer en solo :
@@ -100,6 +100,7 @@ enum { REL_OFFLINE = -1, REL_NONE = 0, REL_OK = 1 };   // reponse de GitHub
 static HWND g_wnd;
 static bool g_fr, g_ru, g_ar;   // langue : francais, russe (13/10 : traduction de l'anglais, ru.inc), arabe (ar.inc), sinon anglais
 static std::wstring g_dir, g_self, g_iniLauncher;   // dossier du lanceur (avec \), chemin du lanceur
+static std::wstring g_steamLauncherPath;            // current registered path used by Steam
 static std::wstring g_gameDir, g_gameVer;           // dossier de My Summer Car (avec \, vide = introuvable), version
 static std::wstring g_localVer;                     // MWCoop\version.txt
 static bool g_modOk;                                // version.dll + MWCoop\MWCoop.dll presents
@@ -1305,6 +1306,7 @@ static bool VerifyPeBinary(const std::wstring &path)
 }
 
 #include "updater.inc"
+#include "steam-registration.inc"
 
 struct UpdateParams { std::wstring ver, url, page, sha, checksumUrl, dir; };
 static std::wstring g_restartArgs;
@@ -4526,7 +4528,7 @@ static float Rnd01(int i, int k)
 // invitation acceptee MWCoop ferme lance le jeu sans le mod).
 static const RectF kGuideCard(290, 116, 700, 560);
 static const RectF kGuideCopy(330, 552, 300, 50), kGuideOk(646, 552, 304, 50), kGuideNoMore(330, 618, 380, 26), kGuideClose(926, 132, 44, 44);
-static std::wstring SteamLaunchLine() { return L"\"" + g_self + L"\" %command%"; }
+static std::wstring SteamLaunchLine() { return L"\"" + (g_steamLauncherPath.empty() ? g_self : g_steamLauncherPath) + L"\" %command%"; }
 static bool CopyText(const std::wstring &t)
 {
     if (!OpenClipboard(g_wnd)) return false;
@@ -4589,8 +4591,8 @@ static void DrawSteamGuide(Graphics &g)
           L"HOST opens a Steam lobby for your friends only: invite them with the lobby's \"Invite friends\" button."),
         T(L"Tes amis acceptent l'invitation dans Steam (ou cliquent REJOINDRE dans MWCoop, mode STEAM) ; LANCER d\u00E9marre le jeu de chacun.",
           L"Your friends accept the invite in Steam (or click JOIN in MWCoop, STEAM mode); START launches everyone's game."),
-        T(L"Pour que le bouton Jouer de Steam et une invitation accept\u00E9e MWCoop ferm\u00E9 ouvrent MWCoop (et pas le jeu sans le mod), chacun ajoute cette option de lancement :",
-          L"So that Steam's Play button and an invite accepted with MWCoop closed open MWCoop (not the game without the mod), everyone adds this launch option:") };
+        T(L"Le lanceur maintient automatiquement son chemin dans Steam. Si Steam n'est pas d\u00E9tect\u00E9, copie cette option de lancement :",
+          L"The launcher keeps its path in Steam up to date automatically. If Steam is not detected, copy this launch option:") };
     float y = c.Y + 82;
     for (int i = 0; i < 3; i++) {
         RectF dot(c.X + 40, y, 28, 28);
@@ -7947,6 +7949,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
     {
         int ac = 0;
         wchar_t **av = CommandLineToArgvW(GetCommandLineW(), &ac);
+        int binding = SteamRegistrationCommand(ac, av);
+        if (binding >= 0) { LocalFree(av); return binding; }
         int result = UpdateCommand(ac, av);
         if (ac >= 3 && !_wcsicmp(av[1], L"/test-mod-resources")) {
             std::wstring game = WithSlash(av[2]);
@@ -8567,19 +8571,20 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
         return rc;
     }
 
-    // Lanceur lance hors du dossier du jeu (copie sur le bureau, dossier d'une ancienne version...) : les mises a jour
-    // remplacent le SummerCoop-Launcher.exe du dossier du jeu, pas celui-ci, qui restait a sa version (retour d'un joueur, 08/10 :
-    // lanceur 0.44 sur le bureau, mod en 0.59 ; salon et partage avec les amis d'une autre version). Celui du dossier du
-    // jeu est plus recent : il est lance a notre place, avec la meme ligne de commande.
-    if (!g_gameDir.empty() && _wcsicmp(g_gameDir.c_str(), g_dir.c_str())) {
-        std::wstring there = g_gameDir + L"SummerCoop-Launcher.exe";
-        unsigned long long mine = ExeVersion(g_self), theirs = FileExists(there) ? ExeVersion(there) : 0;
-        if (theirs > mine && mine) {
-            std::wstring cmd = L"\"" + there + L"\" " + PathGetArgsW(GetCommandLineW());
+    // Repair Steam's saved command and the legacy target its running client may
+    // still have cached. Updated copies converge on the registered launcher.
+    SteamRegistration binding = SteamRegisterInstalled();
+    g_steamLauncherPath = binding.launcher;
+    LaunchLog("Steam launcher binding: %s, configurations %d, legacy copies %d, deferred %d",
+              Narrow(binding.launcher, CP_UTF8).c_str(), binding.configs, binding.aliases, binding.failed);
+    if (!g_updateStarted && !binding.launcher.empty() && !steam_binding::SamePath(binding.launcher, steam_binding::FullPath(g_self))) {
+        std::wstring there = binding.launcher;
+        if (ExeVersion(there) >= ExeVersion(g_self) && ExeVersion(g_self)) {
+            std::wstring cmd = UpdateQuote(there) + L" " + PathGetArgsW(GetCommandLineW());
             STARTUPINFOW si = { sizeof(si) };
             PROCESS_INFORMATION pi = {};
-            LaunchLog("lanceur plus recent dans le dossier du jeu (%s) : lance a la place de celui-ci", Narrow(there, CP_UTF8).c_str());
-            if (CreateProcessW(there.c_str(), &cmd[0], NULL, NULL, FALSE, 0, NULL, g_gameDir.c_str(), &si, &pi)) {
+            LaunchLog("registered launcher (%s): forwarding the original command line", Narrow(there, CP_UTF8).c_str());
+            if (CreateProcessW(there.c_str(), &cmd[0], NULL, NULL, FALSE, 0, NULL, DirOf(there).c_str(), &si, &pi)) {
                 CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
                 GdiplusShutdown(gtok);
                 WSACleanup();

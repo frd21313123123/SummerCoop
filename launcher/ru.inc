@@ -152,6 +152,7 @@ static const wchar_t *const kRu[][2] = {
     { L"Later", L"Позже" },
     { L"Launch option copied: paste it in Steam", L"Параметр запуска скопирован: вставь его в Steam" },
     { L"Playing through Steam", L"Игра через Steam" },
+    { L"The launcher keeps its path in Steam up to date automatically. If Steam is not detected, copy this launch option:", L"Лаунчер автоматически обновляет свой путь в Steam. Если Steam не найден, скопируй этот параметр запуска:" },
     { L"HOST opens a Steam lobby for your friends only: invite them with the lobby's \"Invite friends\" button.", L"ХОСТ открывает лобби Steam только для твоих друзей: пригласи их кнопкой лобби \"Пригласить друзей\"." },
     { L"Your friends accept the invite in Steam (or click JOIN in SummerCoop, STEAM mode); START launches everyone's game.", L"Твои друзья принимают приглашение в Steam (или жмут ПОДКЛЮЧИТЬСЯ в SummerCoop, режим STEAM); НАЧАТЬ ИГРУ запускает игру у всех." },
     { L"So that Steam's Play button and an invite accepted with SummerCoop closed open SummerCoop (not the game without the mod), everyone adds this launch option:", L"Чтобы кнопка «Играть» в Steam и приглашение, принятое при закрытом SummerCoop, открывали SummerCoop (а не игру без мода), каждый добавляет этот параметр запуска:" },
