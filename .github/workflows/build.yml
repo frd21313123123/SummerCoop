@@ -39,13 +39,15 @@ jobs:
         run: ./tools/test-native-updates.ps1
       - name: Test automatic Steam launcher registration and legacy copies
         run: ./tools/test-steam-binding.ps1 -LauncherPath SummerCoop-Launcher/SummerCoop-Launcher.exe
+      - name: Test native save selection and new lobby worlds
+        run: ./tools/test-native-saves.ps1 -LauncherPath SummerCoop-Launcher/SummerCoop-Launcher.exe
       - name: Test changelog generation and localized launcher notes
         run: ./tools/test-release-notes.ps1 -LauncherPath SummerCoop-Launcher/SummerCoop-Launcher.exe
       - name: Add test reports to the workflow summary
         if: always()
         run: |
           $fence = [string]([char]96) * 3
-          foreach ($report in @('build/test-results.txt','build/mwcoop-network-tests/test-results.txt','build/installer-tests/test-results.txt','build/launcher-tests/test-results.txt','build/native-update-tests/test-results.txt','build/steam-binding-tests/test-results.txt','build/release-notes-tests/test-results.txt')) {
+          foreach ($report in @('build/test-results.txt','build/mwcoop-network-tests/test-results.txt','build/installer-tests/test-results.txt','build/launcher-tests/test-results.txt','build/native-update-tests/test-results.txt','build/native-save-tests/test-results.txt','build/steam-binding-tests/test-results.txt','build/release-notes-tests/test-results.txt')) {
             if (Test-Path -LiteralPath $report) {
               @($report, '', ($fence + 'text')) + @(Get-Content -LiteralPath $report) + @($fence, '') |
                 Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding UTF8
@@ -83,6 +85,8 @@ jobs:
         run: ./tools/test-native-updates.ps1 -LauncherPath SummerCoop-Launcher/SummerCoop-Launcher.exe
       - name: Verify Steam registration with the actual release launcher
         run: ./tools/test-steam-binding.ps1 -LauncherPath SummerCoop-Launcher/SummerCoop-Launcher.exe
+      - name: Verify saves with the actual release launcher
+        run: ./tools/test-native-saves.ps1 -LauncherPath SummerCoop-Launcher/SummerCoop-Launcher.exe
       - name: Verify changelogs with the actual release launcher
         run: ./tools/test-release-notes.ps1 -LauncherPath SummerCoop-Launcher/SummerCoop-Launcher.exe
       - name: Upload all assets to a draft, verify and publish

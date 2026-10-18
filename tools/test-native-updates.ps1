@@ -109,8 +109,17 @@ function HandoffTest([string]$name, [bool]$locked, [string]$download = $candidat
     Copy-Item -LiteralPath $LauncherPath -Destination $target -Force
     $oldHash = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash
     $settings = Join-Path $dir 'summercoop-launcher.ini'
-    "[Lanceur]`r`nLangue=ru`r`nAutoUpdate=0`r`nCanal=stable" | Set-Content -LiteralPath $settings -Encoding UTF8
+    "[Lanceur]`r`nLangue=ru`r`nAutoUpdate=0`r`nCanal=stable`r`nSauvegarde=partie-2" | Set-Content -LiteralPath $settings -Encoding UTF8
     $iniHash = (Get-FileHash -LiteralPath $settings -Algorithm SHA256).Hash
+    $saveRoot = Join-Path $testDir ($name + '-worlds')
+    $saveHashes = @{}
+    foreach ($profile in @('host','partie-1','partie-2','guest')) {
+        $saveDirectory = Join-Path $saveRoot $profile
+        New-Item -ItemType Directory -Path $saveDirectory -Force | Out-Null
+        $save = Join-Path $saveDirectory 'defaultES2File.txt'
+        [IO.File]::WriteAllText($save, ('Saved world: ' + $profile))
+        $saveHashes[$save] = (Get-FileHash -LiteralPath $save -Algorithm SHA256).Hash
+    }
     $downloadHash = (Get-FileHash -LiteralPath $download -Algorithm SHA256).Hash
     $lock = $null
     try {
@@ -122,13 +131,16 @@ function HandoffTest([string]$name, [bool]$locked, [string]$download = $candidat
         $expectedHash = $(if ($locked -or $rollback) { $oldHash } else { $downloadHash })
         if ((Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -ne $expectedHash) { throw "$name left the wrong executable" }
         if ((Get-FileHash -LiteralPath $settings -Algorithm SHA256).Hash -ne $iniHash) { throw "$name changed user settings" }
+        foreach ($save in $saveHashes.Keys) {
+            if ((Get-FileHash -LiteralPath $save -Algorithm SHA256).Hash -ne $saveHashes[$save]) { throw "$name changed a saved world" }
+        }
         if ((Get-Content -LiteralPath $report -Raw) -notmatch $expectedHash) { throw "$name restarted the wrong executable" }
         $unexpected = @(Get-ChildItem -LiteralPath $dir -File | Where-Object Name -notin @('SummerCoop-Launcher.exe','SummerCoop-Launcher.exe.sha256','summercoop-launcher.ini'))
         if ($unexpected.Count) { throw "$name left update helpers in the user folder" }
         $checksum = Get-Content -LiteralPath ($target + '.sha256') -Raw
         if ($checksum -notmatch $expectedHash) { throw "$name left a stale checksum" }
     } finally { if ($lock) { $lock.Dispose() } }
-    $results.Add("PASS $name preserves settings, original path and clean standalone folder")
+    $results.Add("PASS $name preserves settings, selected save, all world files, original path and clean standalone folder")
 }
 HandoffTest 'native replacement and restart' $false
 HandoffTest 'locked EXE recovery' $true

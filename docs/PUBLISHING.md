@@ -17,7 +17,8 @@
 3. Запусти проверки, относящиеся к изменению. Для правок документации достаточно
    проверки ссылок и diff; полный набор проверок выполнит CI. При правках
    лаунчера/обновления используй соответствующие `tools/test-native-updates.ps1`,
-   `tools/test-steam-binding.ps1`, `tools/test-release-notes.ps1`.
+   `tools/test-native-saves.ps1`, `tools/test-steam-binding.ps1`,
+   `tools/test-release-notes.ps1`.
 4. Если нужен предварительный локальный пакет с изменениями мода, собирай его
    из свежих исходников через `tools/package.ps1 -RebuildMod -GamePath <путь>`.
    Один `tools/build-launcher.ps1` встраивает имеющиеся `build/*.dll` и может

@@ -2,10 +2,10 @@
 // Plusieurs parties (demande de JD, 14/10 : « jouer avec certains joueurs, puis avec d'autres, choisir la sauvegarde, les
 // nommer ; un onglet pour les gerer ; dans le salon l'hote choisit la sauvegarde ; Nouvelle partie : nouvelle ou recommencer
 // une sauvegarde, avec confirmation ; les invites suivent la sauvegarde de l'hote sans toucher a leurs parties »).
-// Une sauvegarde = un profil du chargeur (loader/proxy.cpp : Profil=<nom> dans lancement.ini) : MWCoop\profils\partie-N, dont
-// LocalLow (la sauvegarde du jeu, celles de MSCLoader et de MWCoop), le registre du jeu (options, repris du joueur au premier
-// usage) et le verrou d'instance unique sont a part. Son nom : nom.txt (UTF-8) dans ce dossier. « Partie principale » : la
-// sauvegarde normale du jeu (profil vide), nom dans [Lanceur] NomPrincipale. Sauvegarde utilisee pour HEBERGER :
+// Named MSC worlds use MWCoop\profils\partie-N\LocalLow\Amistech\My Summer Car.
+// The main world is the existing SummerCoop\mwcoop-profiles\host, never the vanilla save.
+// Profil and ProfilesRoot in lancement.ini are consumed by MscProfile. Names live in nom.txt.
+// Sauvegarde utilisee pour HEBERGER :
 // [Lanceur] Sauvegarde (vide : la principale) ; JOUER EN SOLO garde la principale. L'invite garde le profil « invite », ou il recoit la sauvegarde de l'hote
 // (Net/SaveTransfer.cs) : ses propres parties ne sont jamais touchees. Une sauvegarde vide commence par une nouvelle partie
 // (Flow.cs : « continuer » sans sauvegarde -> « nouvelle »).
@@ -17,13 +17,15 @@ static int g_saveEdit = -1; static std::wstring g_saveEditText;   // renommage d
 static int g_saveDelArm = -1; static DWORD g_saveDelT;
 enum { SM_NONE, SM_PICK, SM_NEWGAME, SM_RESTART, SM_NAME };      // fenetre par-dessus le lanceur
 static int g_saveModal = SM_NONE;
+static int g_savePage = 0;
 static bool g_saveNameForGame;                                     // nom demande pour « Nouvelle partie » (salon) : appliquee ensuite
 static std::wstring g_saveNameText;
 static const int kSaveNameMax = 32;
 enum { UI_SAVE_NEW = 9000, UI_SAVE_REFRESH, UI_SAVE_MCLOSE, UI_SAVE_MNEW, UI_SAVE_MOK, UI_SAVE_MRESTART, UI_SAVE_MFRESH, UI_SAVE_LOBBY,
+       UI_SAVE_PREV, UI_SAVE_NEXT,
        UI_SAVE = 9100,       // + ligne * 8 + partie (onglet)
-       UI_SAVE_PICK = 9700,  // + ligne (fenetre : liste)
-       UI_SAVE_END = 9900 };
+       UI_SAVE_PICK = 18000, // + ligne (fenetre : liste); enough space for all 999 profiles
+       UI_SAVE_END = 19000 };
 enum { SP_USE, SP_RENAME, SP_DIR, SP_DEL, SP_OK, SP_CANCEL };
 
 static std::wstring SaveProfRoot()
@@ -44,7 +46,7 @@ static std::wstring SaveDirOf(const std::wstring &prof)
     if (!prof.empty()) return SaveProfRoot() + prof + L"\\LocalLow\\Amistech\\My Summer Car\\";
     wchar_t up[MAX_PATH] = L"";
     GetEnvironmentVariableW(L"USERPROFILE", up, MAX_PATH);
-    return up[0] ? WithSlash(up) + L"AppData\\LocalLow\\Amistech\\My Summer Car\\" : L"";
+    return up[0] ? WithSlash(up) + L"AppData\\LocalLow\\Amistech\\My Summer Car\\SummerCoop\\mwcoop-profiles\\host\\" : L"";
 }
 static std::wstring SaveMainName()
 {
@@ -79,18 +81,26 @@ static std::wstring SaveCurrentProf()
     return p;
 }
 static std::wstring SaveCurrentName() { return SaveNameOf(SaveCurrentProf()); }
-static void SaveSetCurrent(const std::wstring &prof)
+static void LobbyApplyPartie(int p);
+static bool SaveSetCurrent(const std::wstring &prof, bool restart = false)
 {
-    WritePrivateProfileStringW(L"Lanceur", L"Sauvegarde", prof.empty() ? NULL : prof.c_str(), g_iniLauncher.c_str());
+    if (g_lobby == LB_GUEST || g_lobby == LB_CONNECTING || (g_lobby == LB_HOST && g_goSent)) return false;
+    if (!WritePrivateProfileStringW(L"Lanceur", L"Sauvegarde", prof.empty() ? NULL : prof.c_str(), g_iniLauncher.c_str())) {
+        SetStatus(K_ERR, T(L"Impossible de garder la sauvegarde choisie", L"Could not keep the selected save")); return false;
+    }
     TestLog("sauvegardes : utilisee %s (%s)", prof.empty() ? "principale" : Narrow(prof, CP_UTF8).c_str(), Narrow(SaveNameOf(prof), CP_UTF8).c_str());
-    if (g_lobby == LB_HOST) { if (g_lobbySteam) SSetLobby("sauvegarde", Narrow(SaveNameOf(prof), CP_UTF8)); else BroadcastState(); }
+    if (g_lobby == LB_HOST) {
+        LobbyApplyPartie(restart || !FileExists(SaveDirOf(prof) + L"defaultES2File.txt") ? PARTIE_NOUVELLE : PARTIE_CONTINUER);
+        if (g_lobbySteam) SSetLobby("sauvegarde", Narrow(SaveNameOf(prof), CP_UTF8));
+    }
+    return true;
 }
 
 static void SaveInfo(SaveSlot &s)
 {
     std::wstring d = SaveDirOf(s.prof);
     WIN32_FILE_ATTRIBUTE_DATA a;
-    s.has = !d.empty() && GetFileAttributesExW((d + L"savefile.txt").c_str(), GetFileExInfoStandard, &a);
+    s.has = !d.empty() && GetFileAttributesExW((d + L"defaultES2File.txt").c_str(), GetFileExInfoStandard, &a) && !(a.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY);
     if (s.has) s.mtime = a.ftLastWriteTime;
     s.bytes = 0;
     WIN32_FIND_DATAW fd;
@@ -176,7 +186,9 @@ static void SaveDelete(int i)
     int r = SHFileOperationW(&op);
     TestLog("sauvegardes : %s a la corbeille (%d)", Narrow(s.prof, CP_UTF8).c_str(), r);
     if (r != 0 || op.fAnyOperationsAborted) { SetStatus(K_ERR, T(L"Suppression impossible (%d)", L"Could not delete (%d)"), r); SavesScan(); return; }
-    if (SaveCurrentProf() == s.prof) SaveSetCurrent(L"");
+    wchar_t selected[64];
+    GetPrivateProfileStringW(L"Lanceur", L"Sauvegarde", L"", selected, 64, g_iniLauncher.c_str());
+    if (s.prof == selected) SaveSetCurrent(L"");
     SetStatus(K_OK, T(L"« %s » mise à la corbeille", L"\"%s\" moved to the Recycle Bin"), s.name.c_str());
     SavesScan();
 }
@@ -219,8 +231,21 @@ static bool SaveChar(wchar_t c)
 }
 
 // ---- ouverture de la fenetre
-static void SaveOpenPick() { SavesScan(); g_saveModal = SM_PICK; }      // salon : choisir la sauvegarde de l'hote
-static void SaveOpenNewGame() { SavesScan(); g_saveModal = SM_NEWGAME; } // salon : « Nouvelle partie »
+static void SaveOpenPick()
+{
+    SavesScan(); g_savePage = 0; g_saveModal = SM_PICK;
+    std::wstring current = SaveCurrentProf();
+    for (int i = 0; i < (int)g_saves.size(); i++) if (g_saves[i].prof == current) { g_savePage = i / 5; break; }
+}
+static void SaveOpenNewGame()
+{
+    if (!SaveGuard()) return;
+    SavesScan();
+    std::wstring name = SaveDefaultName(), prof = SaveCreate(name);
+    if (prof.empty() || !SaveSetCurrent(prof)) return;
+    g_saveModal = SM_NONE;
+    SetStatus(K_OK, T(L"Sauvegarde « %s » créée et utilisée", L"Save \"%s\" created and in use"), name.c_str());
+}
 static void SaveAskName(bool forGame) { SavesScan(); g_saveNameForGame = forGame; g_saveNameText = SaveDefaultName(); g_saveModal = SM_NAME; g_time = 0; }
 static void LobbyApplyPartie(int p);   // (launcher.cpp)
 static void SaveNameDone()
@@ -229,15 +254,14 @@ static void SaveNameDone()
     if (n.empty()) return;
     if (!SaveGuard()) return;
     std::wstring prof = SaveCreate(n);
-    g_saveModal = SM_NONE;
     if (prof.empty()) return;
-    SaveSetCurrent(prof);
-    if (g_saveNameForGame) LobbyApplyPartie(PARTIE_NOUVELLE);
+    if (!SaveSetCurrent(prof)) return;
+    g_saveModal = SM_NONE;
     SetStatus(K_OK, T(L"Sauvegarde « %s » créée et utilisée", L"Save \"%s\" created and in use"), n.c_str());
 }
 static void SavePickRow(int i)
 {
-    if (i < 0 || i >= (int)g_saves.size()) return;
+    if (i < 0 || i >= (int)g_saves.size() || !SaveGuard()) return;
     const SaveSlot s = g_saves[i];
     if (g_saveModal == SM_RESTART) {
         wchar_t q[700];
@@ -245,13 +269,11 @@ static void SavePickRow(int i)
                         L"You are about to restart \"%s\".\n\nThis will erase this save (the game in progress will be lost). Are you sure?\n\nSATSUMA color (car icon in the lobby): %s."), s.name.c_str(), CarColorName().c_str());
         if (MessageBoxW(g_wnd, q, L"SummerCoop", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES) return;
         g_saveModal = SM_NONE;
-        SaveSetCurrent(s.prof);
-        LobbyApplyPartie(PARTIE_NOUVELLE);
+        SaveSetCurrent(s.prof, true);
         return;
     }
     g_saveModal = SM_NONE;
-    SaveSetCurrent(s.prof);
-    if (g_lobby == LB_HOST) LobbyApplyPartie(PARTIE_CONTINUER);
+    if (!SaveSetCurrent(s.prof)) return;
     SetStatus(K_NORMAL, s.has ? T(L"Sauvegarde utilisée : %s", L"Save in use: %s") : T(L"Sauvegarde utilisée : %s (vide : nouvelle partie)", L"Save in use: %s (empty: new game)"), s.name.c_str());
 }
 
@@ -304,7 +326,7 @@ static void DrawSaves(Graphics &g)
         }
         Text(g, s.name, RectF(tx, r.Y + 10, r.Width - 60 - 470, 28), 17, FontStyleBold, kInk, StringAlignmentNear);
         std::wstring info = SaveWhen(s);
-        if (i == 0) info += T(L" · la sauvegarde normale du jeu", L" · the game's normal save");
+        if (i == 0) info += T(L" · la partie coop existante", L" · the existing co-op world");
         Text(g, info, RectF(tx, r.Y + 40, r.Width - 60 - 470, 22), 12.5f, FontStyleRegular, kGrey, StringAlignmentNear);
         if (!vis) continue;
         float x = bx;
@@ -327,9 +349,12 @@ static void DrawSaveModal(Graphics &g)
     HotZone(RectF(0, 0, 1280, 800), UI_NONE);   // (rien en dessous)
     SolidBrush dim(Color(140, 0, 0, 0)); g.FillRectangle(&dim, RectF(0, 0, 1280, 800));
     bool list = g_saveModal == SM_PICK || g_saveModal == SM_RESTART;
-    int rows = list ? (int)g_saves.size() + (g_saveModal == SM_PICK ? 1 : 0) : 0;
+    const int pageSize = 5;
+    g_savePage = max(0, min(g_savePage, ((int)g_saves.size() - 1) / pageSize));
+    int first = g_savePage * pageSize;
+    int rows = list ? min(pageSize, (int)g_saves.size() - first) + 1 : 0;
     if (rows > 7) rows = 7;
-    float h = g_saveModal == SM_NAME ? 250 : g_saveModal == SM_NEWGAME ? 300 : 150 + rows * 62;
+    float h = g_saveModal == SM_NAME ? 250.0f : g_saveModal == SM_NEWGAME ? 300.0f : 150.0f + rows * 62.0f;
     RectF c(640 - 290, 400 - h / 2, 580, h);
     {   // (fond plein : le verre laissait voir la page dessous)
         GraphicsPath bp; RoundRect(bp, c, 20);
@@ -380,7 +405,7 @@ static void DrawSaveModal(Graphics &g)
     y += 42;
     std::wstring cur = SaveCurrentProf();
     int n = 0;
-    for (int i = 0; i < (int)g_saves.size() && n < 7; i++, n++) {
+    for (int i = first; i < (int)g_saves.size() && n < pageSize; i++, n++) {
         const SaveSlot &s = g_saves[i];
         RectF r(c.X + 24, y + n * 62, c.Width - 48, 54);
         bool hot = g_uiHot == UI_SAVE_PICK + i, used = s.prof == cur;
@@ -393,15 +418,12 @@ static void DrawSaveModal(Graphics &g)
         if (g_saveModal == SM_RESTART && !s.has) continue;   // (vide : rien a recommencer)
         HotZone(r, UI_SAVE_PICK + i);
     }
-    if (g_saveModal == SM_PICK && n < 7) {
-        RectF r(c.X + 24, y + n * 62, c.Width - 48, 54);
-        bool hot = g_uiHot == UI_SAVE_MNEW;
-        GraphicsPath p; RoundRect(p, r, 12);
-        SolidBrush b(hot ? TH(cardSel) : TH(card)); g.FillPath(&b, &p);
-        Pen pn(hot ? kAcc : TH(choiceBorder), 1.0f); g.DrawPath(&pn, &p);
-        Icon(g, IC_HOMEPLUS, r.X + 28, r.Y + r.Height / 2, 18, kAcc, 1.9f);
-        Text(g, T(L"Nouvelle sauvegarde…", L"New save…"), RectF(r.X + 50, r.Y, r.Width - 60, r.Height), 14.5f, FontStyleBold, kAcc, StringAlignmentNear);
-        HotZone(r, UI_SAVE_MNEW);
+    float bottom = y + n * 62;
+    UiButton(g, RectF(c.X + 24, bottom, 42, 36), L"", UI_SAVE_PREV, false, IC_CHEVL, first > 0);
+    UiButton(g, RectF(c.X + 72, bottom, 42, 36), L"", UI_SAVE_NEXT, false, IC_CHEVR, first + pageSize < (int)g_saves.size());
+    if (g_saveModal == SM_PICK) {
+        UiButton(g, RectF(c.X + 124, bottom, 194, 36), T(L"Nouvelle sauvegarde…", L"New save…"), UI_SAVE_MNEW, true, IC_HOMEPLUS, true, 12);
+        UiButton(g, RectF(c.X + 328, bottom, 228, 36), T(L"Recommencer une sauvegarde", L"Restart a save"), UI_SAVE_MRESTART, false, IC_UNDO, true, 12);
     }
 }
 
@@ -409,17 +431,19 @@ static void SaveClick(int id)
 {
     if (id == UI_SAVE_MCLOSE) { g_saveModal = SM_NONE; return; }
     if (id == UI_SAVE_REFRESH) { g_saveEdit = -1; SavesScan(); return; }
+    if (id == UI_SAVE_PREV) { g_savePage = max(0, g_savePage - 1); return; }
+    if (id == UI_SAVE_NEXT) { g_savePage = min(((int)g_saves.size() - 1) / 5, g_savePage + 1); return; }
     if (id == UI_SAVE_NEW) { if (SaveGuard()) SaveAskName(false); return; }
     if (id == UI_SAVE_LOBBY) { SaveOpenPick(); return; }
     if (id == UI_SAVE_MNEW) { if (SaveGuard()) SaveAskName(false); return; }
     if (id == UI_SAVE_MFRESH) { if (SaveGuard()) SaveAskName(true); return; }
-    if (id == UI_SAVE_MRESTART) { SavesScan(); g_saveModal = SM_RESTART; return; }
+    if (id == UI_SAVE_MRESTART) { SavesScan(); g_savePage = 0; g_saveModal = SM_RESTART; return; }
     if (id == UI_SAVE_MOK) { SaveNameDone(); return; }
     if (id >= UI_SAVE_PICK && id < UI_SAVE_END) { SavePickRow(id - UI_SAVE_PICK); return; }
     if (id >= UI_SAVE && id < UI_SAVE_PICK) {
         int i = (id - UI_SAVE) / 8, part = (id - UI_SAVE) % 8;
         if (i < 0 || i >= (int)g_saves.size()) return;
-        if (part == SP_USE) { SaveSetCurrent(g_saves[i].prof); SetStatus(K_OK, T(L"Sauvegarde utilisée : %s", L"Save in use: %s"), g_saves[i].name.c_str()); return; }
+        if (part == SP_USE) { if (SaveGuard() && SaveSetCurrent(g_saves[i].prof)) SetStatus(K_OK, T(L"Sauvegarde utilisée : %s", L"Save in use: %s"), g_saves[i].name.c_str()); return; }
         if (part == SP_RENAME) { g_saveEdit = i; g_saveEditText = g_saves[i].name; g_time = 0; g_focus = -1; return; }
         if (part == SP_DIR) { SaveOpenDir(i); return; }
         if (part == SP_DEL) { SaveDelete(i); return; }

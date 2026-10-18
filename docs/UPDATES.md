@@ -31,6 +31,27 @@ SHA-256 из `digest` выбранного release asset. Для старых в
 При успешном перезапуске временные файлы удаляются, `.sha256` обновляется.
 INI с настройками не заменяется.
 
+Выбранный мир хранится в этом INI (`[Lanceur] Sauvegarde`), поэтому после
+самообновления остаётся выбранным. Файлы миров находятся вне папки EXE:
+прежний общий мир — в
+`%USERPROFILE%/AppData/LocalLow/Amistech/My Summer Car/SummerCoop/mwcoop-profiles/host`,
+гостевая копия — в соседней `guest`. Именованные миры находятся в
+`<папка игры>/MWCoop/profils/partie-N/LocalLow/Amistech/My Summer Car`;
+при недоступности записи в папку игры — в `%LOCALAPPDATA%/MWCoop/profils/`.
+Лаунчер передаёт модулю выбранный `Profil` и исходный `ProfilesRoot`, в том
+числе при запуске через Steam или копию игры. Обновление EXE и встроенных
+DLL не переносит и не удаляет эти файлы. Ранее созданные слоты и их названия
+сохраняют прежние пути; общий мир, который раньше открывался независимо от
+выбора слота, доступен как «Основная игра».
+
+В лобби «Новая игра» создаёт новый слот и сразу выбирает его. Пустой именованный
+слот начинает новый мир без копирования старого. Только при первом открытии
+основного профиля без сохранения поддерживается прежний импорт нативных файлов
+из `<profile>/world` или одиночной игры; повторные запуски не возвращают старый
+мир в пустой профиль. Явный перезапуск доступен отдельно в выборе сохранений
+с подтверждением. До изменения нативных файлов создаётся папка `backup-<id>`
+внутри выбранного сохранения. Одиночные файлы и другие миры не изменяются.
+
 В папке `SummerCoop-Launcher/` после обновления остаются только
 `SummerCoop-Launcher.exe`, его `.sha256` и пользовательский
 `summercoop-launcher.ini`. DLL мода и изображения по-прежнему встроены
@@ -103,6 +124,7 @@ INI с настройками каждой копии сохраняется. З
 ```powershell
 ./tools/build-launcher.ps1
 ./tools/test-native-updates.ps1 -LauncherPath SummerCoop-Launcher/SummerCoop-Launcher.exe
+./tools/test-native-saves.ps1 -LauncherPath SummerCoop-Launcher/SummerCoop-Launcher.exe
 ./tools/test-steam-binding.ps1 -LauncherPath SummerCoop-Launcher/SummerCoop-Launcher.exe
 ./tools/test-release-notes.ps1 -LauncherPath SummerCoop-Launcher/SummerCoop-Launcher.exe
 ```

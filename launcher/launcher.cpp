@@ -5206,6 +5206,7 @@ static bool WriteLaunchFile(int mode, const std::wstring &addr, int port, const 
     t += "Apparence=" + skin + "\r\n";
     t += "LauncherDir=" + Narrow(g_gameDir + L"MWCoop", CP_UTF8) + "\r\n";
     t += std::string("Profil=") + (mode == MODE_GUEST ? "invite" : mode == MODE_HOST ? Narrow(SaveCurrentProf(), CP_UTF8) : "") + "\r\n";   // (saves.inc)
+    t += "ProfilesRoot=" + Narrow(SaveProfRoot(), CP_UTF8) + "\r\n";
     if ((mode == MODE_SOLO || mode == MODE_HOST) && (!partie || !*partie)) partie = "continuer";
     if (partie && *partie) t += std::string("Partie=") + partie + "\r\n";
     if (mode == MODE_GUEST) t += ContentLaunchLines();
@@ -6434,8 +6435,9 @@ static void HostStart()
 static void LobbyApplyPartie(int p);
 static void LobbySetPartie(int p)
 {
-    if (g_lobby != LB_HOST || g_goSent || p == g_partie) return;
+    if (g_lobby != LB_HOST || g_goSent) return;
     if (p == PARTIE_NOUVELLE && g_testSalon.empty()) { SaveOpenNewGame(); return; }
+    if (p == g_partie) return;
     LobbyApplyPartie(p);
 }
 static void LobbyApplyPartie(int p)
@@ -6992,7 +6994,7 @@ static void DrawLobby(Graphics &g)
     }
     const wchar_t *lab[2] = { host ? T(L"Continuer ma partie", L"Continue my game") : T(L"Continuer la partie", L"Continue the game"), T(L"Nouvelle partie", L"New game") };
     const wchar_t *sub[2] = { host ? T(L"Ta sauvegarde, envoy\u00E9e aux invit\u00E9s", L"Your save, sent to the guests") : T(L"La sauvegarde de l'h\u00F4te", L"The host's save"),
-                              host ? T(L"Nouvelle sauvegarde, ou en recommencer une", L"New save, or restart one") : T(L"Une partie neuve chez l'h\u00F4te", L"A fresh game at the host's") };
+                              host ? T(L"Une sauvegarde à part pour ce salon", L"A separate save for this lobby") : T(L"Une partie neuve chez l'h\u00F4te", L"A fresh game at the host's") };
     for (int i = 0; i < 2; i++) {
         RectF r = kChoiceR[i];
         bool on = partie == i, hot = g_lobbyHot == i && host;
@@ -7988,6 +7990,8 @@ static bool EncoderClsid(const wchar_t *mime, CLSID *out)
     return false;
 }
 
+#include "../tests/Launcher/NativeSaveTests.inc"
+
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
 {
     // DLL de Windows seulement depuis System32 : le lanceur est pose dans le dossier du jeu, ou MSCLoader met son
@@ -8011,6 +8015,12 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
     {
         int ac = 0;
         wchar_t **av = CommandLineToArgvW(GetCommandLineW(), &ac);
+        if (ac == 4 && !_wcsicmp(av[1], L"/test-saves")) {
+            GdiplusStartupInput input; ULONG_PTR token = 0;
+            GdiplusStartup(&token, &input, NULL);
+            int result = TestNativeSaves(av[2], av[3]);
+            GdiplusShutdown(token); LocalFree(av); return result;
+        }
         int binding = SteamRegistrationCommand(ac, av);
         if (binding >= 0) { LocalFree(av); return binding; }
         int result = UpdateCommand(ac, av);
@@ -8477,7 +8487,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
         else if (st == L"vhs1") { g_tab = TAB_VHS; VhsScan(); g_vhsSel = 0; g_pvStart = GetTickCount() - 4000; }   // (cassette choisie, apercu a 4 s)
         else if (st == L"album") { g_tab = TAB_ALBUM; AlbScan(); }
         else if (st == L"sauvegardes") { g_tab = TAB_SAVES; SavesScan(); }   // (saves.inc ; fenetres : -nouvelle, -choix, -nom, -recommencer)
-        else if (st == L"sauvegardes-nouvelle") { g_tab = TAB_SAVES; SaveOpenNewGame(); }
+        else if (st == L"sauvegardes-nouvelle") { g_tab = TAB_SAVES; SavesScan(); g_saveModal = SM_NEWGAME; }
         else if (st == L"sauvegardes-choix") { g_tab = TAB_SAVES; SaveOpenPick(); }
         else if (st == L"sauvegardes-recommencer") { g_tab = TAB_SAVES; SavesScan(); g_saveModal = SM_RESTART; }
         else if (st == L"sauvegardes-nom") { g_tab = TAB_SAVES; SaveAskName(true); }
