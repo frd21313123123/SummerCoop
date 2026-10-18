@@ -428,7 +428,7 @@ namespace MWCoop
         {
             PlayMakerFSM f = w.F;
             if (f == null) return true;
-            if (MscBrewing.Owns(f) || MscSleep.Owns(f) || MscIsland.Owns(f) || MscFireworks.Owns(f) || MscFluids.Owns(f) || MscShop.Owns(f) || Fires.OwnsMsc(f)) { rejected.Add(f); return true; }
+            if (MscBrewing.Owns(f) || MscSleep.Owns(f) || MscIsland.Owns(f) || MscFireworks.Owns(f) || MscFluids.Owns(f) || MscShop.Owns(f) || MscOrders.Owns(f) || Fires.OwnsMsc(f)) { rejected.Add(f); return true; }
             bool personal;
             try { if (!Classify(f, w, out personal)) { rejected.Add(f); return true; } }
             catch { return false; }

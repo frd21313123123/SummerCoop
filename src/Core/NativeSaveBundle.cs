@@ -7,7 +7,7 @@ namespace SummerCoop.Core
     // MSC files only. Options, arbitrary mod files and paths never cross the network.
     public sealed class NativeSaveBundle
     {
-        public static readonly string[] Names = { "defaultES2File.txt", "items.txt", "meshsave.txt", "graveyard.txt", "trophies.txt", "carparts.txt", "MWCoop-sacs.txt", "MWCoop-vetements.txt", "MWCoop-monde.txt" };
+        public static readonly string[] Names = { "defaultES2File.txt", "items.txt", "meshsave.txt", "graveyard.txt", "trophies.txt", "carparts.txt", "MWCoop-sacs.txt", "MSC-personal-items.txt", "MWCoop-monde.txt" };
         public const int MaxFileBytes = 16 * 1024 * 1024;
         private readonly Dictionary<string, byte[]> files = new Dictionary<string, byte[]>(StringComparer.Ordinal);
         private readonly string[] names, hashes;

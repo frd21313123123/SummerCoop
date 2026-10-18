@@ -52,6 +52,50 @@ class MscAdapterTests
         try
         {
 #if !MWCOOP_NETWORK_ONLY
+            Test("wallet transfer availability uses MSC cash without a bank and rejects unavailable recipients and invalid amounts", delegate {
+                var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static;
+                var cashField = typeof(MWCoop.Wallet).GetField("cash", flags);
+                var bankField = typeof(MWCoop.Wallet).GetField("bank", flags);
+                var readyField = typeof(MWCoop.Wallet).GetField("ready", flags);
+                object savedCash = cashField.GetValue(null), savedBank = bankField.GetValue(null), savedReady = readyField.GetValue(null);
+                bool savedActive = Session.Active;
+                var savedPlayers = new Dictionary<int, PlayerInfo>(Session.Players);
+                try {
+                    Session.Active = true; Session.Players.Clear();
+                    Session.Players[0] = new PlayerInfo { Id = 0, Local = true, Level = 1 };
+                    Session.Players[1] = new PlayerInfo { Id = 1, Local = false, Level = 1 };
+                    var cash = new HutongGames.PlayMaker.FsmFloat(500); cashField.SetValue(null, cash); bankField.SetValue(null, null);
+                    readyField.SetValue(null, false);
+                    Assert(MWCoop.Wallet.CheckGift(1, 100) == MWCoop.Wallet.GiftStatus.Loading, "Uninitialized wallet enabled the button");
+                    readyField.SetValue(null, true);
+                    Assert(MWCoop.Wallet.CheckGift(1, 100) == MWCoop.Wallet.GiftStatus.Available, "MSC cash requires a nonexistent bank");
+                    Assert(MWCoop.Wallet.CheckGift(1, 501) == MWCoop.Wallet.GiftStatus.InsufficientCash, "Unavailable cash can be transferred");
+                    foreach (int amount in new[] { -1, 0, 1000001 }) Assert(MWCoop.Wallet.CheckGift(1, amount) == MWCoop.Wallet.GiftStatus.InvalidAmount, "Invalid amount accepted");
+                    Assert(MWCoop.Wallet.CheckGift(0, 100) == MWCoop.Wallet.GiftStatus.PlayerUnavailable && MWCoop.Wallet.CheckGift(7, 100) == MWCoop.Wallet.GiftStatus.PlayerUnavailable, "Self or missing recipient accepted");
+                    Session.Players[1].Level = 0;
+                    Assert(MWCoop.Wallet.CheckGift(1, 100) == MWCoop.Wallet.GiftStatus.PlayerUnavailable, "Menu recipient accepted");
+                    Assert(cash.Value == 500, "Availability checks changed money");
+                } finally {
+                    cashField.SetValue(null, savedCash); bankField.SetValue(null, savedBank); readyField.SetValue(null, savedReady);
+                    Session.Active = savedActive; Session.Players.Clear(); foreach (var player in savedPlayers) Session.Players.Add(player.Key, player.Value);
+                }
+            });
+            Test("native order packets preserve Fleetari options and a full catalogue without native compression", delegate {
+                var expected = new MWCoop.MscOrderMessage { Type = MWCoop.MscOrderMessage.Fleetari, Op = MWCoop.MscOrderMessage.Commit,
+                    Ticket = 57, Actor = 1, Revision = 9, Seed = 516750, Active = true, Cost = 2500, Time = 1700, Gear = 4.11f,
+                    Flags = (1UL << 31) | (1UL << 4), CarColor = new UnityEngine.Color(.1f, .2f, .3f, 1), Items = new string[47] };
+                for (int i = 0; i < expected.Items.Length; i++) expected.Items[i] = "wheelset steelwide(Clone)";
+                byte[] packet = expected.Pack();
+                Assert(packet.Length + 8 <= Transport.MaxPayload, "Full native catalogue exceeds one reliable packet");
+                var actual = MWCoop.MscOrderMessage.Read(packet);
+                Assert(actual.Flags == expected.Flags && actual.Items.Length == 47 && actual.Items[46] == expected.Items[46], "Order products or service mask changed");
+                Assert(actual.Gear == expected.Gear && actual.CarColor.b == expected.CarColor.b && actual.Seed == expected.Seed, "Repair settings/random seed changed");
+                byte[] truncated = new byte[packet.Length - 1]; Array.Copy(packet, truncated, truncated.Length);
+                Reject(delegate { MWCoop.MscOrderMessage.Read(truncated); });
+                byte[] extra = new byte[packet.Length + 1]; Array.Copy(packet, extra, packet.Length);
+                Reject(delegate { MWCoop.MscOrderMessage.Read(extra); });
+                expected.Time = float.NaN; Reject(delegate { MWCoop.MscOrderMessage.Read(expected.Pack()); });
+            });
             Test("MSC checkout and extraction preserve both bag tables and native identities within one UDP packet", delegate {
                 var expected = new MWCoop.MscShopMessage { Op = MWCoop.MscShopMessage.Extract, Ticket = 9, Sequence = 4, Actor = 1,
                     Bag = "shoppingbagx123", Index = 13, Spray = true, Condition = 73.5f, Items = new int[18], Cans = new int[14], Counters = new int[44] };

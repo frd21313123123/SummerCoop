@@ -290,6 +290,8 @@ namespace MWCoop
             { "The rope broke", "Трос порвался" },
             { " removed the rope", " снял(а) трос" },
             { "Wallet not ready", "Кошелёк не готов" },
+            { "Loading personal wallet...", "Загрузка личного кошелька..." },
+            { "This player is not in the game yet", "Этот игрок ещё не загрузился в игру" },
             { "Player not found", "Игрок не найден" },
             { "Nothing to give", "Нечего отдавать" },
             { "Not enough cash", "Не хватает наличных" },

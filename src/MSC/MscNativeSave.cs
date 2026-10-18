@@ -42,8 +42,10 @@ namespace MWCoop
                 foreach (ES2Auto mesh in UnityEngine.Object.FindObjectsOfType<ES2Auto>())
                     if (!MscToolCases.Generated(mesh.transform) && !string.IsNullOrEmpty(mesh.saveFile) && !string.IsNullOrEmpty(mesh.uniqueTag)) mesh.Save();
                 SleepingBags.OnGameSave();
+                Wear.OnGameSave();
                 MscSaveGuard.End();
                 MscShop.MarkSaved();
+                MscOrders.MarkSaved();
                 Log.Info("MSC saved without switching native FSM states: " + count + " actions");
             }
             catch { MscSaveGuard.Rollback(); throw; }

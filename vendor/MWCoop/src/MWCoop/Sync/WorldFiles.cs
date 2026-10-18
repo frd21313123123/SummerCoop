@@ -14,7 +14,7 @@ namespace MWCoop
     // une ligne par monde (PlayerID).
     public static class WorldFiles
     {
-        static readonly string[] Files = { "MWCoop-esineet.txt", "MWCoop-pussit.txt", "MWCoop-sacs.txt", "MWCoop-vetements.txt" };
+        static readonly string[] Files = { "MWCoop-esineet.txt", "MWCoop-pussit.txt", "MWCoop-sacs.txt", "MWCoop-vetements.txt", "MSC-personal-items.txt" };
         static readonly HashSet<string> done = new HashSet<string>();
 
         public static void OnLevelLoaded() { done.Clear(); }

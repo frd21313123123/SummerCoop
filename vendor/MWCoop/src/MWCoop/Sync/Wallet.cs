@@ -1,31 +1,12 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using HutongGames.PlayMaker;
 using MWCoop.Net;
 using UnityEngine;
 
 namespace MWCoop
 {
-    // Argent (demande de JD) : chaque joueur a son porte-monnaie (achats chacun de son cote) et, depuis 0.75.42 (JD,
-    // 11/10, apres le retour de gamereggo), chacun garde sa paie : ce qui RENTRE chez un joueur (paie, ventes,
-    // recompenses) reste a lui. Avant, tout revenu etait recu par tous. Globales PlayerMoney (liquide)
-    // et PlayerBankAccount (banque), comparees deux fois par seconde :
-    //  - une hausse de la richesse totale est un revenu : garde par ce joueur (plus envoye) ; celle qu'un boulot d'un
-    //    autre, rejoue ici, verse a ce joueur n'est pas a lui : retiree ;
-    //  - une baisse est une depense : elle reste locale ;
-    //  - liquide <-> banque (distributeur, depot) est un transfert : rien a envoyer.
-    //  - l'invite recoit la sauvegarde de l'hote a chaque connexion : son porte-monnaie est garde a
-    //    part dans son profil (porte-monnaie.ini, une ligne par monde = PlayerID de la sauvegarde)
-    //    et retabli a son retour dans ce monde.
-    //  - versements DU MONDE (la logique du jeu paie d'elle-meme, a l'heure commune, chez CHAQUE joueur :
-    //    ce n'est pas un joueur qui gagne) : jamais pris pour un revenu ordinaire (relayes, ils etaient
-    //    doubles : chacun recevait le sien plus celui de l'autre). Voir Pays.
-    //  - gains declenches par un OBJET (ferraille jetee dans la benne de Fleetari, billet de loto gagnant jete a la
-    //    poubelle du Voittous, objets vendus a la table des puces, kilju vendu a Jokke) : le declencheur tourne chez
-    //    chaque joueur ou la copie Props de l'objet tombe, et chacun se payait (puis relayait). Le gain va une fois, a
-    //    celui qui a mis l'objet (Home.CausedHere) ; chez les autres les ecritures d'argent de l'etat sont coupees
-    //    (Trigs). Il reste a lui : l'enveloppe qu'il touche (ScrapMoney, MoneyFlea, PayMoney de Jokke) et la banque du
-    //    loto sont des versements personnels (Pays, gardes pour soi), et ces enveloppes sont a ce module (le monde n'y
-    //    rejoue plus le clic d'un autre, qui vidait la sienne). Voir Trigs et Puces.
+    // Each MSC player keeps personal cash and earnings across reconnects.
+    // Replayed jobs suppress money writes for the other players.
     public static class Wallet
     {
         // Boulots rejoues (Jobs) : la paie qu'ils versent ici est celle d'un autre joueur, retiree.
@@ -56,28 +37,7 @@ namespace MWCoop
             public float At = -100, HaveC, HaveB, BestC, BestB, Sent;   // versement en cours : deja en poche, plus haut vu, envoye
             public Pay(string path, string fsm, string state, string label, bool shared, bool own = false) { Path = path; Fsm = fsm; State = state; Label = label; Shared = shared; Own = own; }
         }
-        static readonly Pay[] Pays =
-        {
-            new Pay("Systems/Expenses", "Kela", "Pay", "allocation chomage", true),                       // vendredi
-            new Pay("Systems/Expenses", "Livingsupport", "Asumistuki", "aide au logement", true),          // vendredi
-            // Paies des boulots (0.75.42, chacun garde sa paie) : celle que la logique de CE joueur verse, d'apres SON
-            // travail ; plus completee par celle des autres (avant : chacun recevait la plus haute).
-            new Pay("JOBS/FACTORY", "PlayerData", "Base salary", "paie de l'usine", false),                // chaque semaine
-            new Pay("JOBS/FACTORY", "PlayerData", "High salary", "paie de l'usine (heures sup)", false),
-            new Pay("JOBS/ADs", "Data", "Bank transfer 2", "paie des publicites", false),                  // mardi et vendredi
-            new Pay("JOBS/TAXIJOB/MACHTWAGEN/TaxiFunctions", "Payments", "Payment", "paie du taxi", false), // mercredi
-            new Pay("Systems/BankAccount", "Data", "Interest", "interets", false),                         // chaque jour
-            // Gains d'un objet mis par ce joueur (voir Trigs) : touches par lui seul, gardes pour soi.
-            new Pay("REPAIRSHOP/LOD/Office/Fleetari/ScrapMoney", "Use", "State 1", "rachat de ferraille", false, true),
-            new Pay("FleaMarket/LOD/OpenHours/MoneyFlea", "Use", "State 1", "ventes aux puces", false, true),
-            new Pay(JokkePay, "Use", "State 1", "kilju vendu a Jokke", false, true),
-            new Pay(LottoPath, "Logic", "Bank", "gains du loto", false),
-            // Prix des courses (podium de CE joueur, calcule chez lui) : a lui, gardes pour soi.
-            new Pay("RACES/RALLY/SS3/FinishArea/Stuff/PriceMoneyRally", "Use", "State 1", "prix du rallye", false, true),
-            new Pay("RACES/ICERACE/TentContents/Prices/PriceMoneyRace", "Use", "State 1", "prix de la course sur glace", false, true),
-        };
-        const string JokkePay = "JOBS/JOKKEHOME/HouseDrunkNew/KiljuBuyer/Char/skeleton/pelvis/spine_middle/spine_upper/collar_left/shoulder_left/arm_left/hand_left/PayMoney";
-        const string ScrapPath = "REPAIRSHOP/Scrapmetal/GarbageTrigger", LottoPath = "PERAPORTTI/Building/LOD100/Store/VoittousArea/TrashTrigger";
+        static readonly Pay[] Pays = new Pay[0];
         const float PayWindow = 30f;   // < 36 s : mardi -> vendredi des publicites en sommeil accelere (12 s par jour)
         const int FirstGain = 7;       // rang du 1er gain d'objet dans Pays
         static float nextPayScan;
@@ -103,14 +63,35 @@ namespace MWCoop
         // ou une depense pour le releve (pas renvoye aux autres comme une paie).
         public static bool Ready { get { return ready && cash != null; } }
         public static float Cash { get { return cash != null ? cash.Value : 0f; } }
+        public const int MaxGift = 1000000;
+        public enum GiftStatus { Available, Loading, PlayerUnavailable, InvalidAmount, InsufficientCash }
+
+        public static GiftStatus CheckGift(int to, int amount)
+        {
+            if (!Ready || !Session.Active) return GiftStatus.Loading;
+            PlayerInfo pi;
+            if (!Session.Players.TryGetValue(to, out pi) || pi.Local || pi.Level != 1) return GiftStatus.PlayerUnavailable;
+            if (amount <= 0 || amount > MaxGift) return GiftStatus.InvalidAmount;
+            if (float.IsNaN(cash.Value) || float.IsInfinity(cash.Value) || cash.Value < amount) return GiftStatus.InsufficientCash;
+            return GiftStatus.Available;
+        }
+
+        public static string GiftError(GiftStatus status)
+        {
+            switch (status) {
+                case GiftStatus.Loading: return Lang.T("Chargement du porte-monnaie personnel...", "Loading personal wallet...");
+                case GiftStatus.PlayerUnavailable: return Lang.T("Ce joueur n'est pas encore en jeu", "This player is not in the game yet");
+                case GiftStatus.InvalidAmount: return Lang.T("Montant : de 1 a 1000000.", "Amount: 1 to 1000000.");
+                case GiftStatus.InsufficientCash: return Lang.T("Pas assez de liquide", "Not enough cash");
+                default: return null;
+            }
+        }
 
         public static string Give(int to, int amount)
         {
-            if (!Ready || !Session.Active) return Lang.T("Porte-monnaie pas pr\u00EAt", "Wallet not ready");
-            PlayerInfo pi;
-            if (!Session.Players.TryGetValue(to, out pi) || pi.Local) return Lang.T("Joueur introuvable", "Player not found");
-            if (amount <= 0) return Lang.T("Montant nul", "Nothing to give");
-            if (cash.Value < amount) return Lang.T("Pas assez de liquide", "Not enough cash");
+            GiftStatus status = CheckGift(to, amount);
+            if (status != GiftStatus.Available) return GiftError(status);
+            PlayerInfo pi = Session.Players[to];
             cash.Value -= amount; lastCash -= amount;
             Session.SendAll(new NetWriter(Msg.Job).U8(Session.LocalId).Str("@don").U8((byte)to).I32(amount), true);
             Log.Info("argent : " + amount + " mk donnes a " + pi.Name + " (#" + to + ")");
@@ -216,7 +197,7 @@ namespace MWCoop
                 if (v.Length == 2 && float.TryParse(v[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out c)
                     && float.TryParse(v[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out b))
                 {
-                    cash.Value = c; bank.Value = b;
+                    cash.Value = c; bank.Value = 0;
                     Log.Info("argent : porte-monnaie retrouve pour ce monde (" + world + ")");
                     Hud.Toast(Lang.T("Votre porte-monnaie : ", "Your wallet: ") + Mathf.RoundToInt(c) + " mk");
                     return;
@@ -228,11 +209,11 @@ namespace MWCoop
         // Premiere venue d'un invite dans ce monde : l'argent d'une nouvelle partie, pas celui de l'hote a cet instant
         // (demande de JD, 10/10). Valeurs relevees au menu principal (globales du jeu avant tout chargement) ; [Coop]
         // ArgentDepart=0 : comme avant (l'argent de la sauvegarde de l'hote).
-        static float startCash = -1, startBank = -1;
+        static float startCash = -1, startBank = 0;
         static void FirstVisit()
         {
             if (Session.IsHost || Config.GetInt("Coop", "ArgentDepart", 1) == 0) return;
-            float c = Config.GetFloat("Coop", "ArgentDepartLiquide", startCash), b = Config.GetFloat("Coop", "ArgentDepartBanque", startBank);
+            float c = Config.GetFloat("Coop", "ArgentDepartLiquide", startCash), b = 0;
             if (c < 0 || b < 0) { Log.Info("argent : premiere venue dans ce monde, argent de depart inconnu : celui de la sauvegarde"); return; }
             Log.Info("argent : premiere venue dans ce monde (" + world + ") : argent de depart " + c + " liquide, " + b + " banque (au lieu de " + cash.Value + " / " + bank.Value + ")");
             cash.Value = c; bank.Value = b;
@@ -256,11 +237,13 @@ namespace MWCoop
             if (Application.loadedLevelName == "MainMenu" && startCash < 0)
             {
                 FsmFloat mc = FsmVariables.GlobalVariables.FindFsmFloat("PlayerMoney"), mb = FsmVariables.GlobalVariables.FindFsmFloat("PlayerBankAccount");
-                if (mc != null && mb != null) { startCash = mc.Value; startBank = mb.Value; Log.Info("argent : au menu (nouvelle partie) " + startCash + " liquide, " + startBank + " banque"); }
+                if (mc != null) { startCash = mc.Value; startBank = 0; Log.Info("argent : MSC initial cash " + startCash); }
             }
             cash = bank = null;
             ready = false;
-            readyAt = PlayerSync.InGame ? Time.realtimeSinceStartup + 15f : -1;   // apres le chargement de la sauvegarde
+            // MSC can still load the host's globals during its initial frames.
+            // Restore personal cash after that native initialization completes.
+            readyAt = PlayerSync.InGame ? Time.realtimeSinceStartup + 15f : -1;
             foreach (Pay p in Pays) { p.F = null; p.Hooked = p.Open = false; p.At = -100; }
             nextPayScan = 0; payHooked = worldLocal = worldIn = 0;
             testStep = 0; remoteSince = -1;
@@ -268,7 +251,6 @@ namespace MWCoop
             foreach (Trig g in Trigs) { g.F = null; g.Hooked = false; }
             envs.Clear(); envIncomeUntil = 0;
             claimAt = PlayerSync.InGame ? Time.realtimeSinceStartup + 4f : -1;
-            saleLogic = saleSell = null; saleHooked = saleOpen = sellOffLogged = false; sellers.Clear();
             trigLocal = trigOther = 0;
         }
 
@@ -362,7 +344,6 @@ namespace MWCoop
                 case "paie du taxi": return Lang.T("paie du taxi", "taxi pay");
                 case "interets": return Lang.T("int\u00E9r\u00EAts", "interest");
                 case "rachat de ferraille": return Lang.T("rachat de ferraille", "scrap sale");
-                case "ventes aux puces": return Lang.T("ventes aux puces", "flea market sales");
                 case "kilju vendu a Jokke": return Lang.T("kilju vendu \u00E0 Jokke", "kilju sold to Jokke");
                 case "gains du loto": return Lang.T("gains du loto", "lottery win");
                 case "prix du rallye": return Lang.T("prix du rallye", "rally prize");
@@ -406,7 +387,7 @@ namespace MWCoop
         {
             if (f == null) return false;
             foreach (Pay p in Pays) if (p.F == f) return true;
-            return f == saleLogic;
+            return false;
         }
 
         // ================================================================ gains declenches par un objet
@@ -422,11 +403,7 @@ namespace MWCoop
             public PlayMakerFSM F; public bool Hooked;
             public Trig(string path, string fsm, string label, params string[] states) { Path = path; Fsm = fsm; Label = label; States = states; }
         }
-        static readonly Trig[] Trigs =
-        {
-            new Trig(ScrapPath, "Logic", "ferraille", "State 3"),
-            new Trig(LottoPath, "Logic", "loto", "State 4", "Bank"),
-        };
+        static readonly Trig[] Trigs = new Trig[0];
         static readonly List<FsmStateAction> trigMuted = new List<FsmStateAction>();
         static float claimAt = -1, nextTrigScan;
         static int trigLocal, trigOther;
@@ -535,157 +512,6 @@ namespace MWCoop
             trigMuted.Clear();
         }
 
-        // ================================================================ table des puces (objets vendus par le joueur)
-        // FleaMarket/SaleTable : on y pose des objets a vendre ('Freeze object' : prix, ID tire au hasard) ; l'automate
-        // 'Sell' tire au hasard toutes les 30 s une vente (SELL) ; 'Find item' / 'Find item 2' retirent l'objet vendu et
-        // ajoutent son prix a MoneyTotal, verse en fin de location dans l'enveloppe MoneyFlea (State 2). Chacun tirait ses
-        // propres ventes (autres objets, autres sommes) et touchait sa propre enveloppe.
-        //  - seul l'hote vend : 'Sell' arrete chez les invites (et une vente faite quand meme chez un invite par sa logique
-        //    n'ajoute rien a son MoneyTotal) ; l'objet vendu disparait chez les autres par Props (pose recalee par l'hote) ;
-        //  - le vendeur est celui qui a pose l'objet ('Freeze object' chez celui qui le tenait : un invite l'annonce a
-        //    l'hote) ; une vente d'un objet d'invite est retiree du MoneyTotal de l'hote et creditee au MoneyTotal de
-        //    l'invite (K_FleaCredit) : chacun touche ses ventes dans sa propre enveloppe, une fois.
-        static PlayMakerFSM saleLogic, saleSell;
-        static bool saleHooked, saleOpen, sellOffLogged;
-        static float saleStart, saleAt, nextSaleCheck;
-        static readonly Dictionary<string, int> sellers = new Dictionary<string, int>();
-
-        class FleaHook : FsmStateAction
-        {
-            public int Kind;   // 0 objet pose, 1 debut de vente, 2 fin de vente
-            public override void OnEnter()
-            {
-                try { if (Session.Active) OnFleaHook(Kind); } catch (System.Exception e) { Replay.HookError(e); }
-                Finish();
-            }
-        }
-
-        static FsmFloat MoneyTotal { get { return saleLogic != null ? saleLogic.FsmVariables.FindFsmFloat("MoneyTotal") : null; } }
-
-        static string ItemKey(GameObject go)
-        {
-            if (go == null) return "";
-            string id = Props.ItemId(go);
-            return id.Length > 0 ? id : go.name;
-        }
-
-        static void FleaStep()
-        {
-            float now = Time.realtimeSinceStartup;
-            if (now < nextSaleCheck) return;
-            nextSaleCheck = now + 1f;
-            if (saleLogic == null)
-            {
-                GameObject st = GameObject.Find("FleaMarket/SaleTable");
-                if (st == null) return;
-                saleLogic = Game.FsmOn(st, "Logic");
-                saleSell = Game.FsmOn(st, "Sell");
-            }
-            if (!saleHooked && saleLogic != null && saleLogic.gameObject.activeInHierarchy)
-            {
-                try
-                {
-                    AddFlea("Freeze object", 0, false);
-                    AddFlea("Find item", 1, false); AddFlea("Find item", 2, true);
-                    AddFlea("Find item 2", 1, false); AddFlea("Find item 2", 2, true);
-                    saleHooked = true;
-                    Log.Info("argent : table des puces suivie (" + (Session.IsHost ? "l'hote vend" : "les ventes viennent de l'hote") + ")");
-                }
-                catch { }
-            }
-            if (!Session.IsHost && saleSell != null && saleSell.enabled)
-            {
-                saleSell.enabled = false;
-                if (!sellOffLogged) { sellOffLogged = true; Log.Info("argent : ventes des puces tirees par l'hote seul ('Sell' arrete ici)"); }
-            }
-            if (saleOpen && now - saleAt > 2f) SettleSale();   // fin de 'Find item' pas vue
-        }
-
-        static void AddFlea(string state, int kind, bool end)
-        {
-            FsmState st = saleLogic.Fsm.GetState(state);
-            if (st == null) return;
-            foreach (FsmStateAction a in st.Actions) { var h = a as FleaHook; if (h != null && h.Kind == kind) return; }
-            var list = new List<FsmStateAction>(st.Actions);
-            if (end) list.Add(new FleaHook { Kind = kind }); else list.Insert(0, new FleaHook { Kind = kind });
-            st.Actions = list.ToArray();
-        }
-
-        static void OnFleaHook(int kind)
-        {
-            if (kind == 0)
-            {
-                if (Replay.Depth > 0) return;
-                FsmGameObject iv = saleLogic.FsmVariables.FindFsmGameObject("Item");
-                GameObject item = iv != null ? iv.Value : null;
-                if (item == null || Home.HeldAgo(item) > 60f) return;   // copie d'un objet pose par un autre
-                string key = ItemKey(item);
-                if (Session.IsHost) sellers[key] = Session.LocalId;
-                else Session.SendAll(new NetWriter(Msg.Home).U8(Session.LocalId).U8(Home.K_FleaPlaced).Str(key), true);
-                Log.Info("argent : " + key + " mis en vente aux puces par ce joueur-ci" + (Session.IsHost ? "" : " (annonce a l'hote)"));
-                return;
-            }
-            FsmFloat mt = MoneyTotal;
-            if (mt == null) return;
-            if (kind == 1) { saleOpen = true; saleStart = mt.Value; saleAt = Time.realtimeSinceStartup; return; }
-            SettleSale();
-        }
-
-        // Home : U8 joueur, U8 K_FleaCredit, U8 vendeur, F32 montant, Str objet (hote -> tous ; seul le vendeur l'ajoute).
-        static void SettleSale()
-        {
-            if (!saleOpen) return;
-            saleOpen = false;
-            FsmFloat mt = MoneyTotal;
-            if (mt == null) return;
-            float d = mt.Value - saleStart;
-            if (d <= 0.005f) return;
-            if (!Session.IsHost)
-            {
-                if (Replay.Depth > 0) return;
-                mt.Value = saleStart;
-                Log.Info("argent : vente aux puces tiree par la logique de cet invite (+" + d + ") : pas comptee (l'hote vend)");
-                return;
-            }
-            FsmGameObject sv = saleLogic.FsmVariables.FindFsmGameObject("ItemSold"), iv = saleLogic.FsmVariables.FindFsmGameObject("Item");
-            GameObject sold = sv != null && sv.Value != null ? sv.Value : iv != null ? iv.Value : null;
-            string key = ItemKey(sold);
-            int seller;
-            if (!sellers.TryGetValue(key, out seller)) seller = Session.LocalId;
-            if (seller == Session.LocalId || !Session.Players.ContainsKey(seller))
-            {
-                Log.Info("argent : " + key + " vendu aux puces +" + d + " (enveloppe de l'hote" + (seller != Session.LocalId ? ", vendeur #" + seller + " parti" : "") + ")");
-                return;
-            }
-            mt.Value -= d;
-            sellers.Remove(key);
-            Session.SendAll(new NetWriter(Msg.Home).U8(Session.LocalId).U8(Home.K_FleaCredit).U8(seller).F32(d).Str(key), true);
-            Log.Info("argent : " + key + " vendu aux puces +" + d + " pour #" + seller + " (retire ici, credite chez lui)");
-        }
-
-        // Messages de la table des puces (recus par Home).
-        public static void OnFlea(int who, int kind, NetReader r)
-        {
-            if (kind == Home.K_FleaPlaced)
-            {
-                string key = r.Str();
-                if (!Session.IsHost) return;
-                sellers[key] = who;
-                Log.Info("argent : " + key + " mis en vente aux puces par #" + who);
-                return;
-            }
-            int seller = r.U8();
-            float amount = r.F32();
-            string item = r.Str();
-            if (seller != Session.LocalId || amount <= 0f || amount > 1e6f) return;
-            if (saleLogic == null) { GameObject st = Game.FindAny("FleaMarket/SaleTable"); saleLogic = st != null ? Game.FsmOn(st, "Logic") : null; }
-            FsmFloat mt = MoneyTotal;
-            if (mt == null) { Log.Warn("argent : vente aux puces de " + item + " (+" + amount + ") perdue : table absente ici"); return; }
-            mt.Value += amount;
-            Hud.Toast(item + Lang.T(" vendu aux puces : +", " sold at the flea market: +") + Mathf.RoundToInt(amount) + Lang.T(" mk (enveloppe \u00E0 la fin de la location)", " mk (envelope when the rental ends)"));
-            Log.Info("argent : " + item + " vendu aux puces par l'hote pour ce joueur : +" + amount + " (MoneyTotal " + mt.Value + ")");
-        }
-
         public static void Update()
         {
             UnmuteTrigs();   // ecritures d'argent coupees pour un seul passage (etat deja entre)
@@ -694,8 +520,10 @@ namespace MWCoop
             if (!ready)
             {
                 cash = FsmVariables.GlobalVariables.FindFsmFloat("PlayerMoney");
-                bank = FsmVariables.GlobalVariables.FindFsmFloat("PlayerBankAccount");
-                if (cash == null || bank == null) { readyAt = -1; Log.Warn("argent : globales absentes"); return; }
+                // MSC has cash only. A missing MWC bank must not disable the wallet.
+                bank = new FsmFloat(0);
+                FsmFloat playerId = FsmVariables.GlobalVariables.FindFsmFloat("PlayerID");
+                if (cash == null || playerId == null || playerId.Value == 0) { readyAt = Time.realtimeSinceStartup + 1; return; }
                 Restore();
                 if (pendingGift > 0) { cash.Value += pendingGift; Hud.Toast(pendingFrom + Lang.T(" vous a donn\u00E9 ", " gave you ") + pendingGift + " mk"); pendingGift = 0; }
                 lastCash = cash.Value; lastBank = bank.Value;
@@ -705,7 +533,6 @@ namespace MWCoop
             HookPays();
             HookTrigs();
             HookEnvelopes();
-            FleaStep();
             foreach (Pay p in Pays) if (p.Open) PayEnd(p);   // fin d'etat pas vue (etat quitte avant la fin de ses actions)
             if (Time.realtimeSinceStartup >= nextStore) { nextStore = Time.realtimeSinceStartup + 10f; Store(); }
             if (Time.realtimeSinceStartup < next) return;
@@ -804,7 +631,7 @@ namespace MWCoop
                 var f = (PlayMakerFSM)o; if (f == null) continue;
                 if (!IsEnvelope(f) || !f.transform.root.gameObject.activeInHierarchy) continue;   // (modeles : racine inactive)
                 string key = Recon.Path(f.transform);
-                if (key == JokkePay || !keys.Add(key)) continue;
+                if (!keys.Add(key)) continue;
                 if (!Replay.Claim(f, "argent")) { Log.Warn("argent : enveloppe " + key + " deja a " + Replay.Owner(f)); continue; }
                 envs.Add(new Env { Key = key, F = f });
             }
@@ -892,120 +719,6 @@ namespace MWCoop
         static int testStep;
         static float testAt, remoteSince = -1;
 
-        public static void Test(string mode, float t)
-        {
-            if (mode == "ferraille" && ready) { TestScrap(t); return; }
-            if (mode != "revenu" || !ready) return;
-            float now = Time.realtimeSinceStartup;
-            if (testStep == 0 && t > 25f) { testStep = 1; Log.Info("autotest : revenu, avant : " + State()); }
-            if (testStep == 1 && t > 30f && (!Session.IsHost || GuestIn(now)))
-            {
-                testStep = 2; testAt = now;
-                Log.Info("autotest : revenu, le monde verse l'aide au logement ici : " + Force("Systems/Expenses", "Livingsupport", "Asumistuki") + ", " + State());
-            }
-            if (testStep == 2 && now - testAt > 10f) { testStep = 3; Log.Info("autotest : revenu, interets du jour ici : " + Force("Systems/BankAccount", "Data", "State 1") + ", " + State()); }
-            if (testStep == 3 && now - testAt > 22f)
-            {
-                testStep = 4;
-                Log.Info("autotest : revenu, apres : " + State() + " (versements du monde : " + worldLocal + " ici, " + worldIn + " recus)");
-            }
-        }
-
-        // Essais 'ferraille' : les deux a la benne de Fleetari (TestPos=1556,6,718). Objet jete : [Test] TestObjet (cle Props,
-        // ou '~partie de cle') ou, par defaut, l'objet suivi le plus proche de la benne (meme regle des deux cotes : meme
-        // objet). 26-32 s : l'invite le promene (Props.TestCarry : ses poses partent, il passe pour tenu ici) ; 34 s : chez
-        // les deux, la benne recoit l'objet (Object, Weight 10, 'State 3' : comme apres 'Turn into garbage') ; 40 s :
-        // l'enveloppe ScrapMoney sort chez l'invite ; 42 s : il la touche ('State 1'). Notes a 30 s et 50 s.
-        // Attendu : invite « ferraille (State 3) : ... mis par ce joueur-ci, paye ici », hote « mis par un autre joueur,
-        // rien verse ici » (enveloppe de l'hote inchangee) ; invite « rachat de ferraille +X, garde pour soi », aucun
-        // « argent : +... de » chez l'hote.
-        static string testKey;
-        static GameObject testObj;
-
-        static void TestScrap(float t)
-        {
-            Trig g = Trigs[0];
-            if (g.F == null) { if (testStep == 0 && t > 26f) { testStep = 9; Log.Info("autotest : ferraille, benne pas suivie ici (REPAIRSHOP charge ? TestPos)"); } return; }
-            if (testStep == 0 && t > 26f)
-            {
-                testStep = 1;
-                string k = Config.Get("Test", "TestObjet", "");
-                testKey = k.StartsWith("~") ? Props.FindKey(k.Substring(1)) : k.Length > 0 ? k : Props.NearestId("", g.F.transform.position);
-                testObj = testKey != null ? Props.ObjectOf(testKey) : null;
-                Log.Info("autotest : ferraille, objet " + (testKey ?? "?") + (testObj != null ? " en " + testObj.transform.position.ToString("F1") : " absent") + " ; " + State() + " ; " + PotState(g.F));
-            }
-            if (!Session.IsHost && testStep == 1 && t < 32f && testObj != null) { Props.TestCarry(testKey, t); Home.MarkHeld(testObj); }
-            if (testStep == 1 && t > 30f) { testStep = 2; Log.Info("autotest : ferraille, " + State()); }
-            if (testStep == 2 && t > 34f)
-            {
-                testStep = 3;
-                if (testObj == null) { Log.Info("autotest : ferraille, pas d'objet"); return; }
-                g.F.FsmVariables.FindFsmGameObject("Object").Value = testObj;
-                FsmFloat wv = g.F.FsmVariables.FindFsmFloat("Weight");
-                if (wv != null) wv.Value = 10f;
-                string before = PotState(g.F);
-                Game.SetState(g.F, "State 3");
-                Log.Info("autotest : ferraille, la benne recoit " + testObj.name + " : " + before + " -> " + PotState(g.F) + " (etat " + g.F.ActiveStateName + ")");
-            }
-            GameObject env = Game.FindAny("REPAIRSHOP/LOD/Office/Fleetari/ScrapMoney");
-            PlayMakerFSM use = env != null ? Game.FsmOn(env, "Use") : null;
-            if (!Session.IsHost && testStep == 3 && t > 40f)
-            {
-                testStep = 4;
-                if (env != null && !env.activeSelf) env.SetActive(true);
-                Log.Info("autotest : ferraille, enveloppe sortie chez l'invite : " + (env != null ? "active " + env.activeInHierarchy : "absente") + ", " + (use != null ? "Money " + use.FsmVariables.FindFsmFloat("Money").Value : "?"));
-            }
-            if (!Session.IsHost && testStep == 4 && t > 42f)
-            {
-                testStep = 5;
-                if (use != null && env.activeInHierarchy) Game.SetState(use, "State 1");
-                Log.Info("autotest : ferraille, l'invite touche l'enveloppe : " + State());
-            }
-            if (testStep >= 3 && testStep < 9 && t > 50f) { testStep = 9; Log.Info("autotest : ferraille, fin : " + State() + " ; " + PotState(g.F) + " ; payes ici " + trigLocal + ", pas payes ici " + trigOther); }
-        }
-
-        // Essais : ou 'State 3' de la benne ajoute (AddFsmFloat : automate, variable, valeur actuelle).
-        static string PotState(PlayMakerFSM f)
-        {
-            var sb = new System.Text.StringBuilder("pot");
-            try
-            {
-                FsmState st = f.Fsm.GetState("State 3");
-                foreach (FsmStateAction a in st.Actions)
-                {
-                    if (a == null || a.GetType().Name != "AddFsmFloat") continue;
-                    var od = a.GetType().GetField("gameObject").GetValue(a) as FsmOwnerDefault;
-                    var fsm = a.GetType().GetField("fsmName").GetValue(a) as FsmString;
-                    var name = a.GetType().GetField("variableName").GetValue(a) as FsmString;
-                    GameObject go = od == null ? null : od.OwnerOption == OwnerDefaultOption.UseOwner ? f.gameObject : od.GameObject.Value;
-                    PlayMakerFSM target = go != null && fsm != null ? Game.FsmOn(go, fsm.Value) : null;
-                    FsmFloat v = target != null && name != null ? target.FsmVariables.FindFsmFloat(name.Value) : null;
-                    sb.Append(' ').Append(go != null ? go.name : "?").Append('.').Append(name != null ? name.Value : "?").Append('=').Append(v != null ? v.Value.ToString("0.##") : "?");
-                }
-            }
-            catch (System.Exception e) { sb.Append(" ?").Append(e.GetType().Name); }
-            return sb.ToString();
-        }
-
-        // Hote : un invite est en partie depuis 20 s.
-        static bool GuestIn(float now)
-        {
-            bool any = false;
-            foreach (PlayerInfo p in Session.Players.Values) if (!p.Local && p.Level == 1 && now - p.StateTime < 3f) any = true;
-            if (!any) { remoteSince = -1; return false; }
-            if (remoteSince < 0) remoteSince = now;
-            return now - remoteSince > 20f;
-        }
-
-        // Force l'etat 'state' de l'automate 'path::fsm' d'un versement suivi (comme le jour venu).
-        static string Force(string path, string fsm, string state)
-        {
-            foreach (Pay p in Pays)
-                if (p.Path == path && p.Fsm == fsm && p.F != null) return Game.SetState(p.F, state) ? p.Path + "::" + fsm + " -> " + p.F.ActiveStateName : "etat " + state + " absent";
-            return "automate " + fsm + " pas suivi";
-        }
-
-        // Essais : gagne (ou depense) 'amount' en liquide, comme une paie ou un achat.
         public static string Test(float amount)
         {
             if (!ready) return "argent pas pret";

@@ -266,7 +266,7 @@ foreach ($dark in $false, $true) {
 
     # Logo : depasse du haut de la carte ; ombre douce bleu nuit (un peu vers le bas) pour qu'il se detache du bureau
     # comme de la carte, puis le logo tel quel (il a son propre contour blanc).
-    $maxW = if ($banner -ne $logo) { 250.0 } else { 220.0 }   # (titre : laisse la place aux boutons GitHub / Ko-fi)
+    $maxW = if ($banner -ne $logo) { 250.0 } else { 220.0 }
     $dh = 172.0; $dw = $dh * $bsrc.Width / $bsrc.Height
     if ($dw -gt $maxW) { $dw = $maxW; $dh = $dw * $bsrc.Height / $bsrc.Width }
     $top = if ($banner -ne $logo) { 36.0 } else { 6.0 }   # titre large : plus bas, au ras de la pastille PRE-ALPHA

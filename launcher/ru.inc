@@ -979,7 +979,6 @@ static const wchar_t *const kRu[][2] = {
     { L"Updates, theme, language, port, game folder, a host's files at a friend's… and this guide.", L"Обновления, тема, язык, порт, папка игры, файлы хоста у друга… и этот гайд." },
     { L"Theme and language", L"Тема и язык" },
     { L"Dark or light, French or English, in one click.", L"Тёмная или светлая, французский или английский — в один клик." },
-    { L"The SummerCoop community: help, bug reports, news and players to team up with. GitHub and Ko-fi right next to it.", L"Сообщество SummerCoop: помощь, баг-репорты, новости и игроки для команды. GitHub и Ko-fi рядом." },
     { L"SummerCoop's MSCLoader", L"MSCLoader от SummerCoop" },
     { L"In the Mods tab: OFFICIAL (the one installed in the game) or SUMMERCOOP (installed apart, the game is not changed). If your mods don't load, try SUMMERCOOP, or REINSTALL.", L"Во вкладке «Моды»: ОФИЦИАЛЬНЫЙ (установлен в игре) или SUMMERCOOP (установлен отдельно, игра не меняется). Если моды не грузятся, попробуй SUMMERCOOP или ПЕРЕУСТАНОВИТЬ." },
     { L"In Settings > Game: Copy (default), Game folder or Steam. If SummerCoop doesn't load, try one then the other; the launcher also switches to the game folder by itself.", L"В Настройки > Игра: Копия (по умолчанию), Папка игры или Steam. Если SummerCoop не грузится, попробуй один, потом другой; лаунчер и сам переключается на папку игры." },

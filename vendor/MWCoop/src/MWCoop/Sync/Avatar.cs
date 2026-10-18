@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using MWCoop.Net;
 using UnityEngine;
 
@@ -2228,7 +2228,7 @@ namespace MWCoop
         void BuildHelmet()
         {
             nextHelmetTry = Time.realtimeSinceStartup + 10f;
-            GameObject src = Wear.ItemObject(2);
+            GameObject src = Wear.ItemObject(0);
             Transform hp = Bone("HeadPivot") ?? headBone;
             if (src == null || hp == null || headBone == null) return;
             Transform st = src.transform;

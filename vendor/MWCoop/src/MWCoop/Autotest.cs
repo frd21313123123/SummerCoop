@@ -1,4 +1,4 @@
-﻿using HutongGames.PlayMaker;
+using HutongGames.PlayMaker;
 using UnityEngine;
 
 namespace MWCoop
@@ -146,7 +146,7 @@ namespace MWCoop
             float t = Time.realtimeSinceStartup - t0;
             // Essais propres a chaque module (chacun ses modes et son compteur d'etapes).
             CarDoors.Test(mode, t); Npcs.Test(mode, t); Props.Test(mode, t); AssembleIcon.Test(mode, t); DroneCam.Test(mode, t); TaxiCustomer.Test(mode, t); WalletPanel.Test(mode, t); Cheats.Test(mode, t); MapPanel.Test(mode, t); ModSecondMachtwagen.Test(mode, t); Consume.Test(mode, t);
-            Wallet.Test(mode, t); Traffic.Test(mode, t); Machines.Test(mode, t); HandTools.Test(mode, t); ThirdPerson.Test(mode, t); LogPiles.Test(mode, t); CarSale.Test(mode, t); VehicleSync.TestRelais(mode, t); Consume.TestPick(mode, t); Fluids.TestFill(mode, t); ModMachtwagen300D.Test(mode, t); SleepingBags.Test(mode, t); ModCheatbox.Test(mode, t); CarLeaks.Test(mode, t);
+            Traffic.Test(mode, t); Machines.Test(mode, t); HandTools.Test(mode, t); ThirdPerson.Test(mode, t); LogPiles.Test(mode, t); VehicleSync.TestRelais(mode, t); Consume.TestPick(mode, t); Fluids.TestFill(mode, t); ModMachtwagen300D.Test(mode, t); SleepingBags.Test(mode, t); ModCheatbox.Test(mode, t); CarLeaks.Test(mode, t);
             if (mode == "sondesac" && t > 20f && step == 0)
             {
                 step = 1;
@@ -176,9 +176,9 @@ namespace MWCoop
                             for (int i = 0; i < s.Actions.Length && i < 40; i++) Log.Info("autotest : options " + f.FsmName + "/" + sn + " : " + Recon.Describe(s.Actions[i]));
                         }
             }
-            Frost.Test(mode, t); Tow.Test(mode, t); Calls.Test(mode, t); Wear.Test(mode, t);
+            Frost.Test(mode, t); Tow.Test(mode, t);
             Cooking.Test(mode, t); Fires.Test(mode, t); Garage.Test(mode, t); Home.Test(mode, t); Gestures.Test(mode, t);
-            VehicleSync.Test(mode, t); Jobs.Test(mode, t); SewageHose.Test(mode, t); RunOver.Test(mode, t); CustomPaint.Test(mode, t); FuelPrices.Test(mode, t); Wear.TestCup(mode, t); PhoneKeys.Test(mode, t); CarHits.Test(mode, t); Gestures.Test2(mode, t); WindowCranks.Test(mode, t); Pvp.Test(mode, t); ModRam1500.Test(mode, t); TeimoSled.Test(mode, t); Parts.Test(mode, t); Races.Test(mode, t); Rally.Test(mode, t); Kartturi.Test(mode, t); Net.ModServe.Test(mode, t); Kauppa.TestKartturi(mode, t); Kauppa.TestKartturiDrive(mode, t); PushDoors.Test(mode, t);
+            VehicleSync.Test(mode, t); Jobs.Test(mode, t); SewageHose.Test(mode, t); RunOver.Test(mode, t); CustomPaint.Test(mode, t); FuelPrices.Test(mode, t); PhoneKeys.Test(mode, t); CarHits.Test(mode, t); Gestures.Test2(mode, t); WindowCranks.Test(mode, t); Pvp.Test(mode, t); ModRam1500.Test(mode, t); TeimoSled.Test(mode, t); Parts.Test(mode, t); Races.Test(mode, t); Rally.Test(mode, t); Kartturi.Test(mode, t); Net.ModServe.Test(mode, t); Kauppa.TestKartturi(mode, t); Kauppa.TestKartturiDrive(mode, t); PushDoors.Test(mode, t);
             MWCoop.Net.SaveTransfer.Test(mode, t); World.Test(mode, t); Menu.Test(mode, t); Studio.Test(mode, t);
             if (mode == "marche" && t > 5f)
             {
@@ -1293,10 +1293,9 @@ namespace MWCoop
                 GameObject ads = Game.FindAny("JOBS/ADs");
                 PlayMakerFSM data = ads != null ? Game.FsmOn(ads, "Data") : null;
                 // (vrai depart : l'appel aux pubs de Calls, Autotest=appel ; tenu ensuite de 65 a 75 s)
-                if (Config.GetInt("Test", "TractsForce", 0) == 0) Calls.Test("appel", t);
                 // ([Test] TractsForce=1 : "New job" pose chez CHACUN a 30 s, comme le jour du boulot venu ; l'invite tient le paquet
                 // de 80 a 88 s)
-                else if (t > 30f && step == 0 && data != null) { step = 1; Game.SetState(data, "New job"); Log.Info("autotest : tracts, New job ici -> " + data.ActiveStateName); }
+                if (t > 30f && step == 0 && data != null) { step = 1; Game.SetState(data, "New job"); Log.Info("autotest : tracts, New job ici -> " + data.ActiveStateName); }
                 if (!Net.Session.IsHost && Config.GetInt("Test", "TractsForce", 0) != 0 && t > 80f && t < 88f && PlayerSync.LocalCamera != null) { Rigidbody gh = Props.TestHold(Props.FindKey("advert pile"), PlayerSync.LocalCamera); if (step == 1) { step = 2; Log.Info("autotest : tracts, l'invite tient le paquet (" + (gh != null ? "ok" : "absent") + ")"); } }
                 if (!Net.Session.IsHost && t > 88f && step == 2) { step = 3; Props.TestHold(Props.FindKey("advert pile"), null); }
                 float h0 = 65f;

@@ -4,7 +4,7 @@
 //  - scene : nuit d'aurore boreale (sombre) ou matin d'hiver (clair), dessinee ici une fois par taille (SceneBuild) ;
 //    une copie tres floutee sert de fond aux cartes de "verre" (GlassCard : scene floutee + teinte + liseré) ;
 //  - a gauche, la barre de navigation : logo, version, bouton de mise a jour, pages groupees (JOUER, MON PERSONNAGE,
-//    PARTAGE, INFOS), Reglages, liens GitHub / Ko-fi ;
+//    PARTAGE, INFOS), Reglages ;
 //  - en haut, le titre de la page et ses commandes ; en bas, l'etat (ligne de statut) et le jeu trouve ;
 //  - une page a la fois (g_tab = TAB_*) dans kMain.
 // Les cartes de verre d'une page sont declarees pendant le dessin (Glass) ; la scene + ces cartes sont gardees dans

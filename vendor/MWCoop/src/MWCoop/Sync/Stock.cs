@@ -32,8 +32,9 @@ namespace MWCoop
         class Store
         {
             public string Key; public GameObject Inventory; public PlayMakerHashTableProxy StockedProxy, CarriedProxy, BoughtProxy;
+            readonly Hashtable emptyCarried = new Hashtable();
             public Hashtable Stocked { get { return StockedProxy != null ? StockedProxy._hashTable : null; } }
-            public Hashtable Carried { get { return CarriedProxy != null ? CarriedProxy._hashTable : null; } }
+            public Hashtable Carried { get { return CarriedProxy != null ? CarriedProxy._hashTable : emptyCarried; } }
             public Hashtable Bought { get { return BoughtProxy != null ? BoughtProxy._hashTable : null; } }
             public Dictionary<string, int> SentBought = new Dictionary<string, int>();
             public Dictionary<string, List<PlayMakerFSM>> Buys = new Dictionary<string, List<PlayMakerFSM>>();   // produit -> automates 'Buy'
@@ -68,7 +69,10 @@ namespace MWCoop
                 if (stores.ContainsKey(key)) continue;
                 PlayMakerHashTableProxy carried = null, bought = null;
                 foreach (PlayMakerHashTableProxy c in h.GetComponents<PlayMakerHashTableProxy>()) { if (c.referenceName == "Carried") carried = c; else if (c.referenceName == "Bought") bought = c; }
-                if (h._hashTable == null || carried == null || carried._hashTable == null) continue;
+                // MSC keeps the local cart in Q* cash register variables. Its
+                // Inventory has Stocked/Bought but no Carried hash table.
+                if (h._hashTable == null || carried != null && carried._hashTable == null
+                    || carried == null && (!MscRuntime.Enabled || bought == null || bought._hashTable == null)) continue;
                 var s = new Store { Key = key, Inventory = h.gameObject, StockedProxy = h, CarriedProxy = carried, BoughtProxy = bought != null && bought._hashTable != null ? bought : null };
                 foreach (DictionaryEntry e in s.Stocked) s.SentStocked[e.Key.ToString()] = ToInt(e.Value);
                 foreach (DictionaryEntry e in s.Carried) s.SentCarried[e.Key.ToString()] = ToInt(e.Value);
@@ -175,7 +179,9 @@ namespace MWCoop
             if (s.Buys.TryGetValue(item, out fs))
                 foreach (PlayMakerFSM f in fs)
                 {
-                    FsmInt q = f != null ? f.FsmVariables.FindFsmInt("Quantity") : null;
+                    // Quantity is the player's own cart count in MSC. Only
+                    // Bought follows the common number removed from the shelf.
+                    FsmInt q = f != null ? f.FsmVariables.FindFsmInt(MscRuntime.Enabled ? "Bought" : "Quantity") : null;
                     if (q != null) q.Value = v;
                 }
             s.Touched.Add(item);

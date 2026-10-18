@@ -80,7 +80,6 @@ namespace MWCoop
             Windshields.OnLevelLoaded();
             Packages.OnLevelLoaded();
             Vin.OnLevelLoaded();
-            CarSale.OnLevelLoaded();
             TaxiCustomer.OnLevelLoaded();
             Bus.OnLevelLoaded();
         }
@@ -162,8 +161,8 @@ namespace MWCoop
         }
 
         // (delegues crees une fois : un par appel et par image sinon)
-        static readonly string[] subNames = { "police", "contenu", "pare-brise", "colis", "vin", "vente", "taxi", "trafic seul", "bus" };
-        static readonly System.Action[] subs = { Police.Update, Contenu.Update, Windshields.Update, Packages.Update, Vin.Update, CarSale.Update, TaxiCustomer.Update, UpdateTraffic,
+        static readonly string[] subNames = { "police", "contenu", "pare-brise", "colis", "vin", "taxi", "trafic seul", "bus" };
+        static readonly System.Action[] subs = { Police.Update, Contenu.Update, Windshields.Update, Packages.Update, Vin.Update, TaxiCustomer.Update, UpdateTraffic,
                                                  Bus.Update };   // (bus apres le suivi : la copie du bus est a sa place de cette image)
 
         public static void Update()

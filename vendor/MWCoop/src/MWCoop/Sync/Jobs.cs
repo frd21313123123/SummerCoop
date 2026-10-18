@@ -1627,7 +1627,6 @@ namespace MWCoop
                 case "@colis": Packages.OnRemote(who, r.Str()); break;
                 case "@vin?": Vin.OnAsk(who); break;
                 case "@vin": Vin.OnTable(who, r); break;
-                case "@vente": CarSale.OnRemote(who, r.U8()); break;
                 case "@client": TaxiCustomer.OnRemote(who, r.Str()); break;
                 case "@taxicarte": MapPanel.OnTaxi(who, r); break;
                 case "@don": { int to = r.U8(); Wallet.OnGift(who, to, r.I32()); break; }

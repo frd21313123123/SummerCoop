@@ -1,4 +1,4 @@
-﻿using System.Collections;
+using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
 using HutongGames.PlayMaker;
@@ -8,86 +8,8 @@ using CreateObject = HutongGames.PlayMaker.Actions.CreateObject;
 
 namespace MWCoop
 {
-    // Achats (demande de JD) : chacun paie de son cote, mais tous voient ce que les autres achetent.
-    //
-    // 1) CAISSES A SAC (magasin PSK, Fleetari) : automate 'Data' de CashRegisterLogic. Au paiement : 'Purchase'
-    //    (retire PriceTotal de PlayerMoney) et 'Spawn bag' : le sac est cree par Spawner/CreateBag... et rempli
-    //    d'apres la table 'Carried' de l'inventaire (produit -> quantite), puis les gros articles a part
-    //    ('Separates') ; chez Fleetari ensuite le temps de banc d'essai achete (QDynoTimes, 'Spawn 16') et
-    //    seulement alors 'Purchase' ; enfin 'Reset purchase' vide le panier.
-    //     - une action injectee au debut de 'Spawn bag' envoie (caisse, panier, temps de banc) ;
-    //     - ailleurs : panier local mis de cote, panier recu pose dans Carried, caisse mise dans 'Spawn bag'
-    //       (le sac et les articles apparaissent) ; ce qui ferait payer ou ecrirait a l'ecran de celui qui
-    //       rejoue ('Purchase' de Fleetari, statistiques, GUI*) est coupe jusqu'a la fin, puis panier remis --
-    //       dans la table que l'inventaire tient A CE MOMENT : 'Reset purchase' (HashTableRevertSnapShot) ne vide
-    //       pas la table, il en met une NEUVE dans le proxy (PlayMakerHashTableProxy.RevertToSnapShot) ;
-    //     - caisse eteinte chez celui qui recoit (Fleetari loin : son automate ne tourne pas, le message etait
-    //       perdu et les compteurs d'objets divergeaient) : la chaine est refaite a la main sur les distributeurs
-    //       (racine Spawner, toujours active) -- sac rempli, gros articles un par un, temps de banc. Ce qui sort
-    //       sous un point eteint (sac sous ShoppingBagSpawn, toujours eteint ; articles sous SpawnItemStore) est
-    //       sorti a la racine comme le fait le BagCreator, et fige (contraintes) tant que le magasin n'est pas
-    //       charge ici ou que Props ne l'a pas deplace : actif, son automate demarre et pose son ID (Props et
-    //       Consume le suivent), sans tomber a travers le comptoir eteint.
-    //    Les objets crees portent un nom a compteur sauvegarde (shoppingbag5...) : rejoues dans le meme ordre,
-    //    ils ont le meme nom partout (Props les suit ensuite par ce nom).
-    //    Le sac est prepare par le BagCreator de la caisse (automate 'Create', global COPY envoye par 'Spawn
-    //    bag' : sac active, panier recopie dedans). Le rejeu de 'Spawn bag' le refait deja : il est reserve a ce
-    //    module (Replay.Claim) des le premier releve (9 s, avant celui du monde a 16 s), meme si la caisse n'est
-    //    pas encore accrochable (objet eteint) -- sinon le monde rejouait aussi le COPY (sac en double, ou vide).
-    //
-    // 2) COMPTOIRS que le monde (WorldFsms) ne suit pas ('CashRegister' et 'Buy' ecartes, NPC_CARS aussi) :
-    //     - bar du pub (PubCashRegister, etat 'Pay' : Total, EventName) : Teimo sert, cree le verre ou le plat,
-    //       ou les cigarettes (Spawner/CreateItems, compteur) ;
-    //     - controle technique et station d'epuration (etat 'Purchase') : frais payes, portes ouvertes ;
-    //     - marche aux puces (FleaCashRegister 'Purchase' + liste 'Bought' de FleaMarketProducts) : les memes
-    //       objets sortent ('Spawn product') ;
-    //     - ticket de bus (BUS/Ticket 'Pay trip') : le bus de l'hote repart quand un invite paie ;
-    //     - machine a cafe (CoffeeButton 'Purchase', gratuit : POUR au verseur) et sa tasse (coffee cup 'State 1',
-    //       tasse bue et remise sous la machine). Le verseur (PanTarget) est reserve a ce module : le monde ne le
-    //       rejouait que si le clic avait eu lieu dans la seconde.
-    //    Une action au debut de l'etat de paiement envoie (comptoir, etat, variables de l'automate, liste 'Bought')
-    //    avec un numero d'achat ; ailleurs les variables sont recopiees et l'automate mis dans cet etat quand il
-    //    est au repos (etat qui attend le joueur, ou sans suite) : la suite (service, objets crees) se deroule
-    //    comme chez l'acheteur. Ce qui touche au joueur qui rejoue (PlayerMoney, GUI*, statistiques, objets sous
-    //    PLAYER) est coupe jusqu'au retour au repos : seul l'acheteur paie, les sous-titres restent chez lui.
-    //    Releve refait a chaque rejeu, et seulement sur les references fixes : une variable que l'automate
-    //    ecrit lui-meme (verre cree, objet des puces en cours) peut viser un instant l'objet en main du joueur.
-    //    Bar : le rejeu entre directement dans 'Pay' ; la carte (OrderList) est cachee le temps du service, comme
-    //    le fait 'State 6' a une commande -- sinon une commande locale (PURCHASE global) coupait le service rejoue
-    //    (paquet de cigarettes jamais cree ici : compteur du distributeur decale pour toute la partie).
-    //    Puces : jamais rejoues par l'automate (le joueur local y a peut-etre sa propre selection : Total, liste
-    //    'Bought', articles marques 'Added', que le rejeu ecrasait puis remettait a zero) ; les objets achetes
-    //    sont sortis a la main, et retires de la selection locale s'ils y etaient.
-    //    Objets crees par le comptoir sans ID (verre de biere, shot, cafe, assiette du pub : rien a sauvegarder) :
-    //    un ID est pose a leur creation, le meme partout (nom + joueur + numero d'achat) : Props et Consume les
-    //    suivent (bu, mange, deplace) comme les autres articles.
-    //    Comptoir eteint chez celui qui recoit : cigarettes du bar, objets des puces et trajet de bus faits a la
-    //    main (compteurs, objets persistants, bus de l'hote) ; le reste attend que le comptoir s'allume, ou est
-    //    abandonne (verres, cafe). Objets faits a la main sous un point eteint : sortis a la racine et figes,
-    //    comme les sacs.
-    // 3) TIRAGE DES PUCES (FleaMarketProducts :: Creator) : prix et objets en rayon tires chez chacun -- l'hote fait
-    //    reference (voir « prix et rayons des puces » plus bas).
-    // 4) RESTAURANT PSK (PERAPORTTI/Building/LOD100/Restaurant). On choisit un plat (OrderTriggers/* 'Buy' ->
-    //    'Cashier' : Event FOODn et PriceTotal ecrits dans la caisse, PURCHASE), on paie a la caisse ('Purchase').
-    //     - comptoir burger (BurgerCashRegister) : 'Purchase' -> 'State 1|2' (BurgerSmall/Large chez Keijo) ->
-    //       'State 4' (Event et ORDER a Keijo) ; Keijo (Staff/BurgerRunnerPIVOT/Keijo :: Work) 'Tray1'... va en
-    //       cuisine, et 'Burger2' cree le plateau (prefab Tray : burger, frites, soda ; son automate Data lit Event)
-    //       a SpawnTray. Rejoue comme le bar (meme message, argent coupe) quand la caisse est au repos ici et Keijo
-    //       libre : Keijo ne prend ORDER que dans 'Hello!', ou il n'est que si le joueur LOCAL est au comptoir --
-    //       une action en fin de 'State 4' le met donc a 'Tray1' s'il ne sert pas deja. Ainsi Keijo sert chez tous
-    //       (sa pose, envoyee par son auteur, Npcs, montre partout le service) ;
-    //     - a la carte (AlaCarteRegister) : Jouni porte l'assiette a la TABLE du client (son marqueur de table, que
-    //       personne d'autre n'a au meme endroit) : jamais rejoue par l'automate ; l'assiette est posee chez les
-    //       autres d'apres le message du serveur (ci-dessous).
-    //    Le plateau ou l'assiette recoit a sa creation l'ID de la commande (nom + acheteur + numero d'achat), le
-    //    meme partout : Props le suit. Quand le serveur de l'ACHETEUR le pose ('Burger2', 'Spawn plate'), un message
-    //    donne sa pose : chez qui ne l'a pas (caisse eteinte, Keijo occupe, assiette), il est cree de la meme prefab
-    //    a cette pose (fige si le restaurant n'est pas charge ici) ; un plateau que Keijo d'ici sert ensuite pour
-    //    la meme commande est retire (deja la). Manger (boutons 'Button' du plateau ou de l'assiette : frites,
-    //    burger deballe puis mange, soda gorgee par gorgee) : les etats « State N » apres le clic sont rejoues
-    //    chez les autres, ce qui touche au joueur coupe (seul celui qui mange a moins faim).
-    //    Pas suivis ici : kiosque a saucisses et vendeur de pieces du rallye (leur effet passe deja par un automate
-    //    du monde, PURCHASE / ALTERNATOR globaux), bureau de poste (courrier).
+    // Native counter replay. MSC groceries and mail orders are owned by
+    // MscShop and MscOrders; only the buyer pays for a replayed purchase.
     public static class Shop
     {
         const string Mod = "magasin";
@@ -305,9 +227,6 @@ namespace MWCoop
             served.Clear(); servedOrder.Clear(); waitServe.Clear(); eatObjs.Clear(); eatPending.Clear(); eatMuted.Clear(); prefabs.Clear();
             testStep = 0; testLog = 0; testBag = null; testEatAt = 0;
             nextScan = PlayerSync.InGame ? Time.realtimeSinceStartup + 9f : -1;
-            fleaDb = null; fleaCreator = null; fleaHostLists.Clear(); fleaHostShelf = null; fleaSentSig = null;
-            fleaRolling = fleaPending = false; fleaReplyAt = -1; fleaApplied = 0; fleaRetry = 0; fleaNextSig = 0;
-            fleaAskAt = PlayerSync.InGame ? Time.realtimeSinceStartup + 20f : -1;
         }
 
         // Stock : le panier de l'inventaire 'inventory' (objet INVENTORY_... qui porte Stocked et Carried) est-il
@@ -325,7 +244,6 @@ namespace MWCoop
         {
             float now = Time.realtimeSinceStartup;
             if (nextScan > 0 && now >= nextScan) { nextScan = now + 60f; Scan(); }   // caisses et comptoirs sont la des le chargement
-            if (nextScan > 0 && Session.Active && now >= fleaNext) { fleaNext = now + 0.2f; FleaPricesStep(now); }
             // Caisses et comptoirs eteints au releve (loin) : accroches des que leur objet s'allume (une tasse prise
             // sous la machine peut etre bue avant le releve suivant).
             if (nextScan > 0 && now >= nextHookCheck && (unhooked.Count > 0 || unhookedRegisters.Count > 0))
@@ -523,7 +441,6 @@ namespace MWCoop
                     states = new[] { "Purchase" };
                 }
                 else if (f.Fsm.GetState("Pay") != null) { kind = "bar"; label = "au bar"; states = new[] { "Pay" }; wait = 30f; }
-                else if (f.Fsm.GetState("Spawn product") != null && f.FsmVariables.FindFsmGameObject("Inventory") != null) { kind = "puces"; label = "au marche aux puces"; states = new[] { "Purchase" }; wait = 120f; }
                 else if (f.Fsm.GetState("Purchase") != null)
                 {
                     kind = "caisse"; states = new[] { "Purchase" };
@@ -1083,14 +1000,13 @@ namespace MWCoop
             if (Session.IsHost) who = from.Id;
             int kind = r.U8();
             if (kind == MscShopMessage.Kind) { MscShop.OnMessage(from, r); return; }
+            if (kind == MscOrderMessage.Kind) { MscOrders.OnMessage(from, r); return; }
             // Relais aux autres invites : le message tel quel, seul le numero du joueur est fixe par l'hote.
             if (Session.IsHost) Session.Broadcast(new NetWriter(Msg.Purchase).U8(who).Raw(raw, 1, raw.Length - 1), true, who);
             if (kind == 0) OnBag(who, r);
             else if (kind == 1) OnCounter(who, r);
             else if (kind == K_Served) OnServed(who, r);
             else if (kind == K_Eat) OnEat(who, r);
-            else if (kind == K_FleaLists || kind == K_FleaShelf) { if (!Session.IsHost && who == 0) OnFleaPrices(kind, r); }
-            else if (kind == K_FleaAsk) { if (Session.IsHost) { fleaReplyAt = Time.realtimeSinceStartup + 0.5f; Log.Info("magasin : puces : " + PlayerName(who) + " demande le tirage de l'hote"); } }
         }
 
         // ---------------------------------------------------------------- caisses a sac : reception
@@ -1284,21 +1200,7 @@ namespace MWCoop
             return v;
         }
 
-        // Marche aux puces : la liste 'Bought' (objets choisis, par rang) de l'inventaire FleaMarketProducts.
-        static void WriteLists(Counter c, NetWriter w)
-        {
-            System.Collections.ArrayList bought = c.Kind == "puces" ? ListOn(Var(c.Fsm, "Inventory"), "Bought") : null;
-            if (bought == null || bought.Count > 200) { w.U8(0); return; }
-            w.U8(1).Str("Bought").U16(bought.Count);
-            foreach (object o in bought)
-            {
-                if (o is bool) w.U8(3).Bool((bool)o);
-                else if (o is int) w.U8(0).I32((int)o);
-                else if (o is float) w.U8(1).F32((float)o);
-                else if (o is string) w.U8(2).Str((string)o);
-                else w.U8(5);
-            }
-        }
+        static void WriteLists(Counter c, NetWriter w) { w.U8(0); }
 
         static List<KeyValuePair<string, List<object>>> ReadLists(NetReader r)
         {
@@ -1367,7 +1269,6 @@ namespace MWCoop
                 case "resto": return Lang.T(" a pay\u00E9 un repas au comptoir burger", " paid for a meal at the burger counter");
                 case "bus": return Lang.T(" a pay\u00E9 un ticket de bus", " paid for a bus ticket");
                 case "bar": return Lang.T(" a pay\u00E9 au bar", " paid at the bar");
-                case "puces": return Lang.T(" a pay\u00E9 au march\u00E9 aux puces", " paid at the flea market");
             }
             if (c.Label.Contains("epuration")) return Lang.T(" a pay\u00E9 \u00E0 la station d'\u00E9puration", " paid at the sewage plant");
             if (c.Label.Contains("controle")) return Lang.T(" a pay\u00E9 au contr\u00F4le technique", " paid at the inspection");
@@ -1395,13 +1296,7 @@ namespace MWCoop
             Counter c = it.C;
             PlayMakerFSM f = c.Fsm;
             if (f == null) return true;
-            // Puces : toujours a la main. La caisse au repos ('Wait player'/'Wait button') est justement celle ou le
-            // joueur local a peut-etre choisi des objets (Total, 'Bought', TriggerFlea 'Added') : le rejeu les
-            // ecrasait, puis 'Delay' et 'State 4' remettaient tout a zero -- objets choisis caches pour de bon,
-            // semaines de location perdues. Et un clic local (PURCHASE) coupait la boucle 'Spawn product'.
-            // A la carte : Jouni porterait l'assiette a la table du marqueur d'ICI ; l'assiette vient de la pose de
-            // l'acheteur.
-            if (c.Kind == "puces" || c.Kind == "carte") { Emulate(it); return true; }
+            if (c.Kind == "carte") { Emulate(it); return true; }
             bool on = f.gameObject.activeInHierarchy;
             if (!on && Emulate(it)) return true;   // eteint : ce qui doit exister partout, fait a la main
             if (!on || !Ready(c))
@@ -1415,8 +1310,7 @@ namespace MWCoop
             string idle = f.ActiveStateName;
             FsmVariables fv = f.FsmVariables;
             foreach (var x in it.V.F) { FsmFloat t = fv.FindFsmFloat(x.Key); if (t != null) t.Value = x.Value; }
-            // Location de la table des puces : RENT a la table passe deja par le monde (automate de SaleTable).
-            foreach (var x in it.V.I) { FsmInt t = fv.FindFsmInt(x.Key); if (t != null) t.Value = c.Kind == "puces" && x.Key == "Weeks" ? 0 : x.Value; }
+            foreach (var x in it.V.I) { FsmInt t = fv.FindFsmInt(x.Key); if (t != null) t.Value = x.Value; }
             foreach (var x in it.V.B) { FsmBool t = fv.FindFsmBool(x.Key); if (t != null) t.Value = x.Value; }
             foreach (var x in it.V.S) { FsmString t = fv.FindFsmString(x.Key); if (t != null) t.Value = x.Value; }
             SetLists(c, it.Lists);
@@ -1495,48 +1389,7 @@ namespace MWCoop
                 else Log.Info("magasin : " + (ev ?? "?") + " du bar pas servi ici (bar eteint ou occupe)");
                 return true;
             }
-            if (c.Kind == "puces")
-            {
-                GameObject inv = Var(c.Fsm, "Inventory");
-                System.Collections.ArrayList items = ListOn(inv, "Items"), shelf = ListOn(inv, "Shelf"), purchased = ListOn(inv, "Purchased");
-                List<object> bought = null;
-                foreach (var l in it.Lists) if (l.Key == "Bought") bought = l.Value;
-                if (items == null || bought == null) return true;
-                GameObject point = Var(c.Fsm, "SpawnPoint");
-                System.Collections.ArrayList mine = ListOn(inv, "Bought");   // selection du joueur local (pas payee)
-                int n = 0, dropped = 0;
-                for (int i = 0; i < bought.Count && i < items.Count; i++)
-                {
-                    if (!(bought[i] is bool) || !(bool)bought[i]) continue;
-                    if (purchased != null && i < purchased.Count && purchased[i] is bool && (bool)purchased[i]) continue;   // deja vendu ici
-                    // = 'Spawn product' : objet sorti de l'inventaire (FleaMarketProducts/Disable, eteint) a la racine
-                    // (SetParent null), pose au comptoir, active ; rayon cache. Fige tant que le marche n'est pas charge
-                    // ici (il tomberait a travers le comptoir eteint) ou que Props ne l'a pas deplace.
-                    var go = items[i] as GameObject;
-                    if (go == null) continue;
-                    go.transform.parent = null;
-                    if (point != null) go.transform.position = point.transform.position + Vector3.up * (0.1f * n);
-                    go.SetActive(true);
-                    Freeze(go, c.Fsm.gameObject);
-                    Consume.Soon(go);
-                    if (purchased != null && i < purchased.Count) purchased[i] = true;
-                    var sh = shelf != null && i < shelf.Count ? shelf[i] as GameObject : null;
-                    if (sh != null) sh.SetActive(false);
-                    n++;
-                    // Choisi ici aussi : retire de la selection locale (sinon paye une 2e fois et repris a l'acheteur).
-                    if (mine != null && i < mine.Count && mine[i] is bool && (bool)mine[i]) { Deselect(c, i, mine); dropped++; }
-                }
-                if (dropped > 0 && c.Fsm.gameObject.activeInHierarchy && AtRest(c.Fsm))
-                {
-                    // Total affiche et TotalFinal recalcules par la caisse, comme apres un clic sur un objet.
-                    applying = true; Replay.Depth++;
-                    try { c.Fsm.SendEvent("PURCHASE"); }
-                    finally { applying = false; Replay.Depth--; }
-                }
-                Log.Info("magasin : " + n + " objets des puces de " + PlayerName(it.Who) + " sortis ici a la main (comptoir "
-                         + (c.Fsm.gameObject.activeInHierarchy ? "allume" : "eteint") + (dropped > 0 ? ", " + dropped + " retires de la selection locale" : "") + ")");
-                return true;
-            }
+
             if (c.Kind == "bus")
             {
                 // = 'Pay trip' : le trajet est paye (le bus de l'hote repart).
@@ -1550,317 +1403,6 @@ namespace MWCoop
             return false;
         }
 
-        // Puces : l'objet de rang i, achete par un autre, etait aussi choisi par le joueur local (TriggerFlea 'Buy'
-        // de meme ID : Added, prix ajoute au Total de la caisse, rang i vrai dans 'Bought'). Defait comme 'Subtract'
-        // (clic droit) : rang i hors de 'Bought', Added faux, prix retire du total. L'objet du rayon n'est pas
-        // retouche : son rayon est cache (vendu). Releve de tous les automates : seulement dans ce cas rare.
-        static void Deselect(Counter c, int i, System.Collections.ArrayList mine)
-        {
-            mine[i] = false;
-            foreach (Object o in Resources.FindObjectsOfTypeAll(typeof(PlayMakerFSM)))
-            {
-                var t = (PlayMakerFSM)o;
-                if (t.hideFlags != HideFlags.None || t.FsmName != "Buy" || t.gameObject.name != "TriggerFlea" || Var(t, "CashRegister") != c.Fsm.gameObject) continue;
-                FsmInt id = t.FsmVariables.FindFsmInt("ID");
-                if (id == null || id.Value != i) continue;
-                FsmBool added = t.FsmVariables.FindFsmBool("Added");
-                if (added == null || !added.Value) return;
-                added.Value = false;
-                FsmFloat price = t.FsmVariables.FindFsmFloat("Price");
-                float p = price != null ? price.Value : 0f;
-                FsmFloat total = c.Fsm.FsmVariables.FindFsmFloat("Total"), final = c.Fsm.FsmVariables.FindFsmFloat("TotalFinal");
-                if (total != null) total.Value = total.Value - p < 0.005f ? 0f : total.Value - p;
-                if (final != null) final.Value = final.Value - p < 0.005f ? 0f : final.Value - p;
-                FsmString pn = t.FsmVariables.FindFsmString("ProductNameString");
-                Log.Info("magasin : " + (pn != null ? pn.Value : "objet " + i) + " retire de la selection locale (achete par un autre, " + p + " mk)");
-                return;
-            }
-        }
-
-        // ================================================================ prix et rayons des puces (tirage de l'hote)
-        // FleaMarketProducts :: Creator tire au hasard chez chacun, au chargement et a chaque NEWPRODUCTS (nouvelle
-        // semaine) : les prix ('Stop' : RandomInt -> liste des prix), les objets mis en rayon ('Is available?' :
-        // SendRandomEvent) et la place et l'orientation de leur presentoir ('State 3' : ArrayListGetRandom des
-        // emplacements, RandomBool). L'invite voyait d'autres objets a d'autres prix ; les achats rejoues par rang
-        // ('Bought') visaient alors un objet que l'autre ne voyait pas en rayon.
-        //  - l'hote fait reference : ses listes de valeurs (prix, achetes...) -- sauf 'Bought', la selection du joueur
-        //    local -- et ses presentoirs (liste 'Shelf' : allume, position, rotation) partent quand ils changent (releve
-        //    toutes les 3 s, Creator au repos), et a la demande d'un invite (20 s apres son chargement) ;
-        //  - l'invite les garde : recus pendant un tirage local, appliques a sa fin ; et chaque fois que son propre
-        //    Creator finit un tirage (retour a 'State 1'), le tirage de l'hote est remis (et redemande). Les TriggerFlea
-        //    allumes et libres relisent alors leur prix ('Init').
-        // Purchase : U8 joueur, U8 K_FleaLists, Str liste, U16 n, (U8 type, valeur) x n -- une liste par message ;
-        //            U8 joueur, U8 K_FleaShelf, U16 total, U16 debut, U8 n, (U8 allume|2 absent, [Vec pos, Quat rot]) x n ;
-        //            U8 joueur, U8 K_FleaAsk (invite -> hote).
-        const int K_FleaLists = 2, K_FleaShelf = 3, K_FleaAsk = 4;
-        class ShelfPose { public bool On; public Vector3 Pos; public Quaternion Rot; }
-        static GameObject fleaDb;
-        static PlayMakerFSM fleaCreator;
-        static float fleaNext, fleaAskAt = -1, fleaReplyAt = -1, fleaNextSig;
-        static string fleaSentSig;
-        static bool fleaRolling, fleaPending;
-        static int fleaApplied;
-        static readonly Dictionary<string, List<object>> fleaHostLists = new Dictionary<string, List<object>>();
-        static ShelfPose[] fleaHostShelf;
-
-        static float fleaRetry;
-
-        static bool FleaResolve()
-        {
-            if (fleaDb != null) return fleaCreator != null;
-            if (Time.realtimeSinceStartup < fleaRetry) return false;
-            fleaRetry = Time.realtimeSinceStartup + 10f;
-            fleaDb = Game.FindAny("FleaMarketProducts");
-            if (fleaDb == null) return false;
-            fleaCreator = Game.FsmOn(fleaDb, "Creator");
-            Log.Info("magasin : puces : listes " + FleaListNames() + (fleaCreator != null ? "" : ", Creator absent"));
-            return fleaCreator != null;
-        }
-
-        static string FleaListNames()
-        {
-            var sb = new System.Text.StringBuilder();
-            foreach (PlayMakerArrayListProxy p in fleaDb.GetComponents<PlayMakerArrayListProxy>())
-            {
-                ArrayList a = p._arrayList;
-                sb.Append(p.referenceName).Append('(').Append(a != null ? a.Count : -1).Append(a != null && a.Count > 0 && a[0] != null ? " " + a[0].GetType().Name : "").Append(") ");
-            }
-            return sb.ToString().TrimEnd();
-        }
-
-        static bool FleaAtRest() { string s = fleaCreator != null ? fleaCreator.ActiveStateName : null; return string.IsNullOrEmpty(s) || s == "State 1"; }
-
-        // Listes de valeurs du tirage : nombres, textes, drapeaux ; ni les objets (Items, Shelf) ni la selection locale.
-        static List<PlayMakerArrayListProxy> FleaValueLists()
-        {
-            var r = new List<PlayMakerArrayListProxy>();
-            foreach (PlayMakerArrayListProxy p in fleaDb.GetComponents<PlayMakerArrayListProxy>())
-            {
-                string n = p.referenceName ?? "";
-                ArrayList a = p._arrayList;
-                if (n.Length == 0 || n == "Bought" || n == "Items" || n == "Shelf" || a == null || a.Count == 0 || a.Count > 200) continue;
-                bool values = true;
-                foreach (object o in a) if (!(o is int || o is float || o is string || o is bool)) { values = false; break; }
-                bool dup = false;
-                foreach (PlayMakerArrayListProxy q in r) if (q.referenceName == n) dup = true;
-                if (values && !dup) r.Add(p);
-            }
-            return r;
-        }
-
-        static string FleaSig()
-        {
-            var sb = new System.Text.StringBuilder();
-            foreach (PlayMakerArrayListProxy p in FleaValueLists())
-            {
-                sb.Append(p.referenceName).Append(':');
-                foreach (object o in p._arrayList) sb.Append(o).Append(',');
-                sb.Append(';');
-            }
-            ArrayList shelf = ListOn(fleaDb, "Shelf");
-            if (shelf != null)
-                foreach (object o in shelf)
-                {
-                    var go = o as GameObject;
-                    if (go == null) { sb.Append("- "); continue; }
-                    Vector3 v = go.transform.position;
-                    sb.Append(go.activeSelf ? '1' : '0').Append(Mathf.RoundToInt(v.x * 20f)).Append(',').Append(Mathf.RoundToInt(v.y * 20f)).Append(',').Append(Mathf.RoundToInt(v.z * 20f)).Append(' ');
-                }
-            return sb.ToString();
-        }
-
-        // Empreinte courte du tirage (journal, comparaison entre les deux instances).
-        static string FleaHash()
-        {
-            uint h = 2166136261;
-            foreach (char c in FleaSig()) { h ^= c; h *= 16777619; }
-            return h.ToString("x8");
-        }
-
-        static void FleaPricesStep(float now)
-        {
-            if (!PlayerSync.InGame || !FleaResolve()) return;
-            if (Session.IsHost)
-            {
-                if (Session.RemoteCount == 0 || !FleaAtRest()) return;
-                bool asked = fleaReplyAt > 0 && now >= fleaReplyAt;
-                if (!asked && now < fleaNextSig) return;
-                fleaNextSig = now + 3f;
-                string sig = FleaSig();
-                if (!asked && sig == fleaSentSig) return;
-                fleaReplyAt = -1;
-                string why = asked ? "demande" : fleaSentSig == null ? "premier envoi" : "change";
-                fleaSentSig = sig;
-                FleaSend(why);
-                return;
-            }
-            bool rest = FleaAtRest();
-            if (fleaRolling && rest)
-            {
-                // Tirage local fini (chargement, nouvelle semaine) : celui de l'hote est remis, et redemande.
-                if (fleaHostLists.Count > 0 || fleaHostShelf != null) ApplyFlea("tirage local remplace par celui de l'hote");
-                FleaAsk("tirage local fini");
-            }
-            fleaRolling = !rest;
-            if (rest && fleaPending) ApplyFlea("recu pendant un tirage local");
-            if (fleaAskAt > 0 && now >= fleaAskAt) { fleaAskAt = -1; FleaAsk("arrivee"); }
-        }
-
-        static void FleaAsk(string why)
-        {
-            Session.SendAll(new NetWriter(Msg.Purchase).U8(Session.LocalId).U8(K_FleaAsk), true);
-            Log.Info("magasin : puces : tirage demande a l'hote (" + why + ")");
-        }
-
-        static void FleaSend(string why)
-        {
-            int nl = 0, ns = 0;
-            foreach (PlayMakerArrayListProxy p in FleaValueLists())
-            {
-                ArrayList a = p._arrayList;
-                var w = new NetWriter(Msg.Purchase).U8(Session.LocalId).U8(K_FleaLists).Str(p.referenceName).U16(a.Count);
-                foreach (object o in a)
-                {
-                    if (o is int) w.U8(0).I32((int)o);
-                    else if (o is float) w.U8(1).F32((float)o);
-                    else if (o is string) w.U8(2).Str((string)o);
-                    else w.U8(3).Bool((bool)o);
-                }
-                if (w.Length > 1100) { Log.Warn("magasin : puces : liste " + p.referenceName + " trop grosse (" + w.Length + " o)"); continue; }
-                Session.SendAll(w, true);
-                nl++;
-            }
-            ArrayList shelf = ListOn(fleaDb, "Shelf");
-            int total = shelf != null ? Mathf.Min(shelf.Count, 1000) : 0;
-            for (int start = 0; start < total; start += 24)
-            {
-                int n = Mathf.Min(24, total - start);
-                var w = new NetWriter(Msg.Purchase).U8(Session.LocalId).U8(K_FleaShelf).U16(total).U16(start).U8(n);
-                for (int i = start; i < start + n; i++)
-                {
-                    var go = shelf[i] as GameObject;
-                    if (go == null) { w.U8(2); continue; }
-                    w.U8(go.activeSelf ? 1 : 0).Vec(go.transform.position).Quat(go.transform.rotation);
-                    if (go.activeSelf) ns++;
-                }
-                Session.SendAll(w, true);
-            }
-            Log.Info("magasin : puces : tirage de l'hote envoye (" + why + ", " + nl + " listes, " + ns + "/" + total + " presentoirs allumes, empreinte " + FleaHash() + ")");
-        }
-
-        static void OnFleaPrices(int kind, NetReader r)
-        {
-            if (!FleaResolve()) return;
-            if (kind == K_FleaLists)
-            {
-                string name = r.Str();
-                int n = r.U16();
-                var items = new List<object>(n);
-                for (int i = 0; i < n; i++)
-                {
-                    int t = r.U8();
-                    if (t == 0) items.Add(r.I32());
-                    else if (t == 1) items.Add(r.F32());
-                    else if (t == 2) items.Add(r.Str());
-                    else items.Add(r.Bool());
-                }
-                fleaHostLists[name] = items;
-            }
-            else
-            {
-                int total = r.U16(), start = r.U16(), n = r.U8();
-                if (fleaHostShelf == null || fleaHostShelf.Length != total) fleaHostShelf = new ShelfPose[total];
-                for (int i = start; i < start + n; i++)
-                {
-                    int on = r.U8();
-                    if (on == 2) continue;
-                    var p = new ShelfPose { On = on == 1, Pos = r.Vec(), Rot = r.Quat() };
-                    if (i < total) fleaHostShelf[i] = p;
-                }
-            }
-            if (FleaAtRest()) ApplyFlea(null); else fleaPending = true;
-        }
-
-        // Tirage de l'hote recopie ici (listes, presentoirs) ; prix relus par les TriggerFlea si une liste a change.
-        static void ApplyFlea(string why)
-        {
-            fleaPending = false;
-            int lists = 0, poses = 0;
-            foreach (KeyValuePair<string, List<object>> kv in fleaHostLists)
-            {
-                ArrayList a = ListOn(fleaDb, kv.Key);
-                if (a == null || kv.Key == "Bought") continue;
-                bool same = a.Count == kv.Value.Count;
-                for (int i = 0; same && i < a.Count; i++) same = Equals(a[i], kv.Value[i]);
-                if (same) continue;
-                a.Clear();
-                foreach (object o in kv.Value) a.Add(o);
-                lists++;
-            }
-            ArrayList shelf = ListOn(fleaDb, "Shelf");
-            if (shelf != null && fleaHostShelf != null)
-                for (int i = 0; i < shelf.Count && i < fleaHostShelf.Length; i++)
-                {
-                    ShelfPose p = fleaHostShelf[i];
-                    var go = shelf[i] as GameObject;
-                    if (p == null || go == null) continue;
-                    bool moved = (go.transform.position - p.Pos).sqrMagnitude > 1e-4f || Quaternion.Angle(go.transform.rotation, p.Rot) > 0.5f;
-                    if (go.activeSelf == p.On && !moved) continue;
-                    go.transform.position = p.Pos; go.transform.rotation = p.Rot;
-                    if (go.activeSelf != p.On) go.SetActive(p.On);
-                    poses++;
-                }
-            int init = lists > 0 ? ReinitFleaTriggers() : 0;
-            if (lists + poses > 0 && (why != null || ++fleaApplied <= 20 || fleaApplied % 20 == 0))
-                Log.Info("magasin : puces : tirage de l'hote recopie" + (why != null ? " (" + why + ")" : "") + " : " + lists + " listes, " + poses + " presentoirs, "
-                         + init + " prix relus, empreinte " + FleaHash());
-        }
-
-        static int ReinitFleaTriggers()
-        {
-            int n = 0;
-            foreach (Object o in Resources.FindObjectsOfTypeAll(typeof(PlayMakerFSM)))
-            {
-                var t = (PlayMakerFSM)o;
-                if (t.hideFlags != HideFlags.None || t.FsmName != "Buy" || t.gameObject.name != "TriggerFlea" || !t.gameObject.activeInHierarchy) continue;
-                FsmBool added = t.FsmVariables.FindFsmBool("Added");
-                string s = t.ActiveStateName;
-                if ((added != null && added.Value) || (s != "Wait player" && s != "Wait button") || t.Fsm.GetState("Init") == null) continue;
-                applying = true; Replay.Depth++;
-                try { Game.SetState(t, "Init"); } finally { applying = false; Replay.Depth--; }
-                n++;
-            }
-            return n;
-        }
-
-        // Essais 'puces-prix' (n'importe ou : les listes existent meme loin du marche). Chacun note toutes les 4 s de 22 a
-        // 70 s l'empreinte du tirage, les 6 premiers elements de chaque liste et les presentoirs allumes. 35 s : l'hote
-        // tire une nouvelle semaine (NEWPRODUCTS) ; 52 s : l'invite aussi, chez lui seul. Attendu : meme empreinte des deux
-        // cotes a 30 s, puis quelques secondes apres 35 s (nouveau tirage de l'hote) et apres 52 s (« tirage local remplace
-        // par celui de l'hote »).
-        static void TestFleaPrices(float t)
-        {
-            if (!FleaResolve()) { if (testStep == 0 && t > 22f) { testStep = 9; Log.Info("autotest : puces-prix, FleaMarketProducts absent"); } return; }
-            if (Session.IsHost && testStep == 0 && t > 35f) { testStep = 1; fleaCreator.SendEvent("NEWPRODUCTS"); Log.Info("autotest : puces-prix, l'hote tire une nouvelle semaine -> " + fleaCreator.ActiveStateName); }
-            if (!Session.IsHost && testStep == 0 && t > 52f) { testStep = 1; fleaCreator.SendEvent("NEWPRODUCTS"); Log.Info("autotest : puces-prix, l'invite tire chez lui seul -> " + fleaCreator.ActiveStateName); }
-            if (t > 22f && t < 71f && t - testLog >= 4f)
-            {
-                testLog = t;
-                var sb = new System.Text.StringBuilder("autotest : puces-prix, empreinte " + FleaHash() + ", Creator " + fleaCreator.ActiveStateName);
-                foreach (PlayMakerArrayListProxy p in FleaValueLists())
-                {
-                    sb.Append(" ; ").Append(p.referenceName).Append(':');
-                    for (int i = 0; i < p._arrayList.Count && i < 6; i++) sb.Append(' ').Append(p._arrayList[i]);
-                }
-                ArrayList shelf = ListOn(fleaDb, "Shelf");
-                int on = 0;
-                if (shelf != null) foreach (object o in shelf) { var go = o as GameObject; if (go != null && go.activeSelf) on++; }
-                sb.Append(" ; presentoirs allumes ").Append(on).Append('/').Append(shelf != null ? shelf.Count : 0);
-                Log.Info(sb.ToString());
-            }
-        }
-
-        // ---------------------------------------------------------------- objets crees : ID d'achat
         static string Prefix(string name)
         {
             int cut = name.IndexOf('(');
@@ -2146,22 +1688,6 @@ namespace MWCoop
         //   ID que Props suit ; de 45 a 50 s l'hote promene le sac (Props.TestCarry). Attendu chez l'invite : « sac
         //   shoppingbagN cree ici sans la caisse (racine) », sac et caisse a la racine, figes, suivis par Props sous
         //   les memes ID que chez l'hote, puis « libere (deplace) » pour le sac quand l'hote le deplace.
-        // [Test] Autotest=puces : les deux joueurs devant le comptoir du marche aux puces (TestPos, jour d'ouverture :
-        //   TriggerFlea actifs). A 26 s l'invite choisit l'objet de rang [Test] TestObjet (0 : boitier PC) comme un clic
-        //   gauche (Added, Total, 'Bought') ; a 30 s l'hote choisit le meme et paie ('Check money', comme le clic sur
-        //   la caisse). Chacun note de 28 a 50 s le Total, le nombre d'objets choisis et ou est l'objet. Attendu chez
-        //   l'invite : « 1 objets des puces de X sortis ici a la main (comptoir allume, 1 retires de la selection
-        //   locale) », puis Total 0, choisis 0 ; l'objet a la racine pres du comptoir des deux cotes, pas fige.
-        // [Test] Autotest=resto : les deux joueurs devant le comptoir burger du restaurant PSK (TestPos pres de
-        //   WaitingPointBurger, restaurant charge chez chacun). A 35 s l'hote choisit la ligne [Test] TestObjet (1
-        //   hamburger par defaut -- plateau burger + frites + soda ; 2 jumbo, 3 bacon, 4 poulet, 5 vege) comme un clic
-        //   (OrderTriggers/<plat> 'Buy' -> 'Cashier'), a 37 s paie (caisse -> 'Check money', comme le clic USE).
-        //   Chacun note toutes les 2 s de 30 a 110 s la caisse, Keijo (etat, OrderStage, commande servie), les
-        //   plateaux (ID, position, etat de chaque bouton et maillage) et son argent. Des 55 s (des que le plateau est
-        //   la) l'hote mange [Test] TestManger (EatFries par defaut) : 'Play anim' comme le clic, 'State 3' force 2 s
-        //   apres si le clic n'a pas abouti. Attendu : « rejoue » puis Keijo au service chez l'invite, un plateau
-        //   de meme ID au meme endroit des deux cotes, argent de l'invite inchange ; puis EatFries en State 3 et Fries
-        //   eteint des deux cotes (« repas de X rejoue ici »).
         static int testStep;
         static string testBag;
         static float testLog, testEatAt;
@@ -2175,64 +1701,6 @@ namespace MWCoop
             else if (mode == "sac-double") TestBags(t);
             else if (mode == "panier") TestCart(t);
             else if (mode == "sac-loin") TestFar(t);
-            else if (mode == "puces") TestFlea(t);
-            else if (mode == "puces-prix") TestFleaPrices(t);
-        }
-
-        // Puces (essais) : comme un clic gauche sur l'objet de rang k (TriggerFlea 'Add' -> 'Cashier').
-        static string FleaSelect(Counter c, int k)
-        {
-            System.Collections.ArrayList mine = ListOn(Var(c.Fsm, "Inventory"), "Bought");
-            foreach (Object o in Resources.FindObjectsOfTypeAll(typeof(PlayMakerFSM)))
-            {
-                var t = (PlayMakerFSM)o;
-                if (t.hideFlags != HideFlags.None || t.FsmName != "Buy" || t.gameObject.name != "TriggerFlea" || Var(t, "CashRegister") != c.Fsm.gameObject) continue;
-                FsmInt id = t.FsmVariables.FindFsmInt("ID");
-                if (id == null || id.Value != k) continue;
-                FsmBool added = t.FsmVariables.FindFsmBool("Added");
-                if (added == null || added.Value) return "deja choisi";
-                added.Value = true;
-                float p = t.FsmVariables.FindFsmFloat("Price").Value;
-                c.Fsm.FsmVariables.FindFsmFloat("Total").Value += p;
-                c.Fsm.FsmVariables.FindFsmFloat("TotalFinal").Value += p;
-                if (mine != null && k < mine.Count) mine[k] = true;
-                return t.FsmVariables.FindFsmString("ProductNameString").Value + " " + p + " mk";
-            }
-            return "TriggerFlea " + k + " introuvable";
-        }
-
-        static string FleaState(Counter c, int k)
-        {
-            GameObject inv = Var(c.Fsm, "Inventory");
-            System.Collections.ArrayList mine = ListOn(inv, "Bought"), items = ListOn(inv, "Items");
-            int n = 0;
-            if (mine != null) foreach (object o in mine) if (o is bool && (bool)o) n++;
-            var go = items != null && k < items.Count ? items[k] as GameObject : null;
-            return "caisse [" + c.Fsm.ActiveStateName + "] Total=" + c.Fsm.FsmVariables.FindFsmFloat("Total").Value.ToString("0.##")
-                   + " TotalFinal=" + c.Fsm.FsmVariables.FindFsmFloat("TotalFinal").Value.ToString("0.##") + ", choisis " + n
-                   + ", objet " + k + " " + (go == null ? "?" : go.name + (go.activeInHierarchy ? " actif" : " eteint") + (go.transform.parent != null ? " sous " + go.transform.parent.name : " racine")
-                   + " en " + go.transform.position.ToString("F1")) + ", figes " + frozen.Count;
-        }
-
-        static void TestFlea(float t)
-        {
-            Counter c = null;
-            foreach (Counter x in counters.Values) if (x.Kind == "puces" && x.Fsm != null) c = x;
-            if (c == null || !c.Fsm.gameObject.activeInHierarchy)
-            {
-                if (testStep == 0 && t > 26f) { testStep = 9; Log.Info("autotest : puces, comptoir " + (c == null ? "introuvable" : "eteint ici (TestPos devant, jour d'ouverture)")); }
-                return;
-            }
-            int k = Config.GetInt("Test", "TestObjet", 0);
-            if (!Session.IsHost && testStep == 0 && t > 26f) { testStep = 1; Log.Info("autotest : puces, l'invite choisit " + FleaSelect(c, k) + " ; " + FleaState(c, k)); }
-            if (Session.IsHost && testStep == 0 && t > 30f)
-            {
-                testStep = 1;
-                string sel = FleaSelect(c, k);
-                Game.SetState(c.Fsm, "Check money");
-                Log.Info("autotest : puces, l'hote achete " + sel + " -> " + c.Fsm.ActiveStateName);
-            }
-            if (t > 28f && t < 51f && t - testLog >= 4f) { testLog = t; Log.Info("autotest : puces, " + FleaState(c, k)); }
         }
 
         static void TestCart(float t)

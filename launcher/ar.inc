@@ -933,7 +933,6 @@ static const wchar_t *const kAr[][2] = {
     { L"Updates, theme, language, port, game folder, a host's files at a friend's… and this guide.", L"التحديثات، المظهر، اللغة، المنفذ، مجلد اللعبة، ملفات المضيف لدى صديق… وهذا الدليل." },
     { L"Theme and language", L"المظهر واللغة" },
     { L"Dark or light, French or English, in one click.", L"داكن أو فاتح، فرنسي أو إنجليزي، بنقرة واحدة." },
-    { L"The MWCoop community: help, bug reports, news and players to team up with. GitHub and Ko-fi right next to it.", L"مجتمع MWCoop: المساعدة، الإبلاغ عن الأخطاء، الأخبار ولاعبون للتعاون معهم. GitHub و Ko-fi بجانبه مباشرة." },
     { L"MWCoop's MSCLoader", L"MSCLoader الخاص بـ MWCoop" },
     { L"In the Mods tab: OFFICIAL (the one installed in the game) or MWCOOP (installed apart, the game is not changed). If your mods don't load, try MWCOOP, or REINSTALL.", L"في تبويب التعديلات: الرسمي (المثبت في اللعبة) أو MWCOOP (مثبت بشكل منفصل، اللعبة لا تتغير). إذا لم تُحمَّل تعديلاتك، جرّب MWCOOP أو أعد التثبيت." },
     { L"In Settings > Game: Copy (default), Game folder or Steam. If MWCoop doesn't load, try one then the other; the launcher also switches to the game folder by itself.", L"في الإعدادات > اللعبة: نسخة (افتراضي)، مجلد اللعبة أو Steam. إذا لم يُحمَّل MWCoop، جرّب واحداً ثم الآخر؛ والمشغّل ينتقل أيضاً إلى مجلد اللعبة تلقائياً." },

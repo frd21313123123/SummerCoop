@@ -654,8 +654,6 @@ namespace MWCoop
                 case K_Status: if (!Session.IsHost) OnStatus(r); break;
                 case K_Brew: OnBrew(who, r); break;
                 case K_Lid: OnLid(who); break;
-                case K_FleaPlaced:
-                case K_FleaCredit: Wallet.OnFlea(who, kind, r); break;
             }
         }
 

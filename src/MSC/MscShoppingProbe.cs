@@ -117,7 +117,7 @@ namespace MWCoop
         }
         public static void Update()
         {
-            string channel = MscRuntime.Argument("--summercoop-test-shopping-channel"); if (channel.Length == 0) return;
+            string channel = MscRuntime.Argument("--summercoop-test-shopping-channel"); if (channel.Length == 0 || !Wallet.Ready) return;
             string start = Path.Combine(channel, "start.txt");
             if (clock == 0)
             {

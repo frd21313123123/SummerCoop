@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using HutongGames.PlayMaker;
 using MWCoop.Net;
 using UnityEngine;
@@ -160,7 +160,7 @@ namespace MWCoop
             // chez chaque joueur (WorldFsms.SkipObjects), chacun a et poste la sienne -- partagee, celle de l'un
             // n'etait plus postee chez l'autre (Calls.CheckEnvelope) et sa demande d'allocation de la semaine perdue.
             string tn = t.name;
-            if (k == null && tn == Calls.PartsEnvelope) k = "w:enveloppe:" + tn;
+            if (k == null) k = MscOrders.CatalogEnvelopeKey(rb.gameObject);
             // CD sorti de son boitier (ou d'un lecteur) : 'Remove part' le detache de PivotCD et lui rend un corps,
             // hors de toute racine du monde. Cle fixe par son nom de disque (Data.ThisCD : CD1, CD2...).
             if (k == null && tn == "cd(itemx)") k = CdKey(t.gameObject);

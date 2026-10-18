@@ -6,38 +6,15 @@ using UnityEngine;
 
 namespace MWCoop
 {
-    // Vetements portes : veste d'hiver, combinaison, casque. Le jeu n'en a qu'un exemplaire de chacun ; les mettre les
-    // range sous PLAYER (inactifs) chez celui qui les porte ; chez les autres ils restaient au crochet, prenables une 2e
-    // fois, et l'avatar ne montrait rien.
-    //  - une veste, une combinaison et un casque par joueur (demande de JD, 11/10 : « X paires selon X joueurs » ; Jomppi en
-    //    voulait 2 ; casque : ᏒullΞᏒ, 12/10, « deux de chaque objet ») : l'hote copie la veste, la combinaison et le casque
-    //    du jeu pour chaque joueur en plus (veste 2, combinaison 2, casque 2...), posees
-    //    dans la maison du debut de partie ; leur nombre ne baisse pas pendant la partie. Liste et poses envoyees aux
-    //    invites (@vet), gardees a cote de la sauvegarde de l'hote (MWCoop-vetements.txt). Chaque copie a ses propres
-    //    etiquettes de sauvegarde du jeu (JacketPosMWC2...) : elle n'ecrase pas celles de l'originale.
-    //  - qui porte quoi : message fiable (vetement, porte ou non, pose la ou il a ete enleve), redit toutes les 5 s tant
-    //    qu'il est porte (arrivee en cours de partie, message perdu) ; perime apres 15 s ou au depart du joueur. Les bits
-    //    de l'etat du joueur (PlayerSync.F_Jacket, F_Coverall, F_Helmet) ne disent plus que le genre porte, pour l'avatar.
-    //  - chez les autres, le vetement porte par un autre est cache (desactive : ni visible ni prenable) ; enleve, il
-    //    reapparait la ou il a ete enleve (a defaut la ou il etait, ex. joueur parti en le portant).
-    //  - porte par deux joueurs a la fois (sauvegarde de l'hote faite en le portant, chargee par un invite ; deux clics
-    //    croises) : le plus petit numero (l'hote d'abord) le garde, l'autre l'enleve (logique du jeu).
-    // Detection par sondage 4 fois/s (sans allocation) : l'objet porte est sous PLAYER et inactif ; tenu en main il est
-    // sous PLAYER mais actif (ItemPivot). "Sous PLAYER" = descendant (IsChildOf), pas racine : au volant ou passager,
-    // PLAYER lui-meme est range sous la voiture.
+    // Native MSC personal items only: helmet and coffee cup. Winter clothing
+    // and its PLAYER/Clothing controller are not part of this runtime.
     public static class Wear
     {
-        // (3 : tasse a cafe -- pas un vetement : jamais « portee », juste une par joueur ; ᏒullΞᏒ, 12/10)
-        const int NBase = 4;
-        static readonly string[] Paths = { "EQUIPMENTS/winter jacket(itemx)", "EQUIPMENTS/winter coverall(itemx)", "EQUIPMENTS/Helmet/helmet(itemx)", "EQUIPMENTS/coffee cup(itemx)" };
-        static readonly string[] Kinds = { "veste", "combinaison", "casque", "tasse" };
-        static readonly string[] CopyNames = { "winter jacket", "winter coverall", "helmet", "coffee cup" };
-        const int PerSet = 4;   // (par joueur en plus : veste, combinaison, casque, tasse)
-        static readonly string[] UtPos = { "JacketPos", "CoverallPos" }, UtState = { "JacketState", "CoverallState" };
-        static readonly int[] Bits = { PlayerSync.F_Jacket, PlayerSync.F_Coverall, PlayerSync.F_Helmet, 0 };
-        // Depuis PLAYER : au volant ou passager, PLAYER est range sous la voiture (DriveTrigger 'Reset view', Seats) et
-        // n'est plus une racine de la scene (Game.FindAny ne le trouverait pas).
-        const string ClothingPath = "Pivot/AnimPivot/Camera/FPSCamera/FPSCamera/Clothing";
+        const int NBase = 2, PerSet = 2;
+        static readonly string[] Paths = { "ITEMS/helmet(itemx)", "ITEMS/coffee cup(itemx)" };
+        static readonly string[] Kinds = { "helmet", "cup" };
+        static readonly string[] CopyNames = { "helmet", "coffee cup" };
+        static readonly int[] Bits = { PlayerSync.F_Helmet, 0 };
         const string HelmetPath = "Pivot/AnimPivot/Camera/FPSCamera/FPSCamera/Helmet";
 
         class Item
@@ -51,37 +28,34 @@ namespace MWCoop
             public float YieldAt = -100, HeldLog = -100, SentAt;
         }
 
-        // 0 veste, 1 combinaison, 2 casque, 3 tasse, puis par joueur k >= 2 : veste k, combinaison k, casque k, tasse k.
+        // Helmet and cup, followed by one helmet/cup pair per extra player.
         static readonly List<Item> items = new List<Item>();
         static int pairs = 1;
         static float loadedAt;   // (copies faites 12 s apres le chargement : casque et tasse trouves d'ici la)
-        static PlayMakerFSM clothLogic, helmetLogic;
+        static PlayMakerFSM helmetLogic;
         static Transform player;   // PLAYER (par reference : pas de nom lu 12 fois/s), garde une fois trouve
         static float nextPoll, findAt = -1, nextList, nextSave;
         static bool found, fileRead;
         static readonly List<Vector3[]> filePoses = new List<Vector3[]>();   // (hote) poses des copies lues du fichier
-        static int swapKind = -1; static float swapAt, swapUntil;            // vetement rendu : une copie libre a mettre a la place
 
         static Wear() { Reset(); }
 
         static void Reset()
         {
             items.Clear();
-            for (int i = 0; i < NBase; i++) items.Add(new Item { Kind = i, Name = Kinds[i], Key = "w:vetement:" + Kinds[i] });
+            for (int i = 0; i < NBase; i++) items.Add(new Item { Kind = i, Name = Kinds[i], Key = "msc:personal:" + Kinds[i] });
             pairs = 1;
         }
 
         public static void OnLevelLoaded()
         {
             Reset();
-            clothLogic = helmetLogic = null;
+            helmetLogic = null;
             helmetHooked.Clear(); cupSeen.Clear(); cupResend = 0f;
             player = null;
             found = fileRead = false;
             filePoses.Clear();
             nextList = nextSave = 0f;
-            swapKind = -1;
-            step = seatStep = 0; testLog = 0; testSeat = null;
             // Tout de suite (avant que le jeu ne range sous PLAYER un vetement porte a la sauvegarde), puis 5 s plus
             // tard pour ce qui manquerait.
             loadedAt = Time.realtimeSinceStartup;
@@ -91,26 +65,14 @@ namespace MWCoop
 
         static void Find()
         {
-            found = true;
-            for (int i = 0; i < NBase; i++)
-            {
-                if (items[i].Go != null) continue;
-                items[i].Go = Game.FindAny(Paths[i]);
-                if (items[i].Go == null) found = false;
+            if (player == null) player = Game.PlayerT;
+            if (helmetLogic == null && player != null) {
+                Transform h = player.Find(HelmetPath);
+                if (h != null) helmetLogic = Game.FsmOn(h.gameObject, "Logic");
             }
-            // PLAYER par son nom seul (GameObject.Find cherche alors partout, pas seulement les racines) : trouve
-            // aussi quand le joueur est assis dans une voiture ; une fois trouve, garde (jamais remis a null ici).
-            if (player == null) { GameObject p = GameObject.Find("PLAYER"); if (p != null) player = p.transform; }
-            if (player == null) { found = false; return; }
-            if (clothLogic == null) { Transform c = player.Find(ClothingPath); if (c != null) clothLogic = Game.FsmOn(c.gameObject, "Logic"); }
-            if (helmetLogic == null) { Transform h = player.Find(HelmetPath); if (h != null) helmetLogic = Game.FsmOn(h.gameObject, "Logic"); }
-            // Deja range sous PLAYER (porte au chargement) : l'automate du jeu sait lequel.
-            if (helmetLogic != null && items[2].Go == null) items[2].Go = GoVar(helmetLogic, "Helmet");
-            if (clothLogic != null)
-            {
-                GameObject cl = GoVar(clothLogic, "Cloth") ?? GoVar(clothLogic, "NewCloth");
-                if (cl != null) for (int i = 0; i < 2; i++) if (items[i].Go == null && cl.name == Paths[i].Substring(Paths[i].LastIndexOf('/') + 1)) items[i].Go = cl;
-            }
+            for (int i = 0; i < NBase; i++) if (items[i].Go == null) items[i].Go = Game.FindAny(Paths[i]);
+            if (items[0].Go == null && helmetLogic != null) items[0].Go = GoVar(helmetLogic, "Helmet");
+            found = player != null && items[0].Go != null && items[1].Go != null;
         }
 
         // Casque mis (son 'Use', etat "State 3", juste avant EQUIP) : la logique du joueur prend CE casque-la (copie ou
@@ -136,7 +98,7 @@ namespace MWCoop
         {
             foreach (Item it in items)
             {
-                if (it.Kind != 2 || it.Go == null || helmetHooked.Contains(it.Go)) continue;
+                if (it.Kind != 0 || it.Go == null || helmetHooked.Contains(it.Go)) continue;
                 PlayMakerFSM use = Game.FsmOn(it.Go, "Use");
                 if (use == null || use.Fsm == null) continue;
                 FsmState st = use.Fsm.GetState("State 3");
@@ -152,14 +114,14 @@ namespace MWCoop
             return v != null ? v.Value : null;
         }
 
-        // Cle fixe des vetements pour Props (ils changent de parent : EQUIPMENTS, PLAYER, racine de la scene).
+        // Stable personal item keys survive changes of parent between ITEMS, PLAYER and the scene root.
         public static string KeyOf(GameObject go)
         {
             foreach (Item it in items) if (it.Go != null && it.Go == go) return it.Key;
             return null;
         }
 
-        // Objet du vetement i (0 veste, 1 combinaison, 2 casque), pour l'avatar (copie du casque).
+        // Native item template for the avatar's helmet copy.
         public static GameObject ItemObject(int i) { return i >= 0 && i < items.Count ? items[i].Go : null; }
 
         // Bits des genres de vetements portes ici (etat du joueur, pour l'avatar).
@@ -178,68 +140,40 @@ namespace MWCoop
         // couchage) ; posees un peu en l'air, elles tombent au sol.
         static bool SpawnPoint(int kind, int k, out Vector3 at)
         {
+            GameObject home = Game.FindAny("YARD/Building/BEDROOM1/LOD_bedroom1/Sleep");
             at = Vector3.zero;
-            GameObject home = Game.FindAny("HOMENEW");
             if (home == null) return false;
-            at = home.transform.position + new Vector3(0.45f + kind * 0.3f, 0.2f, 1.7f + (k - 2) * 0.45f);   // (racine (-1285,6 ; 1,5 ; 1078,8))
+            at = home.transform.position + new Vector3(.6f + kind * .35f, .4f, .5f + (k - 2) * .45f);
             RaycastHit hit;
-            if (Physics.Raycast(at + Vector3.up * 0.5f, Vector3.down, out hit, 3f, ~(1 << 2))) at = hit.point + Vector3.up * 0.15f;
+            if (Physics.Raycast(at + Vector3.up, Vector3.down, out hit, 3f, ~(1 << 2))) at = hit.point + Vector3.up * .2f;
             return true;
         }
 
         static Item MakeCopy(int kind, int k, Vector3 pos, Quaternion rot)
         {
             GameObject src = items[kind].Go;
-            if (src == null && kind >= 2)
-            {
-                // (casque ou tasse absent de cette partie : place vide, la numerotation reste la meme chez tous)
-                var none = new Item { Go = null, Kind = kind, Name = Kinds[kind] + " " + k, Key = "w:vetement:" + Kinds[kind] + k };
-                items.Add(none);
-                return none;
-            }
             if (src == null) return null;
             var go = (GameObject)Object.Instantiate(src, pos, rot);
-            go.name = CopyNames[kind] + " " + k + "(itemx)";   // (« (itemx) » : la main du jeu le prend comme un objet)
-            go.transform.parent = null;
-            go.transform.position = pos; go.transform.rotation = rot;
-            go.transform.localScale = Vector3.one;   // (comme le chargement du jeu : SetScale 1)
-            go.layer = 19; go.tag = "PART";
+            go.name = CopyNames[kind] + " " + k + "(itemx)";
+            go.transform.parent = null; go.transform.position = pos; go.transform.rotation = rot;
+            go.transform.localScale = Vector3.one; go.layer = 19; go.tag = "PART";
+            PlayMakerFSM use = Game.FsmOn(go, "Use");
+            if (kind == 1 && use != null) {
+                foreach (string name in new[] { "UniqueTagCoffee", "UniqueTagCaffeine", "UniqueTagTransform" }) {
+                    FsmString tag = use.FsmVariables.FindFsmString(name);
+                    if (tag != null) tag.Value += "MSC" + k;
+                }
+                FsmFloat coffee = use.FsmVariables.FindFsmFloat("Coffee"); if (coffee != null) coffee.Value = .0001f;
+            }
+            if (kind == 0) { PlayMakerFSM paint = Game.FsmOn(go, "Paint"); if (paint != null) paint.enabled = false; }
             go.SetActive(true);
             Rigidbody rb = go.GetComponent<Rigidbody>();
-            if (rb != null) { rb.isKinematic = false; rb.velocity = Vector3.zero; rb.angularVelocity = Vector3.zero; }
-            PlayMakerFSM use = Game.FsmOn(go, "Use");
-            if (kind == 3 && use != null)
-            {
-                // Tasse : ses propres etiquettes de sauvegarde du jeu (CoffeeCupCoffee...), pas celles de la tasse d'origine.
-                foreach (string v in new[] { "UniqueTagCoffee", "UniqueTagCaffeine", "UniqueTagTransform" })
-                {
-                    FsmString t = use.FsmVariables.FindFsmString(v);
-                    if (t != null) t.Value = t.Value + "MWC" + k;
-                }
-                FsmFloat cf = use.FsmVariables.FindFsmFloat("Coffee"); if (cf != null) cf.Value = 0.0001f;
-            }
-            else if (kind == 2)
-            {
-                // Casque : sa peinture ecrirait la sauvegarde du casque du jeu (EQUIPMENTS/Helmet 'Save') -- coupee ; la
-                // logique du joueur (Helmet 'Logic', variable {Helmet}) est rebranchee sur la copie quand on la met (HookHelmet).
-                PlayMakerFSM paint = Game.FsmOn(go, "Paint");
-                if (paint != null) paint.enabled = false;
-            }
-            else if (use != null)
-            {
-                FsmGameObject o = use.FsmVariables.FindFsmGameObject("Owner"); if (o != null) o.Value = go;
-                FsmString up = use.FsmVariables.FindFsmString("UTPos"); if (up != null) up.Value = UtPos[kind] + "MWC" + k;
-                FsmString us = use.FsmVariables.FindFsmString("UTState"); if (us != null) us.Value = UtState[kind] + "MWC" + k;
-                FsmInt st = use.FsmVariables.FindFsmInt("State"); if (st != null) st.Value = 0;
-                FsmBool ld = use.FsmVariables.FindFsmBool("Loaded"); if (ld != null) ld.Value = true;
-            }
-            var it = new Item { Go = go, Kind = kind, Name = Kinds[kind] + " " + k, Key = "w:vetement:" + Kinds[kind] + k };
-            items.Add(it);
-            Props.SoonScan();
-            return it;
+            if (rb != null) { rb.isKinematic = false; rb.velocity = rb.angularVelocity = Vector3.zero; }
+            var item = new Item { Go = go, Kind = kind, Name = Kinds[kind] + " " + k, Key = "msc:personal:" + Kinds[kind] + k };
+            items.Add(item); Props.SoonScan(); return item;
         }
 
-        // Paires jusqu'a n (poses : veste, rotation, combinaison, rotation par paire k >= 2, sinon point de la maison).
+        // Additional pairs store helmet/cup positions and rotations.
         static bool EnsurePairs(int n, List<Vector3[]> poses, string why)
         {
             if (items[0].Go == null || items[1].Go == null) return false;
@@ -257,11 +191,11 @@ namespace MWCoop
                 }
                 pairs = k;
             }
-            if (pairs > was) Log.Info("vetements : " + pairs + " vestes, combinaisons, casques et tasses (" + why + ")");
+            if (pairs > was) Log.Info("vetements : " + pairs + " helmet/cup sets (" + why + ")");
             return true;
         }
 
-        static string FilePath { get { return Path.Combine(MscProfile.SaveDirectory, "MWCoop-vetements.txt"); } }
+        static string FilePath { get { return Path.Combine(MscProfile.SaveDirectory, "MSC-personal-items.txt"); } }
 
         static void LoadFile()
         {
@@ -275,7 +209,7 @@ namespace MWCoop
                 {
                     string[] c = l.Split(';');
                     if (c.Length < 12) continue;
-                    var v = new Vector3[System.Math.Min(c.Length / 3, PerSet * 2)];   // (avant 0.83.2 : veste et combinaison seules)
+                    var v = new Vector3[System.Math.Min(c.Length / 3, PerSet * 2)];
                     for (int j = 0; j < v.Length; j++) v[j] = new Vector3(float.Parse(c[j * 3], ci), float.Parse(c[j * 3 + 1], ci), float.Parse(c[j * 3 + 2], ci));
                     filePoses.Add(v);
                 }
@@ -311,6 +245,8 @@ namespace MWCoop
             try { File.WriteAllText(FilePath, sb.ToString()); } catch (System.Exception ex) { Log.Warn("vetements : ecriture " + ex.Message); }
         }
 
+        public static void OnGameSave() { SaveFile(); }
+
         static void SendList()
         {
             if (Session.RemoteCount == 0 || pairs < 2) return;
@@ -330,10 +266,11 @@ namespace MWCoop
         public static void OnList(NetReader r)
         {
             int n = r.U8();
+            if (n < 1 || n > 8) throw new System.IO.IOException("Invalid personal item count");
             var poses = new List<Vector3[]>();
             for (int k = 2; k <= n; k++) { var ps = new Vector3[PerSet * 2]; for (int j = 0; j < ps.Length; j++) ps[j] = r.Vec(); poses.Add(ps); }
             if (Session.IsHost || n <= pairs) return;
-            if (!EnsurePairs(n, poses, "liste de l'hote")) Log.Info("vetements : liste de l'hote (" + n + " paires) en attente, veste ou combinaison du jeu pas encore trouvee");
+            if (!EnsurePairs(n, poses, "liste de l'hote")) Log.Info("vetements : liste de l'hote (" + n + " sets) waiting for native helmet/cup");
         }
 
         // ---------------------------------------------------------------- boucle
@@ -349,7 +286,7 @@ namespace MWCoop
         static PlayMakerFSM CupFsm(int i, out FsmFloat coffee, out FsmFloat caf)
         {
             coffee = caf = null;
-            if (i < 0 || i >= items.Count || items[i].Kind != 3 || items[i].Go == null) return null;
+            if (i < 0 || i >= items.Count || items[i].Kind != 1 || items[i].Go == null) return null;
             PlayMakerFSM f = Game.FsmOn(items[i].Go, "Use");
             if (f == null) return null;
             coffee = f.FsmVariables.FindFsmFloat("Coffee");
@@ -372,29 +309,6 @@ namespace MWCoop
                 cupSeen[i] = c.Value;
                 Session.SendAll(new NetWriter(Msg.Job).U8(Session.LocalId).Str("@tasse").U8(i).F32(c.Value).F32(k != null ? k.Value : 0f), true);
                 if (changed && cupLogs++ < 10) Log.Info("tasse " + items[i].Name + " : cafe " + c.Value.ToString("F3") + " envoye");
-            }
-        }
-        // [Test] Autotest=tasse (2 joueurs) : a 45 s l'invite met 0,25 de cafe dans la tasse du jeu (rang 3) et repasse par Data ;
-        // a 52 s chacun note son cafe et la hauteur de sa surface.
-        static int cupStep;
-        public static void TestCup(string mode, float t)
-        {
-            if (mode != "tasse") return;
-            FsmFloat c, k;
-            PlayMakerFSM f = CupFsm(3, out c, out k);
-            if (f == null) return;
-            if (!Session.IsHost && cupStep == 0 && t > 45f)
-            {
-                cupStep = 1;
-                c.Value = 0.25f; if (k != null) k.Value = 0.8f;
-                Game.SetState(f, "Data");
-                Log.Info("autotest : tasse, cafe 0,25 verse ici");
-            }
-            if (cupStep < 2 && t > 52f)
-            {
-                cupStep = 2;
-                Transform surf = items[3].Go.transform.Find("mesh/Pivot/surface");
-                Log.Info("autotest : tasse, cafe " + c.Value.ToString("F3") + ", surface z " + (surf != null ? surf.localPosition.z.ToString("F4") : "?") + " [" + f.ActiveStateName + "]");
             }
         }
         public static void OnCup(int who, NetReader r)
@@ -432,7 +346,6 @@ namespace MWCoop
                 if (now >= nextList) { nextList = now + 10f; SendList(); }
                 if (now >= nextSave) { nextSave = now + 60f; SaveFile(); }
             }
-            if (swapKind >= 0 && now >= swapAt) Swap(now);
             for (int i = 0; i < items.Count; i++)
             {
                 Item it = items[i];
@@ -440,7 +353,7 @@ namespace MWCoop
                 if (go == null) continue;
                 Transform t = go.transform;
                 // Sous PLAYER (pas sa racine : au volant ou passager, la racine est la voiture).
-                bool worn = !go.activeSelf && player != null && t.IsChildOf(player);
+                bool worn = it.Kind == 0 && !go.activeSelf && player != null && t.IsChildOf(player);
                 if (worn != it.LocalWorn)
                 {
                     it.LocalWorn = worn;
@@ -516,38 +429,13 @@ namespace MWCoop
         // pas en pleine animation), comme le joueur en regardant en bas ; il sera ensuite cache ici.
         static void Yield(Item it, int wearer, float now)
         {
-            if (now - it.YieldAt < 5f) return;
-            PlayMakerFSM logic = it.Kind == 2 ? helmetLogic : clothLogic;
-            if (logic == null) return;
-            string s = logic.ActiveStateName;
-            if (s != "State 1" && s != "Helmet ON") return;
-            if (GoVar(logic, it.Kind == 2 ? "Helmet" : "Cloth") != it.Go) return;
-            it.YieldAt = now;
-            Log.Info("vetements : " + it.Name + " deja porte(e) par #" + wearer + " (numero plus petit) : enleve(e) ici");
-            Game.SetState(logic, "Anim off1");
-            // Veste ou combinaison : une copie libre est mise a la place une fois celle-ci enlevee (animation : ~1,5 s). Avant :
-            // l'invite qui chargeait la partie en la portant (sauvegarde de l'hote) la voyait s'enlever toute seule (retours de
-            // Hall0wMan et d'OpNoob, 11/10).
-            if (it.Kind < 2) { swapKind = it.Kind; swapAt = now + 2f; swapUntil = now + 30f; }
+            if (it.Kind != 0 || now - it.YieldAt < 5f || helmetLogic == null) return;
+            string state = helmetLogic.ActiveStateName;
+            if (state != "State 1" && state != "Helmet ON" || GoVar(helmetLogic, "Helmet") != it.Go) return;
+            it.YieldAt = now; Game.SetState(helmetLogic, "Anim off1");
         }
 
-        static void Swap(float now)
-        {
-            if (now > swapUntil) { Log.Info("vetements : pas de " + Kinds[swapKind] + " libre a mettre a la place"); swapKind = -1; return; }
-            swapAt = now + 1f;
-            if (clothLogic == null || clothLogic.ActiveStateName != "Wait") return;   // (animation pas finie)
-            foreach (Item c in items)
-            {
-                if (c.Kind != swapKind || c.Go == null || c.LocalWorn || c.Hidden || !c.Go.activeInHierarchy || RemoteWearer(c, now) >= 0) continue;
-                if (player != null && c.Go.transform.IsChildOf(player)) continue;
-                PlayMakerFSM use = Game.FsmOn(c.Go, "Use");
-                if (use == null) continue;
-                Game.SetState(use, "State 1");   // (mains libres ? -> Wear -> EQUIP a la logique du joueur)
-                Log.Info("vetements : " + c.Name + " mis(e) a la place");
-                swapKind = -1;
-                return;
-            }
-        }
+
 
         public static void OnMessage(Peer from, NetReader r)
         {
@@ -571,90 +459,5 @@ namespace MWCoop
             if (worn != was) Log.Info("vetements de #" + who + " : " + it.Name + (worn ? " mis(e)" : " enleve(e) en " + pos.ToString("F1")));
         }
 
-        // Essais : etat d'un vetement ici (objet, porte, cache) et ce que montrent les avatars.
-        public static string State(int i)
-        {
-            if (i < 0 || i >= items.Count) return "vetement " + i + " absent (" + items.Count + " ici)";
-            Item it = items[i];
-            var sb = new System.Text.StringBuilder(it.Name);
-            if (it.Go == null) sb.Append(" absent(e)");
-            else sb.Append(it.Go.activeSelf ? " visible en " + it.Go.transform.position.ToString("F2") : " inactif(ve)").Append(", sous ").Append(it.Go.transform.root.name);
-            sb.Append(", porte(e) ici ").Append(it.LocalWorn).Append(", cache(e) ").Append(it.Hidden)
-              .Append(", par #").Append(Session.Active ? RemoteWearer(it, Time.realtimeSinceStartup) : -1);
-            foreach (Avatar a in PlayerSync.Avatars) sb.Append(" ; avatar ").Append(a.ClothesState());
-            return sb.ToString();
-        }
-
-        // veste ([Test] Autotest=veste) : [Test] TestPorteur (invite par defaut, ou hote) met [Test] TestVetement
-        // (0 veste, 1 combinaison, 2 casque, 3 veste 2, 4 combinaison 2...) a 40 s par l'automate Use de l'objet (comme un
-        // clic), l'enleve a 60 s (logique du jeu, comme en regardant en bas). Les deux notent toutes les 2 s de 30 a 75 s :
-        // chez l'autre, l'objet est cache de ~40 a ~60 s puis reapparait la ou il a ete enleve ; l'avatar montre la teinte
-        // (veste, combinaison) ou le casque pendant ce temps.
-        // [Test] TestVetementAutre=j : l'autre joueur met le vetement j aux memes moments (TestVetementAutreA=s : le met a s) (deux vestes portees a la fois :
-        // TestVetement=0, TestVetementAutre=3) ; chacun note aussi j.
-        // [Test] TestVetementAssis=1 : de 45 a 55 s, PLAYER du porteur est range sous un objet vide (comme au volant ou
-        // passager : DriveTrigger 'Reset view', Seats) ; le vetement doit rester porte (pas de "enleve(e)" ici, toujours
-        // cache chez l'autre), State montre "sous MWCoop-EssaiSiege".
-        static int step, seatStep;
-        static float testLog;
-        static GameObject testSeat;
-
-        public static void Test(string mode, float t)
-        {
-            if (mode != "veste") return;
-            bool wearer = Session.IsHost == (Config.Get("Test", "TestPorteur", "invite") == "hote");
-            int i = Config.GetInt("Test", "TestVetement", 0);
-            int other = Config.GetInt("Test", "TestVetementAutre", -1);
-            int mine = wearer ? i : other;
-            float at = wearer ? 40f : Config.GetInt("Test", "TestVetementAutreA", 40);   // (TestVetementAutreA : moment de l'autre, s)
-            if (mine >= 0 && t > at && step == 0) { step = 1; Log.Info("autotest : " + TestWear(mine, true)); }
-            if (wearer && Config.GetInt("Test", "TestVetementAssis", 0) != 0)
-            {
-                if (t > 45f && seatStep == 0 && player != null)
-                {
-                    seatStep = 1;
-                    testSeat = new GameObject("MWCoop-EssaiSiege");
-                    testSeat.transform.position = player.position;
-                    player.parent = testSeat.transform;
-                    Log.Info("autotest : vetements, PLAYER range sous " + testSeat.name + " (comme assis dans une voiture)");
-                }
-                if (t > 55f && seatStep == 1)
-                {
-                    seatStep = 2;
-                    if (player != null && testSeat != null && player.parent == testSeat.transform) player.parent = null;
-                    if (testSeat != null) Object.Destroy(testSeat);
-                    testSeat = null;
-                    Log.Info("autotest : vetements, PLAYER rendu a la racine");
-                }
-            }
-            if (mine >= 0 && t > 60f && step == 1) { step = 2; Log.Info("autotest : " + TestWear(mine, false)); }
-            if (t > 30f && t < 75f && t - testLog >= 2f)
-            {
-                testLog = t;
-                Log.Info("autotest : vetements, " + State(i) + (other >= 0 ? " | " + State(other) : "") + " | " + pairs + " paires");
-            }
-        }
-
-        static string TestWear(int i, bool on)
-        {
-            if (i < 0 || i >= items.Count) return "vetement " + i + " absent (" + items.Count + " ici)";
-            Item it = items[i];
-            if (it.Go == null) return it.Name + " absent(e)";
-            if (on)
-            {
-                PlayMakerFSM use = Game.FsmOn(it.Go, "Use");
-                // [Test] TestForcer=1 : meme cache ici (porte par un autre), comme le chargement d'une sauvegarde ou il est porte.
-                if (use != null && it.Hidden && Config.GetInt("Test", "TestForcer", 0) != 0) { it.Go.SetActive(true); it.Hidden = false; }
-                if (use == null || !it.Go.activeInHierarchy) return it.Name + " : automate Use absent ou objet inactif";
-                // 'State 1' : mains libres ? -> Wear (veste, combinaison) / State 3 (casque) -> EQUIP a la logique du joueur.
-                Game.SetState(use, "State 1");
-                return it.Name + " mis(e) par Use -> " + use.ActiveStateName;
-            }
-            PlayMakerFSM logic = it.Kind == 2 ? helmetLogic : clothLogic;
-            if (logic == null) return it.Name + " : logique du joueur absente";
-            string before = logic.ActiveStateName;
-            Game.SetState(logic, "Anim off1");
-            return it.Name + " enleve(e) : " + before + " -> " + logic.ActiveStateName;
-        }
     }
 }

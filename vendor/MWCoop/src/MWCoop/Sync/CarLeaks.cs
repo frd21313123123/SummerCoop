@@ -5,12 +5,12 @@ using UnityEngine;
 namespace MWCoop
 {
     // Fuites et vapeur des voitures (retour de kakabaka123, 10/10 : « synchroniser l'ebullition du radiateur, et tout liquide
-    // qui s'ecoule de la Rivett »). Le jeu les montre par des objets que la simulation de la voiture allume et place :
+    // qui s'ecoule de la Satsuma »). Le jeu les montre par des objets que la simulation de la voiture allume et place :
     //  - Systems/Leaks/* (LeakOil, LeakOilDrain, LeakCoolant, LeakFuel, LeakBrake...) : flaque (« mesh », qui grandit) et
     //    particules, posees sous la fuite (vidange, durite, joint) ;
     //  - <voiture>/.../SteamFountain* : la vapeur du radiateur qui bout.
     // Chez les autres, la simulation de la copie ne les allumait pas (ou autrement). L'autorite de la voiture (conducteur,
-    // moteur laisse tournant, sinon l'hote ; la CORRIS pour Systems/Leaks) envoie leur etat a chaque changement et toutes
+    // moteur laisse tournant, sinon l'hote ; la SATSUMA pour Systems/Leaks) envoie leur etat a chaque changement et toutes
     // les 5 s (@fuite : allume, pose, taille de la flaque) ; ailleurs il est tenu tel quel.
     public static class CarLeaks
     {
@@ -29,7 +29,8 @@ namespace MWCoop
         static void Add(Transform t, Rigidbody car)
         {
             string k = Recon.Path(t);
-            if (byKey.ContainsKey(k)) return;
+            Item existing;
+            if (byKey.TryGetValue(k, out existing)) { existing.Car = car; return; }
             var it = new Item { Key = k, T = t, Car = car, Mesh = t.Find("mesh") };
             items.Add(it); byKey[k] = it;
         }
@@ -37,10 +38,10 @@ namespace MWCoop
         static void Scan()
         {
             GameObject leaks = Game.FindAny("Systems/Leaks");
-            Rigidbody corris = VehicleSync.Body("CORRIS");
-            if (leaks != null) foreach (Transform c in leaks.transform) Add(c, corris);
+            Rigidbody satsuma = VehicleSync.Body("SATSUMA");
+            if (leaks != null) foreach (Transform c in leaks.transform) Add(c, satsuma);
             // Vapeur : tout SteamFountain* sous une voiture suivie.
-            foreach (string car in new[] { "CORRIS", "SORBET", "BACHGLOTZ", "KEKMET", "GIFU", "MACHTWAGEN" })
+            foreach (string car in new[] { "SATSUMA", "RCO_RUSCKO", "HAYOSIKO", "FERNDALE", "KEKMET", "GIFU", "BOAT", "JONNEZ" })
             {
                 Rigidbody rb = VehicleSync.Body(car);
                 if (rb == null) continue;
@@ -56,7 +57,8 @@ namespace MWCoop
         {
             if (!Session.Active || !PlayerSync.InGame) return;
             float now = Time.realtimeSinceStartup;
-            if (items.Count == 0) { if (now >= nextScan) { nextScan = now + 15f; Scan(); } return; }
+            if (now >= nextScan) { nextScan = now + 15f; Scan(); }
+            if (items.Count == 0) return;
             if (now >= nextSend && Session.RemoteCount > 0)
             {
                 nextSend = now + 0.25f;

@@ -12,7 +12,7 @@ namespace MWCoop
     //  - plie : objet du jeu (couche 19, etiquette PART) -- pris en main, lance, pose dans les voitures ; sa pose suit Props
     //    (cle « sac:<id> ») ;
     //  - pose au sol, F (touche Utiliser) : il se deplie dans l'axe du regard, immobile ; on y dort en tenant F comme dans un
-    //    lit -- c'est le declencheur de sommeil du canape du jeu (EQUIPMENTS/sofa(itemx)/Sleep, point de sommeil mobile),
+    //    lit -- c'est le declencheur de sommeil du canape du jeu (ITEMS/sofa(itemx)/Sleep, point de sommeil mobile),
     //    copie sur le sac : fatigue, temps qui passe, reveil, tout est celui du jeu ;
     //  - deplie, F appuye brievement : il se replie (pas pendant qu'on dort).
     // L'hote garde la liste (MWCoop-sacs.txt a cote de la sauvegarde, ecrit a chaque sauvegarde du jeu) et l'envoie aux
@@ -32,7 +32,7 @@ namespace MWCoop
         static Material mat;
         static GameObject sleepTpl;
         static bool prepared, listed;
-        static float startAt = -1, nextHost, fDownAt = -1;
+        static float startAt = -1, nextHost, fDownAt = -1, nextPrepare;
         static Bag looked, fBag;
         static FsmBool guiUse; static FsmString guiText;
         const float FoldScale = 0.32f;    // (modele plie fourni a 1 m de diametre : ramene a 32 cm x 49 cm)
@@ -40,6 +40,7 @@ namespace MWCoop
         public static void OnLevelLoaded()
         {
             bags.Clear(); sleepTpl = null; prepared = false; shot = 0; testStep = 0; pickStep = 0; hand = null; listed = false; looked = null; fBag = null; fDownAt = -1;
+            nextPrepare = 0;
             startAt = PlayerSync.InGame ? Time.realtimeSinceStartup + 15f : -1;
         }
 
@@ -87,14 +88,15 @@ namespace MWCoop
         static bool Prepare()
         {
             if (prepared) return sleepTpl != null;
-            prepared = true;
+            if (Time.realtimeSinceStartup < nextPrepare) return false;
+            nextPrepare = Time.realtimeSinceStartup + 2f;
             try
             {
-                mFold = LoadMesh("MWCoop.sac-plie.mwm", FoldScale);
-                mUnfold = LoadMesh("MWCoop.sac-deplie.mwm", 1f, Config.GetInt("Test", "SacRetourne", 1) != 0);   // (modele fourni a l'envers : oreiller dessous)
-                GameObject sofa = Game.FindAny("EQUIPMENTS/sofa(itemx)");
+                if (mFold == null) mFold = LoadMesh("MWCoop.sac-plie.mwm", FoldScale);
+                if (mUnfold == null) mUnfold = LoadMesh("MWCoop.sac-deplie.mwm", 1f, Config.GetInt("Test", "SacRetourne", 1) != 0);
+                GameObject sofa = Game.FindAny("ITEMS/sofa(itemx)");
                 Transform sl = sofa != null ? sofa.transform.Find("Sleep") : null;
-                if (sl == null) { GameObject bed = Game.FindAny("YARD/Building/BEDROOM1/LOD_bedroom1/Sleep 1"); sl = bed != null ? bed.transform : null; }
+                if (sl == null) { GameObject bed = Game.FindAny("YARD/Building/BEDROOM1/LOD_bedroom1/Sleep"); sl = bed != null ? bed.transform : null; }
                 if (sl == null) { Log.Warn("sacs de couchage : declencheur de sommeil du jeu introuvable"); return false; }
                 sleepTpl = sl.gameObject;
                 Renderer src = sofa != null ? sofa.GetComponent<Renderer>() : null;
@@ -108,6 +110,7 @@ namespace MWCoop
                 mat.mainTexture = tex;
                 mat.color = ParseColor(Config.Get("Test", "SacCouleur", "0.22,0.42,0.26"));
                 Log.Info("sacs de couchage : modeles charges (" + mFold.vertexCount + " / " + mUnfold.vertexCount + " sommets), sommeil d'apres " + Recon.Path(sl));
+                prepared = true;
                 return true;
             }
             catch (Exception e) { Log.Error("sacs de couchage : " + e); sleepTpl = null; return false; }
@@ -154,7 +157,7 @@ namespace MWCoop
             b.Sleep.SetParent(go.transform, false);
             b.Fsm = null;
             foreach (PlayMakerFSM f in sl.GetComponentsInChildren<PlayMakerFSM>(true)) if (f.FsmName == "Activate") b.Fsm = f;
-            Transform pivot = b.Sleep.Find("AnimPivotSleep"), trig = b.Fsm != null ? b.Fsm.transform : null;
+            Transform pivot = b.Sleep.Find("AnimPivot"), trig = b.Fsm != null ? b.Fsm.transform : null;
             foreach (Renderer r in sl.GetComponentsInChildren<Renderer>(true)) r.enabled = false;   // (reperes du corps : invisibles)
             if (pivot != null)
             {
@@ -221,12 +224,12 @@ namespace MWCoop
             {
                 if (!listed)
                 {
-                    listed = true;
                     if (!Prepare()) return;
+                    listed = true;
                     Load();
                 }
                 if (sleepTpl == null) return;
-                if (Session.Active && Kauppa.StarterBags) EnsureCount();
+                if (Session.Active) EnsureCount();
                 if (Session.Active && now >= nextHost) { nextHost = now + 10f; SendList(); }
             }
             if (bags.Count == 0) return;
@@ -438,14 +441,14 @@ namespace MWCoop
             try { File.WriteAllText(FilePath, sb.ToString()); } catch (Exception e) { Log.Warn("sacs de couchage : ecriture " + e.Message); }
         }
 
-        // Un sac par joueur au moins : ceux qui manquent poses par terre dans la maison du debut de partie (HOMENEW, couloir
+        // Un sac par joueur au moins : ceux qui manquent poses par terre dans la maison du debut de partie (chambre, couloir
         // devant l'armoire -- capture de JD, 10/10) ; sans elle, devant l'hote.
         static bool SpawnPoint(int k, out Vector3 at)
         {
             at = Vector3.zero;
-            GameObject home = Game.FindAny("HOMENEW");
+            GameObject home = Game.FindAny("YARD/Building/BEDROOM1/LOD_bedroom1/Sleep");
             if (home == null) return false;
-            at = home.transform.position + new Vector3(0.9f, 0.6f, 1.7f + k * 0.45f);   // (racine (-1285,6 ; 1,5 ; 1078,8), armoire (-1286,5 ; 1080,7))
+            at = home.transform.position + new Vector3(0.9f, 0.6f, k * 0.45f);
             Vector3 g = Ground(at);
             if (g.y < at.y && at.y - g.y < 2.5f) at = g + Vector3.up * 0.25f;
             return true;
@@ -460,7 +463,7 @@ namespace MWCoop
             int want = Mathf.Max(1, Session.RemoteCount + 1);
             if (bags.Count >= want) return;
             Transform pl = Game.PlayerT;
-            if (pl == null && Game.FindAny("HOMENEW") == null) return;
+            if (pl == null && Game.FindAny("YARD/Building/BEDROOM1/LOD_bedroom1/Sleep") == null) return;
             while (bags.Count < want)
             {
                 int k = bags.Count;
@@ -576,7 +579,7 @@ namespace MWCoop
                 if (Config.GetInt("Test", "SacCanape", 0) != 0 && t > 24f && !sofaPut)
                 {
                     sofaPut = true;
-                    GameObject sofa = Game.FindAny("EQUIPMENTS/sofa(itemx)");
+                    GameObject sofa = Game.FindAny("ITEMS/sofa(itemx)");
                     if (sofa != null) { b.Go.transform.position = sofa.transform.position + Vector3.up * 0.9f; if (b.Rb != null) b.Rb.velocity = Vector3.zero; }
                     Log.Info("autotest : sac sur le canape " + (sofa != null ? sofa.transform.position.ToString("F2") : "introuvable"));
                 }
@@ -597,7 +600,7 @@ namespace MWCoop
                         Transform pl = Game.PlayerT;
                         Log.Info("autotest : sac, lit " + b.Fsm.ActiveStateName + ", dort " + Game.GlobalBool("PlayerSleeps") + ", joueur " + (pl != null ? b.Go.transform.InverseTransformPoint(pl.position).ToString("F2") + " parent " + (pl.parent != null ? pl.parent.name : "-") : "?")
                                  + ", camera " + (Camera.main != null ? b.Go.transform.InverseTransformPoint(Camera.main.transform.position).ToString("F2") : "?")
-                                 + ", pivot " + b.Go.transform.InverseTransformPoint(b.Sleep.Find("AnimPivotSleep").position).ToString("F2") + " rot " + (Quaternion.Inverse(b.Go.transform.rotation) * b.Sleep.Find("AnimPivotSleep").rotation).eulerAngles.ToString("F0"));
+                                 + ", pivot " + b.Go.transform.InverseTransformPoint(b.Sleep.Find("AnimPivot").position).ToString("F2") + " rot " + (Quaternion.Inverse(b.Go.transform.rotation) * b.Sleep.Find("AnimPivot").rotation).eulerAngles.ToString("F0"));
                     }
                 }
                 else if (t > 45f && testStep == 2) { testStep = 3; SetState(b, true, b.Go.transform.position + Vector3.up * 0.25f, b.Go.transform.rotation, true); }

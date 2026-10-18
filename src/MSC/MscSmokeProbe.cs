@@ -31,6 +31,10 @@ namespace MWCoop
             if (readyAt >= 0)
             {
                 frames.Add(Time.unscaledDeltaTime * 1000);
+                try { MscBindingsProbe.Update(); }
+                catch (Exception e) { if (actionError.Length == 0) { actionError = e.ToString(); Log.Error("MSC bindings probe: " + e); } }
+                try { MscWalletProbe.Tick(); }
+                catch (Exception e) { if (actionError.Length == 0) { actionError = e.ToString(); Log.Error("MSC wallet probe: " + e); } }
                 if (Time.realtimeSinceStartup - readyAt > 6) MscToolCaseProbe.Update();
                 MscBoltPositionProbe.Update();
                 try { MscShoppingProbe.Update(); }
