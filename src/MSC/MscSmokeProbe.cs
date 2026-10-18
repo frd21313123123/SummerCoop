@@ -20,6 +20,8 @@ namespace MWCoop
         void Start() { began = Time.realtimeSinceStartup; Application.targetFrameRate = 60; int value; if (int.TryParse(MscRuntime.Argument("--summercoop-test-players"), out value)) expected = Math.Max(2, Math.Min(8, value)); }
         void Update()
         {
+            try { MscCheatProbe.Tick(); }
+            catch (Exception e) { if (actionError.Length == 0) { actionError = e.ToString(); Log.Error("MSC cheat probe: " + e); } }
             bool ready = PlayerSync.InGame && Session.Players.Count >= expected;
             foreach (PlayerInfo player in Session.Players.Values) if (player.Level != 1) ready = false;
             if (ready && readyAt < 0)

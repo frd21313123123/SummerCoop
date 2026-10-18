@@ -383,8 +383,7 @@ namespace MWCoop
                 Log.Info("monde : nuages " + (snowing ? "affiches" : "caches") + " (hote)");
             }
             if (playerRain == null) { GameObject pr = Game.PlayerPart("Rain"); if (pr != null) playerRain = Game.FsmOn(pr, "Rain"); }
-            FsmBool rainYes = playerRain != null ? playerRain.FsmVariables.FindFsmBool("RainYes") : null;
-            if (rainYes != null) rainYes.Value = snowing;
+            MscWeather.ApplyPlayerRain(playerRain, snowing);
         }
 
         public static float LocalScale { get { return GlobalFloat("GlobalTimeScale"); } }

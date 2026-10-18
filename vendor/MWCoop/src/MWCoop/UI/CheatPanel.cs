@@ -12,6 +12,7 @@ namespace MWCoop
         public static bool Open;
         static float openedAt;
         static string note; static float noteUntil; static bool noteBad;
+        internal static Rect MoneyButtonRect;
 
         public static void Update()
         {
@@ -100,13 +101,14 @@ namespace MWCoop
             Header(ix, ref cy, iw, Lang.T("MOI", "ME"));
             float mw = Mathf.Floor((iw - 3 * gap) / 4);
             if (Button(new Rect(ix, cy, mw, bh), Lang.T("SOIGNER", "HEAL"), false, e, ok)) Do("/soin", Lang.T("En pleine forme", "Feeling great"));
-            if (Button(new Rect(ix + (mw + gap), cy, mw, bh), "+1 000 mk", false, e, ok)) Do("/argent 1000", "+1 000 mk");
+            MoneyButtonRect = new Rect(ix + (mw + gap), cy, mw, bh);
+            if (Button(MoneyButtonRect, "+1 000 mk", false, e, ok)) Do("/argent 1000", "+1 000 mk");
             if (Button(new Rect(ix + 2 * (mw + gap), cy, mw, bh), "+10 000 mk", false, e, ok)) Do("/argent 10000", "+10 000 mk");
             if (Button(new Rect(ix + 3 * (mw + gap), cy, mw, bh), Lang.T("LIBÉRER", "FREE"), false, e, ok)) Do("/liberer", Lang.T("Plus recherché", "No longer wanted"));
             cy += bh + gap + Style.Px(6);
             // monde
             Header(ix, ref cy, iw, Lang.T("MONDE (POUR TOUS)", "WORLD (FOR EVERYONE)"));
-            int[] hours = { 6, 9, 12, 15, 18, 22 };
+            int[] hours = { 6, 8, 12, 16, 18, 22 };
             float hw = Mathf.Floor((iw - Style.Px(90) - (hours.Length - 1) * gap) / hours.Length);
             Style.Text(new Rect(ix, cy, Style.Px(90), bh), Lang.T("Heure", "Time"), 15, TextAnchor.MiddleLeft, Style.White, false);
             for (int i = 0; i < hours.Length; i++)

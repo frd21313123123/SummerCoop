@@ -15,10 +15,9 @@ namespace MWCoop
     public static class Cheats
     {
         public class Place { public string Key, Fr, En; public Vector3 At, Face; }   // (Face : vers ou regarder en arrivant)
-        // (appartement, maison des parents : les points de reapparition, Respawn ; les autres : au sol, reperes par
+        // (maison des parents : point de reapparition, Respawn ; les autres : au sol, reperes par
         // CheatsProbe -- Autotest=trichelieux)
         public static readonly Place[] Places = {
-            new Place { Key = "appartement", Fr = "Appartement", En = "Apartment", At = new Vector3(-1285.5f, 1.2f, 1076.4f) },
             new Place { Key = "maison", Fr = "Maison des parents", En = "Parents' house", At = new Vector3(-6.2f, 1.0f, 6.6f) },
             // (1,5 m au-dessus d'un sol degage -- herbe, trottoir, route -- pres du lieu, pas sur un toit ; releve du 10/10)
             new Place { Key = "pub", Fr = "Pub Nappo", En = "Pub Nappo", At = new Vector3(-1539.1f, 4.4f, 1190.6f), Face = new Vector3(-1548.3f, 3.3f, 1182.9f) },
@@ -63,13 +62,13 @@ namespace MWCoop
         static void Say(string s) { Chat.System(s); }
 
         static readonly string[] HelpFr = {
-            "/tp <joueur> : aller à un joueur", "/amener <joueur> : faire venir un joueur", "/lieu <nom> : appartement, maison, pub, ville, port, garage, inspection, decharge, danse, cabane, chalet",
+            "/tp <joueur> : aller à un joueur", "/amener <joueur> : faire venir un joueur", "/lieu <nom> : maison, pub, ville, port, garage, inspection, decharge, danse, cabane, chalet",
             "/argent <montant> : du liquide pour soi", "/soin : faim, soif, fatigue, stress, vessie, saleté à zéro", "/liberer : plus recherché, sorti de prison",
-            "/heure <0-24> : l'heure de tous", "/pluie oui|non : pluie (ou neige) pour tous" };
+            "/heure <0,2,...,24> : l'heure de tous", "/pluie oui|non : pluie (ou neige) pour tous" };
         static readonly string[] HelpEn = {
-            "/tp <player>: go to a player", "/bring <player>: bring a player to you", "/place <name>: apartment, home, pub, town, harbor, garage, inspection, landfill, dance, cottage, cabin",
+            "/tp <player>: go to a player", "/bring <player>: bring a player to you", "/place <name>: home, pub, town, harbor, garage, inspection, landfill, dance, cottage, cabin",
             "/money <amount>: cash for yourself", "/heal: hunger, thirst, fatigue, stress, bladder, dirt to zero", "/free: no longer wanted, out of jail",
-            "/time <0-24>: everyone's time of day", "/rain on|off: rain (or snow) for everyone" };
+            "/time <0,2,...,24>: everyone's time of day", "/rain on|off: rain (or snow) for everyone" };
 
         // Commandes anglaises -> les noms d'ici.
         static string Canon(string c)
@@ -158,8 +157,8 @@ namespace MWCoop
                 case "heure":
                 {
                     int h;
-                    if (!int.TryParse(arg, out h) || h < 0 || h > 24) return Lang.T("Heure : de 0 à 24.", "Time: 0 to 24.");
-                    if (!Session.Active || Session.IsHost) SetHour(h);   // (invite : l'hote le fait, a l'annonce)
+                    if (!int.TryParse(arg, out h) || h < 0 || h > 24 || h % 2 != 0) return Lang.T("Heure : 0, 2, 4, ..., 24.", "Time: 0, 2, 4, ..., 24.");
+                    if ((!Session.Active || Session.IsHost) && !SetHour(h)) return Lang.T("Horloge pas prête.", "Clock not ready.");
                     return null;
                 }
                 case "pluie":
@@ -167,7 +166,7 @@ namespace MWCoop
                 {
                     bool? on = OnOff(arg);
                     if (on == null) return Lang.T("/pluie oui ou /pluie non", "/rain on or /rain off");
-                    if (!Session.Active || Session.IsHost) SetRain(on.Value);
+                    if ((!Session.Active || Session.IsHost) && !SetRain(on.Value)) return Lang.T("Météo pas prête.", "Weather not ready.");
                     return null;
                 }
             }
@@ -187,7 +186,7 @@ namespace MWCoop
             string c = Canon(a[0].TrimStart('/').ToLowerInvariant()), arg = a.Length > 1 ? string.Join(" ", a, 1, a.Length - 1) : "";
             if (Session.IsHost && !Allowed) { Log.Warn("triches : " + name + " : " + line + " refusee (coupees ici)"); return; }
             if (Session.IsHost && c == "heure") { int h; if (int.TryParse(arg, out h) && h >= 0 && h <= 24) SetHour(h); }
-            if (Session.IsHost && (c == "pluie" || c == "neige")) { bool? on = OnOff(arg); if (on != null) SetRain(on.Value); }
+            if (Session.IsHost && (c == "pluie" || c == "neige")) { bool? on = OnOff(arg); if (on != null) SetRain(on.Value, from != null ? from.State.Feet : Game.PlayerT != null ? Game.PlayerT.position : Vector3.zero); }
             if (c == "amener" && from != null)
             {
                 PlayerInfo me = FindPlayer(arg);
@@ -228,7 +227,7 @@ namespace MWCoop
         {
             q = (q ?? "").Trim().ToLowerInvariant();
             if (q.Length == 0) return null;
-            string[] en = { "apartment", "home", "pub", "town", "harbor", "garage", "inspection", "landfill", "dance", "cottage", "cabin" };
+            string[] en = { "home", "pub", "town", "harbor", "garage", "inspection", "landfill", "dance", "cottage", "cabin" };
             for (int i = 0; i < Places.Length; i++)
                 if (Places[i].Key.StartsWith(q) || (i < en.Length && en[i].StartsWith(q)) || Places[i].Fr.ToLowerInvariant().StartsWith(q)) return Places[i];
             return null;
@@ -237,7 +236,7 @@ namespace MWCoop
         // Au sol du lieu (le plus haut sol sous le point, sans les declencheurs), comme une reapparition.
         public static void GoPlace(Place p)
         {
-            Vector3 top = p.At;   // (sous le point, comme Respawn : dans l'appartement, pas sur le plafond)
+            Vector3 top = p.At;
             float best = float.NegativeInfinity;
             foreach (RaycastHit h in Physics.RaycastAll(top, Vector3.down, 8f))
                 if (h.collider != null && !h.collider.isTrigger && Game.RootName(h.collider.transform) != "PLAYER" && h.point.y > best) best = h.point.y;
@@ -251,35 +250,52 @@ namespace MWCoop
         }
 
         // ---------------------------------------------------------------- monde (hote)
-        public static void SetHour(int h)
+        public static bool SetHour(int h)
         {
-            PlayMakerFSM sun = Game.FindFsm("MAP/Sun/PivotSun/SUN", "Color");
-            if (sun == null) return;
-            sun.FsmVariables.GetFsmInt("Time").Value = h;
-            sun.SendEvent("TIMESKIP");
-            PlayMakerFSM wx = Game.FindFsm("MAP/WEATHER/Clouds", "Weather");
-            if (wx != null && wx.Fsm.Initialized) { FsmInt t = wx.FsmVariables.FindFsmInt("Time"); if (t != null) t.Value = h; }
+            // MSC dispatches WAKEUP to one of twelve two-hour states. Odd
+            // hours (and zero instead of 24) leave that dispatcher stuck.
+            if (h < 0 || h > 24 || h % 2 != 0) return false;
+            PlayMakerFSM sun = Game.FindFsm("MAP/SUN/Pivot/SUN", "Color");
+            FsmInt time = sun != null ? sun.FsmVariables.FindFsmInt("Time") : null;
+            if (time == null || !sun.Fsm.Initialized) return false;
+            time.Value = h == 0 ? 24 : h;
+            sun.SendEvent("WAKEUP");
             Log.Info("triches : heure " + h);
+            return true;
         }
 
-        // Pluie (ou neige) : ce que l'automate Forecast::Logic / Clouds::Weather pose chaque jour (Fudge) --
-        // Snowing / Raining, l'objet des nuages de precipitation, et la pluie du joueur ; l'hote l'envoie aux invites (World).
-        public static void SetRain(bool on)
+        public static bool SetRain(bool on)
         {
-            PlayMakerFSM fc = Game.FindFsm("MAP/WEATHER/Forecast", "Logic")
-                ?? Game.FindFsm("MAP/CloudSystem/Forecast", "Logic")
-                ?? Game.FindFsm("MAP/CloudSystem/Clouds", "Weather");
-            FsmBool sn = fc != null ? fc.FsmVariables.FindFsmBool("Snowing") : null;
-            if (sn != null) sn.Value = on;
-            MscWeather.Apply(fc, on);
-            GameObject co = Game.FindAny("MAP/WEATHER/Clouds/CloudObjects")
-                ?? Game.FindAny("MAP/CloudSystem/Clouds/CloudObjects");
-            if (co != null) co.SetActive(on);
+            return SetRain(on, Game.PlayerT != null ? Game.PlayerT.position : Vector3.zero);
+        }
+
+        // Keep Rain, WeatherType and thunder consistent through MSC's native
+        // states. Bring a cloud over the requester so rain starts nearby.
+        static bool SetRain(bool on, Vector3 at)
+        {
+            GameObject clouds = Game.FindAny("MAP/CloudSystem/Clouds");
+            PlayMakerFSM weather = clouds != null ? Game.FsmOn(clouds, "Weather") : null;
+            GameObject co = Game.FindAny("MAP/CloudSystem/Clouds/CloudObjects");
+            if (weather == null || !weather.Fsm.Initialized || co == null) return false;
+            if (!Game.SetState(weather, on ? "Rain" : "No weather")) return false;
+            co.SetActive(on);
+            if (on)
+            {
+                foreach (Collider cover in co.GetComponentsInChildren<Collider>())
+                {
+                    if (!cover.isTrigger) continue;
+                    Vector3 shift = at - cover.bounds.center; shift.y = 0f;
+                    clouds.transform.position += shift;
+                    FireTools.SetF(weather, "PosX", clouds.transform.position.x);
+                    FireTools.SetF(weather, "PosZ", clouds.transform.position.z);
+                    break;
+                }
+            }
             GameObject rain = Game.PlayerPart("Rain");
             PlayMakerFSM rf = rain != null ? Game.FsmOn(rain, "Rain") : null;
-            FsmBool ry = rf != null ? rf.FsmVariables.FindFsmBool("RainYes") : null;
-            if (ry != null) ry.Value = on;
-            Log.Info("triches : pluie/neige " + (on ? "oui" : "non") + " (Forecast " + (fc != null) + ", nuages " + (co != null) + ", pluie " + (ry != null) + ")");
+            MscWeather.ApplyPlayerRain(rf, on);
+            Log.Info("triches : pluie " + (on ? "oui" : "non") + " (MSC Weather, pluie " + (rf != null) + ")");
+            return true;
         }
 
         public static void SetSnow(bool on) { SetRain(on); }
@@ -335,10 +351,9 @@ namespace MWCoop
 
         static void LogWorld()
         {
-            PlayMakerFSM sun = Game.FindFsm("MAP/Sun/PivotSun/SUN", "Color");
-            PlayMakerFSM fc = Game.FindFsm("MAP/WEATHER/Forecast", "Logic");
-            FsmBool sn = fc != null ? fc.FsmVariables.FindFsmBool("Snowing") : null;
-            Log.Info("autotest : triches, heure " + (sun != null ? sun.FsmVariables.GetFsmInt("Time").Value : -1) + ", neige " + (sn != null && sn.Value) + ", autorisees " + Allowed
+            PlayMakerFSM sun = Game.FindFsm("MAP/SUN/Pivot/SUN", "Color");
+            PlayMakerFSM fc = Game.FindFsm("MAP/CloudSystem/Clouds", "Weather");
+            Log.Info("autotest : triches, heure " + (sun != null ? sun.FsmVariables.GetFsmInt("Time").Value : -1) + ", pluie " + MscWeather.Raining(fc) + ", autorisees " + Allowed
                      + (Game.PlayerT != null ? ", position " + Game.PlayerT.position.ToString("F0") : ""));
         }
     }

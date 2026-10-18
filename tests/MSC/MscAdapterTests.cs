@@ -161,6 +161,17 @@ class MscAdapterTests
                 Assert(!MWCoop.MscToolCases.Ready(new PlayerInfo { Level = 1, StateTime = 80 }, 100), "Stale disconnected peer duplicated a reconnect case");
                 Assert(MWCoop.MscToolCases.Ready(new PlayerInfo { Level = 1, StateTime = 99 }, 100), "Ready guest was not counted");
             });
+            Test("MSC teleport aliases stay aligned after removing the MWC apartment", delegate {
+                var find = typeof(MWCoop.Cheats).GetMethod("FindPlace", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+                Assert(find.Invoke(null, new object[] { "apartment" }) == null && find.Invoke(null, new object[] { "appartement" }) == null, "Apartment is still available");
+                string[] aliases = { "home", "pub", "town", "harbor", "garage", "inspection", "landfill", "dance", "cottage", "cabin" };
+                string[] keys = { "maison", "pub", "ville", "port", "garage", "inspection", "decharge", "danse", "cabane", "chalet" };
+                for (int i = 0; i < aliases.Length; i++) {
+                    var place = (MWCoop.Cheats.Place)find.Invoke(null, new object[] { aliases[i] });
+                    Assert(place != null && place.Key == keys[i], "Wrong place for " + aliases[i]);
+                }
+                foreach (int hour in new[] { -1, 1, 9, 15, 23, 25 }) Assert(!MWCoop.Cheats.SetHour(hour), "Unsupported hour reached the native clock");
+            });
             Test("in-game cheat permission persists and guests cannot override the host", delegate {
                 string folder = Path.Combine(Path.GetTempPath(), "summercoop-cheats-" + Guid.NewGuid().ToString("N"));
                 Directory.CreateDirectory(folder);

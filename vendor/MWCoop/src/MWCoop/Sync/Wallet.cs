@@ -16,6 +16,7 @@ namespace MWCoop
 
         static FsmFloat cash, bank;
         static float lastCash, lastBank, next, readyAt = -1, nextStore;
+        static float loadingCredit;
         static string world;
 
         // Versements du monde, reperes par leur etat de paiement (crochet au debut et a la fin de l'etat :
@@ -113,11 +114,48 @@ namespace MWCoop
         static int pendingGift; static string pendingFrom;
 
         // Triches (/argent) : liquide pour soi seul -- ni revenu partage ni depense (lastCash suit, comme un don recu).
+        sealed class LoadingCreditHook : FsmStateAction
+        {
+            public override void OnEnter()
+            {
+                // MSC may finish loading PlayerMoney after the first UI frame.
+                // Reapply only after a native load has replaced the balance,
+                // never from an ordinary balance change such as a purchase.
+                if (!ready && loadingCredit > 0)
+                {
+                    FsmFloat loaded = FsmVariables.GlobalVariables.FindFsmFloat("PlayerMoney");
+                    if (loaded != null) loaded.Value += loadingCredit;
+                }
+                Finish();
+            }
+        }
+
+        static void PreserveLoadingCredit()
+        {
+            GameObject database = Game.FindAny("Database/PlayerDatabase");
+            PlayMakerFSM simulation = database != null ? Game.FsmOn(database, "Simulation") : null;
+            FsmState load = simulation != null ? simulation.Fsm.GetState("Load") : null;
+            if (load == null) return;
+            foreach (FsmStateAction action in load.Actions) if (action is LoadingCreditHook) return;
+            var actions = new List<FsmStateAction>(load.Actions);
+            actions.Add(new LoadingCreditHook());
+            load.Actions = actions.ToArray();
+        }
+
         public static bool AddLocal(int amount)
         {
-            if (!Ready || amount <= 0) return false;
-            cash.Value += amount; lastCash += amount;
-            Store();
+            if (amount <= 0) return false;
+            // Cheat buttons also work in solo and during the personal-wallet
+            // loading grace period. Credit MSC's actual cash immediately.
+            if (!Ready)
+            {
+                cash = FsmVariables.GlobalVariables.FindFsmFloat("PlayerMoney");
+                PreserveLoadingCredit();
+            }
+            if (cash == null) return false;
+            cash.Value += amount;
+            if (Ready) { lastCash += amount; Store(); }
+            else loadingCredit += amount;
             Log.Info("argent : +" + amount + " mk (triche)");
             return true;
         }
@@ -197,7 +235,7 @@ namespace MWCoop
                 if (v.Length == 2 && float.TryParse(v[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out c)
                     && float.TryParse(v[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out b))
                 {
-                    cash.Value = c; bank.Value = 0;
+                    cash.Value = c + loadingCredit; bank.Value = 0;
                     Log.Info("argent : porte-monnaie retrouve pour ce monde (" + world + ")");
                     Hud.Toast(Lang.T("Votre porte-monnaie : ", "Your wallet: ") + Mathf.RoundToInt(c) + " mk");
                     return;
@@ -216,7 +254,7 @@ namespace MWCoop
             float c = Config.GetFloat("Coop", "ArgentDepartLiquide", startCash), b = 0;
             if (c < 0 || b < 0) { Log.Info("argent : premiere venue dans ce monde, argent de depart inconnu : celui de la sauvegarde"); return; }
             Log.Info("argent : premiere venue dans ce monde (" + world + ") : argent de depart " + c + " liquide, " + b + " banque (au lieu de " + cash.Value + " / " + bank.Value + ")");
-            cash.Value = c; bank.Value = b;
+            cash.Value = c + loadingCredit; bank.Value = b;
             Hud.Toast(Lang.T("Premi\u00E8re venue : ", "First visit: ") + Mathf.RoundToInt(c + b) + Lang.T(" mk pour commencer", " mk to start with"));
         }
 
@@ -241,6 +279,7 @@ namespace MWCoop
             }
             cash = bank = null;
             ready = false;
+            loadingCredit = 0;
             // MSC can still load the host's globals during its initial frames.
             // Restore personal cash after that native initialization completes.
             readyAt = PlayerSync.InGame ? Time.realtimeSinceStartup + 15f : -1;
@@ -525,6 +564,7 @@ namespace MWCoop
                 FsmFloat playerId = FsmVariables.GlobalVariables.FindFsmFloat("PlayerID");
                 if (cash == null || playerId == null || playerId.Value == 0) { readyAt = Time.realtimeSinceStartup + 1; return; }
                 Restore();
+                loadingCredit = 0;
                 if (pendingGift > 0) { cash.Value += pendingGift; Hud.Toast(pendingFrom + Lang.T(" vous a donn\u00E9 ", " gave you ") + pendingGift + " mk"); pendingGift = 0; }
                 lastCash = cash.Value; lastBank = bank.Value;
                 ready = true;
