@@ -89,6 +89,16 @@ jobs:
         run: ./tools/test-native-saves.ps1 -LauncherPath SummerCoop-Launcher/SummerCoop-Launcher.exe
       - name: Verify changelogs with the actual release launcher
         run: ./tools/test-release-notes.ps1 -LauncherPath SummerCoop-Launcher/SummerCoop-Launcher.exe
+      - name: Scan the final launcher and embedded DLLs with Defender
+        run: ./tools/test-defender.ps1 -UpdateSignatures
+      - name: Record Defender result in the workflow summary
+        if: always()
+        run: |
+          if (Test-Path -LiteralPath build/defender-tests/report.json) {
+            $fence = [string]([char]96) * 3
+            @('Microsoft Defender scan (exact file hashes)', '', ($fence + 'json')) + @(Get-Content -LiteralPath build/defender-tests/report.json) + @($fence, '') |
+              Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding UTF8
+          }
       - name: Upload all assets to a draft, verify and publish
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

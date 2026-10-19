@@ -4883,39 +4883,16 @@ static bool PrepareMirror(const std::wstring &m)
     return true;
 }
 
-// Mode debogage : Windows, Smart App Control (bloque les DLL non signees, comme notre version.dll), antivirus declares
-// a Windows (Securite Windows : root/SecurityCenter2, par PowerShell, fil a part).
-static DWORD WINAPI DebugSysThread(void *)
+// Diagnostic information available directly from Windows. Do not spawn a shell
+// or enumerate security products: neither is needed to diagnose mod installation.
+static void DebugSys()
 {
     DWORD sac = 99, sz = sizeof(sac);
     RegGetValueW(HKEY_LOCAL_MACHINE, L"SYSTEM\\CurrentControlSet\\Control\\CI\\Policy", L"VerifiedAndReputablePolicyState", RRF_RT_REG_DWORD, NULL, &sac, &sz);
     wchar_t build[64] = L"?"; DWORD bs = sizeof(build);
     RegGetValueW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", L"CurrentBuild", RRF_RT_REG_SZ, NULL, build, &bs);
     DebugLog("Windows build %s, Smart App Control %s, lanceur %s, jeu %s", Narrow(build).c_str(), sac == 0 ? "coupe" : sac == 1 ? "ACTIF" : sac == 2 ? "en evaluation" : "?", Narrow(g_self, CP_UTF8).c_str(), Narrow(g_gameDir, CP_UTF8).c_str());
-    wchar_t sys[MAX_PATH]; GetSystemDirectoryW(sys, MAX_PATH);
-    std::wstring cmd = std::wstring(L"\"") + sys + L"\\WindowsPowerShell\\v1.0\\powershell.exe\" -NoProfile -NonInteractive -Command \"Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntiVirusProduct | ForEach-Object { $_.displayName + ' (etat ' + $_.productState + ')' }\"";
-    SECURITY_ATTRIBUTES sa = { sizeof(sa), NULL, TRUE };
-    HANDLE rd = NULL, wr = NULL;
-    if (!CreatePipe(&rd, &wr, &sa, 0)) return 0;
-    SetHandleInformation(rd, HANDLE_FLAG_INHERIT, 0);
-    STARTUPINFOW si = { sizeof(si) }; si.dwFlags = STARTF_USESTDHANDLES; si.hStdOutput = wr; si.hStdError = wr;
-    PROCESS_INFORMATION pi = {};
-    std::vector<wchar_t> cb(cmd.begin(), cmd.end()); cb.push_back(0);
-    BOOL ok = CreateProcessW(NULL, cb.data(), NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
-    CloseHandle(wr);
-    std::string out;
-    if (ok) {
-        char b[512]; DWORD n;
-        while (ReadFile(rd, b, sizeof(b), &n, NULL) && n) out.append(b, n);
-        WaitForSingleObject(pi.hProcess, 15000);
-        CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
-    }
-    CloseHandle(rd);
-    while (!out.empty() && (out.back() == '\n' || out.back() == '\r')) out.pop_back();
-    DebugLog("antivirus declares : %s", out.empty() ? "(aucun, ou illisible)" : out.c_str());
-    return 0;
 }
-static void DebugSys() { HANDLE t = CreateThread(NULL, 0, DebugSysThread, NULL, 0, NULL); if (t) CloseHandle(t); }
 
 // Lance un programme par le bureau de Windows (IShellDispatch2::ShellExecute du processus explorer du bureau, la methode
 // documentee) : ce n'est plus le lanceur qui cree le jeu. Lanceur demarre par Steam, overlay de Steam dans le lanceur :
@@ -7496,7 +7473,9 @@ static bool UninstallCore(bool registry, std::wstring *left)
     }
     LaunchLog("desinstallation : %d lien(s) retire(s), %d element(s) a la Corbeille", links, (int)paths.size());
     g_launcherLog.clear();   // (son dossier part : plus rien n'y est ecrit)
-    for (auto &p : paths) ToRecycleBin({ p });   // (un par un : un echec, le lanceur en cours par exemple, n'arrete pas les autres)
+    // Leave the running executable for explicit removal after closing. No
+    // delayed shell command, self-deletion helper or scheduled deletion.
+    for (auto &p : paths) if (_wcsicmp(p.c_str(), g_self.c_str())) ToRecycleBin({ p });
     if (registry) RegDeleteTreeW(HKEY_CURRENT_USER, L"Software\\MWCoop-Profils");
     bool ok = true;
     for (auto &p : paths) {
@@ -7511,23 +7490,18 @@ static bool UninstallCore(bool registry, std::wstring *left)
 static void Uninstall()
 {
     if (GameProcessRunning()) { SetStatus(K_WARN, T(L"Le jeu tourne : ferme-le avant de d\u00E9sinstaller SummerCoop", L"The game is running: close it before uninstalling SummerCoop")); return; }
-    int r = MessageBoxW(g_wnd, T(L"D\u00E9sinstaller compl\u00E8tement SummerCoop ?\n\nPart \u00E0 la Corbeille : tout SummerCoop dans le dossier du jeu (version.dll, dossier SummerCoop avec ses profils, journaux et contenus re\u00E7us, ce lanceur), tout %LOCALAPPDATA%\\SummerCoop (copies de lancement, MSCLoader de SummerCoop, caches), et les r\u00E9glages du profil invit\u00E9.\n\nGard\u00E9s : ta sauvegarde, tes mods (dossier Mods) et le MSCLoader officiel.\n\nPour rejouer en coop, il faudra ret\u00E9l\u00E9charger SummerCoop.",
-                                 L"Completely uninstall SummerCoop?\n\nMoved to the Recycle Bin: everything SummerCoop in the game folder (version.dll, the SummerCoop folder with its profiles, logs and received content, this launcher), all of %LOCALAPPDATA%\\SummerCoop (launch copies, SummerCoop's MSCLoader, caches), and the guest profile settings.\n\nKept: your save, your mods (Mods folder) and the official MSCLoader.\n\nTo play co-op again, you will need to download SummerCoop again."),
+    int r = MessageBoxW(g_wnd, T(L"D\u00E9sinstaller compl\u00E8tement SummerCoop ?\n\nPart \u00E0 la Corbeille : tout SummerCoop dans le dossier du jeu (version.dll, dossier SummerCoop avec ses profils, journaux et contenus re\u00E7us), tout %LOCALAPPDATA%\\SummerCoop (copies de lancement, MSCLoader de SummerCoop, caches), et les r\u00E9glages du profil invit\u00E9.\n\nGard\u00E9s : ta sauvegarde, tes mods (dossier Mods), le MSCLoader officiel et le fichier de ce lanceur.\n\nPour rejouer en coop, il faudra ret\u00E9l\u00E9charger SummerCoop.",
+                                 L"Completely uninstall SummerCoop?\n\nMoved to the Recycle Bin: everything SummerCoop in the game folder (version.dll, the SummerCoop folder with its profiles, logs and received content), all of %LOCALAPPDATA%\\SummerCoop (launch copies, SummerCoop's MSCLoader, caches), and the guest profile settings.\n\nKept: your save, your mods (Mods folder), the official MSCLoader and this launcher file.\n\nTo play co-op again, you will need to download SummerCoop again."),
                          L"SummerCoop", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2);
     if (r != IDYES) return;
     LobbyClose();
     std::wstring left;
     bool ok = UninstallCore(true, &left);
-    bool selfLeft = GetFileAttributesW(g_self.c_str()) != INVALID_FILE_ATTRIBUTES;
-    if (selfLeft) {   // lanceur en cours non deplace : efface 3 s apres sa fermeture
-        wchar_t sys[MAX_PATH]; GetSystemDirectoryW(sys, MAX_PATH);
-        std::wstring cmd = std::wstring(L"\"") + sys + L"\\cmd.exe\" /c ping 127.0.0.1 -n 4 >nul & del /f /q \"" + g_self + L"\"";
-        STARTUPINFOW si = { sizeof(si) }; PROCESS_INFORMATION pi = {};
-        std::vector<wchar_t> buf(cmd.begin(), cmd.end()); buf.push_back(0);
-        if (CreateProcessW(NULL, buf.data(), NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, sys, &si, &pi)) { CloseHandle(pi.hThread); CloseHandle(pi.hProcess); }
-    }
-    std::wstring msg = ok ? std::wstring(T(L"SummerCoop est d\u00E9sinstall\u00E9 (tout est dans la Corbeille).", L"SummerCoop is uninstalled (everything is in the Recycle Bin)."))
+    std::wstring msg = ok ? std::wstring(T(L"Les donnees de SummerCoop sont dans la Corbeille.", L"SummerCoop data was moved to the Recycle Bin."))
                           : std::wstring(T(L"SummerCoop est d\u00E9sinstall\u00E9, sauf ces \u00E9l\u00E9ments (ouverts par un autre programme ?) :", L"SummerCoop is uninstalled, except these items (open in another program?):")) + left;
+    msg += T(L"\n\nLe fichier du lanceur est conserve. Apres la fermeture, supprime-le manuellement :\n",
+             L"\n\nThe launcher file is kept. After closing, delete it manually:\n");
+    msg += g_self;
     msg += T(L"\n\nSi tu avais mis SummerCoop dans les options de lancement de Steam (Propri\u00E9t\u00E9s du jeu > G\u00E9n\u00E9ral), retire-les : sinon le jeu ne d\u00E9marrera plus depuis Steam.\n\nPour r\u00E9installer : t\u00E9l\u00E9charge SummerCoop et lance SummerCoop-Launcher.exe.",
              L"\n\nIf you had put SummerCoop in Steam's launch options (game Properties > General), remove it: otherwise the game won't start from Steam anymore.\n\nTo reinstall: download SummerCoop and run SummerCoop-Launcher.exe.");
     MessageBoxW(g_wnd, msg.c_str(), L"SummerCoop", MB_OK | (ok ? MB_ICONINFORMATION : MB_ICONWARNING));
@@ -8324,7 +8298,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
         FILE *f = _wfopen(argv[2], L"wb");
         if (f) fclose(f);
         g_debug = true;
-        DebugSysThread(NULL);
+        DebugSys();
         GdiplusShutdown(gtok);
         return 0;
     }
