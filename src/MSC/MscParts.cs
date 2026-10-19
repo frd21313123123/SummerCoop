@@ -124,7 +124,10 @@ namespace MWCoop
             {
                 PlayMakerFSM use = Game.FsmOn(go, "Use");
                 FsmString tag = use == null || use.FsmVariables.FindFsmBool("Installed") == null && use.FsmVariables.FindFsmString("Corner") == null ? null : use.FsmVariables.FindFsmString("UniqueTag") ?? use.FsmVariables.FindFsmString("ID");
-                if (tag != null && tag.Value.Length > 0 && tag.Value != "sparkplug0" && tag.Value != "oilfilter0" && tag.Value != "bulb0" && tag.Value != "battery0" && tag.Value != "wheel0") id = "mscitem:" + tag.Value;
+                // oilfilter0 is the real starter filter, persisted in items.txt.
+                // Prefabs have no assigned ID; excluding zero here discarded the
+                // starter filter's assembly and changed its bolt key on mounting.
+                if (tag != null && tag.Value.Length > 0 && tag.Value != "sparkplug0" && tag.Value != "bulb0" && tag.Value != "battery0" && tag.Value != "wheel0") id = "mscitem:" + tag.Value;
             }
             if (id.Length > 0) { ids[go] = id; parts[id] = go; return id; }
             return "";
@@ -324,6 +327,7 @@ namespace MWCoop
         static void ScanFsm(PlayMakerFSM f)
         {
                 if (f == null || f.hideFlags != HideFlags.None) return;
+                MscVehicleControls.Prepare(f);
                 if (IsBoltCheck(f)) return; // Native observer; only its Screw FSM publishes edits.
                 Binding known;
                 if (byFsm.TryGetValue(f, out known)) { if (!Game.UnderPlayer(f.transform)) RefreshKey(known); return; }

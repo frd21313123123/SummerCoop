@@ -3,7 +3,7 @@ param([ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9_-]{0,48}$')][string]$Run = ('mwco
     [ValidateRange(320,7680)][int]$Width = 640, [ValidateRange(240,4320)][int]$Height = 480,
     [ValidateSet('Local','Host','Client')][string]$Role = 'Local', [string]$JoinAddress = '127.0.0.1',
     [ValidatePattern('^[a-zA-Z0-9_-]+$')][string[]]$ExtraClientGames,
-    [string]$BuildDirectory, [string]$SeedProfile, [switch]$Optimization, [switch]$PartsProfile, [switch]$ToolCases, [switch]$ToolCaseMenu, [switch]$BoltPositions, [switch]$Shopping, [switch]$Bindings, [switch]$Wallet, [switch]$Cheats, [ValidateSet('Host','Guest')][string]$ActionActor = 'Host', [ValidateSet('Host','Guest')][string]$SaveQuitActor)
+    [string]$BuildDirectory, [string]$SeedProfile, [switch]$Optimization, [switch]$PartsProfile, [switch]$ToolCases, [switch]$ToolCaseMenu, [switch]$BoltPositions, [switch]$Shopping, [switch]$Bindings, [switch]$Wallet, [switch]$Cheats, [switch]$Engine, [ValidateSet('Host','Guest')][string]$ActionActor = 'Host', [ValidateSet('Host','Guest')][string]$SaveQuitActor)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $local = Join-Path $root '.local'
@@ -13,7 +13,7 @@ if ($SeedProfile) { $SeedProfile = (Resolve-Path -LiteralPath $SeedProfile).Path
 if ($PartsProfile -and !$Performance) { throw 'Parts profiling requires passive performance mode.' }
 if ($Performance) {
     if ($SaveQuitActor) { throw 'Save/quit testing cannot run in performance mode.' }
-    if ($Actions -or $Vehicles -or $Garage -or $Workshop -or $Platforms -or $Activities -or $Regression -or $Assembly -or $Carrier -or $Optimization -or $BoltPositions -or $Shopping -or $Bindings -or $Wallet -or $Cheats) { throw 'Performance mode cannot run functional probes.' }
+    if ($Actions -or $Vehicles -or $Garage -or $Workshop -or $Platforms -or $Activities -or $Regression -or $Assembly -or $Carrier -or $Optimization -or $BoltPositions -or $Shopping -or $Bindings -or $Wallet -or $Cheats -or $Engine) { throw 'Performance mode cannot run functional probes.' }
     if (!$PSBoundParameters.ContainsKey('Duration')) { $Duration = 600 }
     if (!$PSBoundParameters.ContainsKey('Width')) { $Width = 2560 }
     if (!$PSBoundParameters.ContainsKey('Height')) { $Height = 1440 }
@@ -101,6 +101,7 @@ if ($Carrier) { New-Item -ItemType Directory -Path $carrierChannel | Out-Null }
 if ($Shopping) { New-Item -ItemType Directory -Path $shoppingChannel | Out-Null }
 if ($Bindings) { New-Item -ItemType Directory -Path $bindingsChannel | Out-Null }
 if ($Wallet) { New-Item -ItemType Directory -Path $walletChannel | Out-Null }
+if ($Engine) { New-Item -ItemType Directory -Path (Join-Path $local ($Run + '-engine')) | Out-Null }
 if ($Cheats) { New-Item -ItemType Directory -Path $cheatsChannel | Out-Null }
 $original = Join-Path $env:USERPROFILE 'AppData\LocalLow\Amistech\My Summer Car'
 $before = @(Get-ChildItem -LiteralPath $original -File -ErrorAction SilentlyContinue | Where-Object Name -in @('defaultES2File.txt','items.txt','meshsave.txt','graveyard.txt','trophies.txt','carparts.txt') | Get-FileHash -Algorithm SHA256 | Select-Object Path,Hash)
@@ -138,6 +139,7 @@ foreach ($instance in $instances) {
     if ($Shopping) { $arguments += ' --summercoop-test-shopping-channel "' + $shoppingChannel + '"' }
     if ($Bindings) { $arguments += ' --summercoop-test-bindings-channel "' + $bindingsChannel + '"' }
     if ($Wallet) { $arguments += ' --summercoop-test-wallet-channel "' + $walletChannel + '"' }
+    if ($Engine) { $arguments += ' --summercoop-test-engine-channel ' + [char]34 + (Join-Path $local ($Run + '-engine')) + [char]34 }
     if ($Cheats) { $arguments += ' --summercoop-test-cheats-channel "' + $cheatsChannel + '"' }
     if ($Garage) { $arguments += ' --summercoop-test-garage-channel "' + $garageChannel + '"' }
     if ($Workshop) { $arguments += ' --summercoop-test-workshop-channel "' + $workshopChannel + '"' }

@@ -180,6 +180,10 @@ namespace SummerCoop.Game
             PlayMakerFSM use = PlayMakerFSM.FindFsmOnGameObject(part, "Use");
             FsmString corner = use == null ? null : use.FsmVariables.FindFsmString("Corner");
             if (corner != null) { value = corner.Value.Length > 0 || part.transform.parent != null && part.GetComponent<Rigidbody>() == null; return true; }
+            // Numbered consumables store installation in Use, without a
+            // db_ThisPart/DatabaseMotor record (oil filters and belts).
+            FsmBool itemInstalled = use == null ? null : use.FsmVariables.FindFsmBool("Installed");
+            if (itemInstalled != null) { value = itemInstalled.Value; return true; }
             foreach (PlayMakerFSM removal in part.GetComponents<PlayMakerFSM>())
             {
                 if (removal.FsmName != "Removal") continue;

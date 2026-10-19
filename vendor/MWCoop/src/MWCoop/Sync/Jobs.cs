@@ -110,6 +110,7 @@ namespace MWCoop
         // Commande de vehicule sans sauvegarde : automate d'interaction, pas la logique de conduite.
         static bool IsControl(PlayMakerFSM f)
         {
+            if (MscVehicleControls.IsIgnition(f)) return true;
             if (MscParts.Owns(f) || MscTuning.Owns(f) || MscBrewing.Owns(f) || MscSleep.Owns(f) || Fires.OwnsMsc(f)) return false;
             if (!ControlFsms.Contains(f.FsmName) || CarDoors.Tracks(f)) return false;
             if (CarDoorsLike(f)) return false;                          // portieres, capots, hayons : CarDoors (meme pas encore vus)
@@ -493,16 +494,18 @@ namespace MWCoop
         // JD et GG, 06/10 soir). Maintenant seules les positions de la cle partent ("ACC on", "Motor starting",
         // "Shut off", "Motor OFF"), et seulement si l'enchainement est parti d'un clic d'ici ; elles sont posees
         // telles quelles chez les autres, et ce que leur automate fait ensuite tout seul n'est pas renvoye.
-        static readonly HashSet<string> IgnitionStates = new HashSet<string> { "ACC on", "Motor starting", "Shut off", "Motor OFF" };
+        static readonly HashSet<string> IgnitionStates = new HashSet<string> { "ACC on", "ACC on 2", "Motor starting", "Shut off", "Motor OFF" };
         // Positions ou la cle est deja (memes effets) : rien a refaire.
         static readonly Dictionary<string, string[]> IgnitionAlready = new Dictionary<string, string[]> {
             { "ACC on", new[] { "ACC on", "Wait2", "Wait START" } },
+            { "ACC on 2", new[] { "ACC on 2" } },
             { "Shut off", new[] { "Shut off", "Wait2", "Wait START" } },
             { "Motor OFF", new[] { "Motor OFF", "Wait1", "Wait ACC" } },
             { "Motor starting", new[] { "Motor starting" } } };
 
         static bool IgnitionLike(PlayMakerFSM f)
         {
+            if (MscVehicleControls.IsIgnition(f)) return true;
             if (f.FsmName != "Use") return false;
             Fsm m = f.Fsm;
             return m.GetState("Motor starting") != null && m.GetState("State 1") != null && m.GetState("ACC on") != null

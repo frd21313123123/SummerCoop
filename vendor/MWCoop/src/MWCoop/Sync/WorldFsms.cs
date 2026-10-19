@@ -214,6 +214,9 @@ namespace MWCoop
         // ---------------------------------------------------------------- choix des automates
         static bool Skip(PlayMakerFSM f)
         {
+            // Satsuma horn input stays local; VehicleSync sends its actual sound.
+            // A loose GT wheel must not acquire generic hover/state replay.
+            if (MscVehicleControls.IsHorn(f)) return true;
             if (MscParts.Owns(f) || MscTuning.Owns(f)) return true;
             Transform root = f.transform.root;
             if (!root.gameObject.activeInHierarchy) return true;                        // modeles (prefabs)

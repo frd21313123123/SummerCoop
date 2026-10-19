@@ -34,6 +34,8 @@ namespace MWCoop
             }
             if (readyAt >= 0)
             {
+                try { MscEngineProbe.Update(); }
+                catch (Exception e) { if (actionError.Length == 0) { actionError = e.ToString(); Log.Error("MSC engine probe: " + e); } }
                 frames.Add(Time.unscaledDeltaTime * 1000);
                 try { MscBindingsProbe.Update(); }
                 catch (Exception e) { if (actionError.Length == 0) { actionError = e.ToString(); Log.Error("MSC bindings probe: " + e); } }
