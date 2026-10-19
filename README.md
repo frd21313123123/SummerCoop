@@ -51,7 +51,7 @@ SummerCoop позволяет играть в **[My Summer Car](https://store.st
 - Установленный **MSCLoader** в режиме **Game Folder**.
 - **Одинаковая сборка SummerCoop у всех участников**. При ручной установке должны совпадать обе DLL: `SummerCoop.dll` и `SummerCoop.Core.dll`.
 
-> Мод не содержит саму игру и её игровые DLL. Сам по себе MWCoop для My Winter Car устанавливать не нужно.
+> SummerCoop не содержит файлы игры My Summer Car и её игровые DLL. Для кооператива нужна установленная My Summer Car и мод SummerCoop; оригинальный MWCoop отдельно устанавливать не требуется.
 
 ### Рекомендуемый способ: лаунчер
 
