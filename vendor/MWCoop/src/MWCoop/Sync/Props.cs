@@ -99,6 +99,7 @@ namespace MWCoop
 
         public static void OnLevelLoaded()
         {
+            MscHeldDashboard.Reset();
             props.Clear(); byBody.Clear(); settling.Clear(); worldKeys.Clear(); worldLogged = false; stored.Clear(); storedBy.Clear(); storedHere.Clear();
             ridingIn.Clear(); ridingOut.Clear(); vanished.Clear(); unknown.Clear(); following.Clear(); snapshot.Clear(); hierarchyVersion++;
             hand = null; held = null;
@@ -372,6 +373,7 @@ namespace MWCoop
 
         public static void Update()
         {
+            MscHeldDashboard.Sweep();
             if (!Session.Active || !PlayerSync.InGame || nextScan < 0) return;
             float now = Time.realtimeSinceStartup;
             if (now >= nextScan && discovering == null)
@@ -434,6 +436,7 @@ namespace MWCoop
                 }
                 held = h;
             }
+            MscHeldDashboard.Local(held != null && held.Body != null ? held.Body.gameObject : null);
 
             if (now >= nextSend)
             {
@@ -601,6 +604,7 @@ namespace MWCoop
         }
         static void ReleaseMounted(Prop p)
         {
+            if (p.Body != null) MscHeldDashboard.Set(p.Body.gameObject, false);
             // A held/drop interpolation can outlive native assembly. Leave the
             // native joint and body settings intact and discard the loose pose.
             if (p.Kinematic && p.Body != null)
@@ -642,6 +646,7 @@ namespace MWCoop
 
         static void SetKinematic(Prop p, bool on)
         {
+            if (!on && p.Body != null) MscHeldDashboard.Set(p.Body.gameObject, false);
             if (!on) HeldLook(p, false);
             if (p.Body == null || p.Kinematic == on) return;
             p.Kinematic = on;
@@ -1019,6 +1024,7 @@ namespace MWCoop
             p.RelCar = rel && VehicleSync.CarBody(car) != null ? car : -1;
             p.RelPos = lp; p.RelRot = lr;
             p.HeadBy = -1;
+            MscHeldDashboard.Set(p.Body.gameObject, state == 1);
             Vector3 nh; Quaternion nr;
             if (state == 1 && p.RelCar < 0 && Config.GetInt("Test", "TenirAncien", 0) == 0 && PlayerSync.HeadFrame(who, false, out nh, out nr))   // (essais : TenirAncien=1, comme avant)
             {

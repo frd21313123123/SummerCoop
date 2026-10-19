@@ -12,6 +12,7 @@ namespace MWCoop
 
         void Awake()
         {
+            closed = false;
             I = this;
             Config.Load();
             MscRuntime.Configure();
@@ -19,7 +20,10 @@ namespace MWCoop
             Log.Info("Core pret, profil '" + System.Environment.GetEnvironmentVariable("MWCOOP_PROFIL") + "'");
             Log.Info("sauvegardes : " + Application.persistentDataPath);
             SaveTransfer.CopyPlayerOptions();
-            Session.Start();
+            // MSC recreates the mod root when returning to MainMenu. Keep the
+            // existing lobby/transport; opening another host socket leaks the
+            // old transport and fails to bind the same port.
+            if (!Session.Active) Session.Start();
         }
 
         void FixedUpdate()

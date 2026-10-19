@@ -41,8 +41,41 @@ namespace MWCoop
             return go != null && (go == f.gameObject || go == visual) ? go.transform : null;
         }
 
+        internal static bool IsHoseClamp(PlayMakerFSM f)
+        {
+            for (Transform t = f.transform.parent; t != null; t = t.parent)
+                if (t.name.StartsWith("radiator hose", StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+
+        static void PrepareClamp(PlayMakerFSM f)
+        {
+            // MSC's shared bolt FSM translates the screw mesh by 2.5 mm per
+            // turn. A captive hose-clamp screw turns in place. Keep the native
+            // zero-stage position for every stage, including local input.
+            FsmState zero = f.Fsm.GetState("0 2") ?? f.Fsm.GetState("0");
+            if (zero == null) return;
+            SetPosition neutral = null;
+            foreach (FsmStateAction action in zero.Actions) if (action is SetPosition) { neutral = (SetPosition)action; break; }
+            if (neutral == null) return;
+            for (int stage = 1; stage <= 8; stage++)
+            {
+                FsmState pose = f.Fsm.GetState(stage + " 2") ?? f.Fsm.GetState(stage.ToString());
+                if (pose == null) continue;
+                foreach (FsmStateAction action in pose.Actions)
+                {
+                    SetPosition position = action as SetPosition;
+                    if (position == null) continue;
+                    position.vector = neutral.vector;
+                    position.x = neutral.x; position.y = neutral.y; position.z = neutral.z;
+                    position.space = neutral.space;
+                }
+            }
+        }
+
         internal static void Prepare(PlayMakerFSM f)
         {
+            if (IsHoseClamp(f)) PrepareClamp(f);
             GameObject visual = Visual(f);
             if (visual == null) return;
             Anchor anchor;

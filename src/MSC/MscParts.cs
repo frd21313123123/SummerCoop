@@ -82,7 +82,15 @@ namespace MWCoop
         public static void Reset() { MscBoltPositions.Reset(); parts.Clear(); ids.Clear(); modelKeys.Clear(); databases.Clear(); databaseCache.Clear(); modelCache.Clear(); MscRepairCache.Clear(); changedRoots.Clear(); changedSet.Clear(); changedStack.Clear(); scanFsms = null; scanCursor = scanPhase = 0; keyGeneration++; partStates.Clear(); pendingParts.Clear(); completedParts.Clear(); bindings.Clear(); byFsm.Clear(); hooked.Clear(); pending.Clear(); pendingBolts.Clear(); completedBolts.Clear(); totalClocks.Clear(); totalPending.Clear(); repairs.Clear(); remote.Clear(); nextScan = nextBoltSnapshot = nextPartSnapshot = 0; localBoltRevision = hostBoltRevision = 0; }
         public static bool Owns(PlayMakerFSM f)
         {
-            return f != null && !MscBrewing.Owns(f) && (f.FsmName == "Assembly" || f.FsmName == "Removal" || f.FsmName == "Assemble" && Recon.Path(f.transform).IndexOf("Wiring", StringComparison.OrdinalIgnoreCase) >= 0 || IsBolt(f));
+            return f != null && !MscBrewing.Owns(f) && (IsBoltCheck(f) || f.FsmName == "Assembly" || f.FsmName == "Removal" || f.FsmName == "Assemble" && Recon.Path(f.transform).IndexOf("Wiring", StringComparison.OrdinalIgnoreCase) >= 0 || IsBolt(f));
+        }
+        // These FSMs consume the totals sent with Msg.Bolt. Generic job/world
+        // replay must not also drive their Bolts ON/OFF transitions: a delayed
+        // transition can undo a guest's terminal turn or reinstall its wiring.
+        internal static bool IsBoltCheck(PlayMakerFSM f)
+        {
+            return f != null && f.FsmName == "BoltCheck" && f.FsmVariables.FindFsmFloat("Tightness") != null
+                && f.Fsm.GetState("Bolts ON") != null && f.Fsm.GetState("Bolts OFF") != null && !MscTuning.IsTiming(f);
         }
         public static bool IsBolt(PlayMakerFSM f) { return f != null && f.FsmName == "Screw" && f.FsmVariables.FindFsmInt("Stage") != null; }
         public static string IdOf(GameObject go)
@@ -316,6 +324,7 @@ namespace MWCoop
         static void ScanFsm(PlayMakerFSM f)
         {
                 if (f == null || f.hideFlags != HideFlags.None) return;
+                if (IsBoltCheck(f)) return; // Native observer; only its Screw FSM publishes edits.
                 Binding known;
                 if (byFsm.TryGetValue(f, out known)) { if (!Game.UnderPlayer(f.transform)) RefreshKey(known); return; }
                 if (!Owns(f) || Game.UnderPlayer(f.transform)) return;

@@ -9,7 +9,7 @@ namespace MWCoop
     // FSM into SAVEGAME. MSC's setup/save transition chains can otherwise hang.
     public static class MscNativeSave
     {
-        public static void Capture()
+        public static void Capture(bool exiting = false)
         {
             if (!PlayerSync.InGame) throw new InvalidOperationException("MSC save requires GAME");
             MscSaveGuard.Begin();
@@ -19,7 +19,8 @@ namespace MWCoop
                 foreach (UnityEngine.Object value in Game.AllFsms())
                 {
                     PlayMakerFSM f = value as PlayMakerFSM;
-                    if (f == null || !f.Fsm.Initialized || Game.UnderPlayer(f.transform) || MscToolCases.Generated(f.transform) || f.FsmName == "WaitPlayer") continue;
+                    if (f == null || !f.Fsm.Initialized || MscToolCases.Generated(f.transform)
+                        || !exiting && (Game.UnderPlayer(f.transform) || f.FsmName == "WaitPlayer")) continue;
                     HashSet<string> visited = new HashSet<string>(StringComparer.Ordinal);
                     foreach (FsmTransition transition in f.Fsm.GlobalTransitions)
                     {

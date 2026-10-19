@@ -14,6 +14,7 @@ namespace MWCoop
             if (Root != null) return;
             try
             {
+                MscIo.Start();
                 Log.Open();
                 Log.Info("MWCoop " + Version.Text + " - Unity " + Application.unityVersion
                          + ", niveau " + Application.loadedLevelName);

@@ -436,6 +436,18 @@ class MscAdapterTests
                 foreach (string mode in new[] { "host", "client", "hote", "invite", "" }) Assert(!(bool)policy.Invoke(null, new object[] { mode, true, true }), "Failed connection started offline: " + mode);
                 Assert((bool)policy.Invoke(null, new object[] { "solo", true, false }) && (bool)policy.Invoke(null, new object[] { "solo", false, true }) && !(bool)policy.Invoke(null, new object[] { "solo", false, false }), "Explicit offline start policy changed");
             });
+            Test("File IO resumes after the mod root is recreated on return to the menu", delegate {
+                int writes = 0;
+                for (int session = 0; session < 3; session++)
+                {
+                    MWCoop.MscIo.Start();
+                    Assert(MWCoop.MscIo.TryQueue(delegate { Interlocked.Increment(ref writes); }), "Reopened worker rejected a write");
+                    Assert(MWCoop.MscIo.Shutdown(), "Menu transition did not drain file writes");
+                    Assert(writes == session + 1, "Reopened worker lost a write");
+                    Assert(!MWCoop.MscIo.TryQueue(delegate { Interlocked.Increment(ref writes); }), "Closed worker accepted a write");
+                }
+                MWCoop.MscIo.Start();
+            });
             Test("Native QA clocks and snapshots remain complete during concurrent atomic publication", delegate {
                 Type type = typeof(MWCoop.MscRuntime).Assembly.GetType("MWCoop.MscProbeFiles", true);
                 var write = type.GetMethod("WriteAllText"); var read = type.GetMethod("ReadAllText");

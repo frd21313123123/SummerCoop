@@ -7,6 +7,7 @@ namespace MWCoop
     public static class MscFlow
     {
         public static bool Requested;
+        public static bool SaveQuit;
         static bool loading;
         static float since;
         internal static bool MayStartOffline(string mode, bool automatic, bool requested) { return mode == "solo" && (automatic || requested); }
@@ -14,6 +15,8 @@ namespace MWCoop
         {
             if (Application.loadedLevelName == "GAME") { loading = false; since = 0; return; }
             if (Application.loadedLevelName != "MainMenu" || loading) return;
+            if (SaveQuit && !Requested) return;
+            if (Requested) SaveQuit = false;
             if (since == 0) since = Time.realtimeSinceStartup;
             if (Time.realtimeSinceStartup - since < 1.0f) return;
             if (Contenu.MenuBusy) return;

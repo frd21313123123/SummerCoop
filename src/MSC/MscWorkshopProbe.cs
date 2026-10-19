@@ -67,6 +67,7 @@ namespace MWCoop
                 }
                 tuners.Sort((a, b) => string.CompareOrdinal(MscParts.Key(a), MscParts.Key(b)));
                 bolts.Sort((a, b) => string.CompareOrdinal(MscParts.Key(a), MscParts.Key(b)));
+                CheckSpecialParts();
                 Inspect(channel);
                 MscProbeFiles.WriteAllText(Path.Combine(channel, Role + "-ready.txt"), "tuners=" + tuners.Count + ";bolts=" + bolts.Count);
             }
@@ -138,7 +139,14 @@ namespace MWCoop
                     if (error > .002f) { mismatches++; Results.Add("WorkshopMismatch=" + current + ";" + key + ";expected=" + value.ToString("R", C) + ";actual=" + actual.ToString("R", C)); }
                 }
                 int wrongStages = 0, wrongBolted = 0;
+                int displacedClamps = 0;
                 foreach (PlayMakerFSM f in bolts) if (f.FsmVariables.FindFsmInt("Stage").Value != (current == 0 || current == 2 || current == 4 ? 8 : 0)) wrongStages++;
+                foreach (PlayMakerFSM f in bolts) if (MscBoltPositions.IsHoseClamp(f))
+                {
+                    GameObject visual = MscBoltPositions.Visual(f);
+                    if (visual == null || Mathf.Abs(visual.transform.localPosition.z) > .00001f) displacedClamps++;
+                }
+                if (displacedClamps > 0) throw new Exception("Hose clamp screw translated: " + displacedClamps);
                 foreach (var value in snapshot) if (value.Key.EndsWith("/bolted", StringComparison.Ordinal) && value.Value != (current == 0 || current == 2 || current == 4 ? 1 : 0)) wrongBolted++;
                 string result = "Workshop=" + current + ";Role=" + (actor ? "actor" : "observer") + ";Tuners=" + tuners.Count + ";Bolts=" + bolts.Count + ";Fields=" + rows.Count + ";Mismatches=" + mismatches + ";WrongStages=" + wrongStages + ";WrongBolted=" + wrongBolted;
                 Results.Add(result); Log.Info(result);
@@ -150,12 +158,78 @@ namespace MWCoop
         }
         static bool FixtureBolt(PlayMakerFSM f)
         {
+            if (MscBoltPositions.IsHoseClamp(f) || Recon.Path(f.transform).Contains("/battery_terminal_")) return true;
             FsmGameObject part = f.FsmVariables.FindFsmGameObject("PartAssembled");
             string id = part == null ? "" : MscParts.IdOf(part.Value);
             if (id == "mscdb:Database/DatabaseBody/Subframe" || id.Contains("/Wishbone_") || id.Contains("/SteeringRod_") || id.Contains("/Shock_")) return true;
             for (Transform p = f.transform; p != null; p = p.parent)
                 foreach (string name in fixtureParts) if (p.name == name) return true;
             return false;
+        }
+        static void CheckSpecialParts()
+        {
+            int terminals = 0, clamps = 0;
+            foreach (PlayMakerFSM f in bolts)
+            {
+                if (MscBoltPositions.IsHoseClamp(f)) clamps++;
+                if (!Recon.Path(f.transform).Contains("/battery_terminal_")) continue;
+                terminals++;
+                PlayMakerFSM check = Game.FsmOn(f.transform.parent.parent.gameObject, "BoltCheck");
+                if (check == null || !MscParts.Owns(check) || Replay.Owner(check) != null || WorldFsms.Tracks(check))
+                    throw new Exception("Battery terminal total also owned by generic replay: " + Recon.Path(f.transform));
+            }
+            if (terminals != 2 || clamps < 4) throw new Exception("Insufficient terminal/clamp coverage: " + terminals + "/" + clamps);
+            Results.Add("SpecialFasteners=PASS;Terminals=" + terminals + ";Clamps=" + clamps);
+            int dashboards = 0, physical = 0;
+            foreach (UnityEngine.Object item in Game.AllFsms())
+            {
+                PlayMakerFSM removal = item as PlayMakerFSM;
+                if (removal == null || removal.FsmName != "Removal" || !removal.name.StartsWith("dashboard", StringComparison.OrdinalIgnoreCase)) continue;
+                // Installed panels have no body. Temporarily supply the loose
+                // body's ownership while physics is paused, without replaying
+                // removal, moving the part or changing its saved installation.
+                Rigidbody body = removal.GetComponent<Rigidbody>();
+                bool temporary = body == null;
+                if (temporary) { body = removal.gameObject.AddComponent<Rigidbody>(); body.isKinematic = true; }
+                var originals = new Dictionary<Collider, bool>();
+                try
+                {
+                    foreach (Collider collider in body.GetComponentsInChildren<Collider>(true))
+                        if (collider.attachedRigidbody == body) { originals[collider] = collider.isTrigger; if (!collider.isTrigger) physical++; }
+                    if (originals.Count == 0) continue;
+                    MscHeldDashboard.Set(body.gameObject, true);
+                    foreach (Collider collider in originals.Keys) if (!collider.isTrigger) throw new Exception("Native dashboard still collides: " + collider.name);
+                    MscHeldDashboard.Set(body.gameObject, false);
+                    foreach (var original in originals) if (original.Key.isTrigger != original.Value) throw new Exception("Native dashboard collision not restored");
+                    dashboards++;
+                }
+                finally { MscHeldDashboard.Set(body.gameObject, false); if (temporary) UnityEngine.Object.Destroy(body); }
+            }
+            if (dashboards == 0 || physical == 0) throw new Exception("Native dashboard colliders not tested: parts=" + dashboards + ";physical=" + physical);
+            Results.Add("DashboardNative=PASS;Parts=" + dashboards + ";PhysicalColliders=" + physical);
+            GameObject dash = new GameObject("dashboard(test)"), child = new GameObject("collider"), other = new GameObject("starter(test)");
+            try
+            {
+                dash.AddComponent<Rigidbody>().isKinematic = true;
+                Collider body = dash.AddComponent<BoxCollider>();
+                child.transform.parent = dash.transform;
+                Collider trigger = child.AddComponent<BoxCollider>(); trigger.isTrigger = true;
+                Collider ordinary = other.AddComponent<BoxCollider>();
+                MscHeldDashboard.Local(dash);
+                if (!body.isTrigger || !trigger.isTrigger || !body.enabled) throw new Exception("Held dashboard colliders");
+                MscHeldDashboard.Local(other);
+                if (body.isTrigger || !trigger.isTrigger || ordinary.isTrigger) throw new Exception("Dashboard drop/ordinary part collisions");
+                MscHeldDashboard.Set(dash, true); MscHeldDashboard.Set(dash, true); MscHeldDashboard.Set(dash, false);
+                if (body.isTrigger || !trigger.isTrigger) throw new Exception("Remote dashboard collision restoration");
+                MscHeldDashboard.Local(dash); MscHeldDashboard.Reset();
+                if (body.isTrigger || !trigger.isTrigger) throw new Exception("Dashboard scene reset collisions");
+                MscHeldDashboard.Set(dash, true);
+                UnityEngine.Object.DestroyImmediate(dash.GetComponent<Rigidbody>());
+                MscHeldDashboard.Sweep();
+                if (body.isTrigger || !trigger.isTrigger) throw new Exception("Dashboard native mount removed body without restoring collisions");
+                Results.Add("DashboardCollisions=PASS;LocalDrop=PASS;RemoteDrop=PASS;Mount=PASS;Reset=PASS;Triggers=PASS");
+            }
+            finally { MscHeldDashboard.Local(null); UnityEngine.Object.Destroy(dash); UnityEngine.Object.Destroy(child); UnityEngine.Object.Destroy(other); }
         }
         static SortedDictionary<string, float> Snapshot()
         {

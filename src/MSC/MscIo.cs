@@ -5,12 +5,14 @@ namespace MWCoop
 {
     public static class MscIo
     {
-        static readonly BackgroundIo worker = new BackgroundIo("SummerCoop file IO", 256);
+        static BackgroundIo worker = new BackgroundIo("SummerCoop file IO", 256);
+        static bool stopped;
+        public static void Start() { if (stopped) { worker = new BackgroundIo("SummerCoop file IO", 256); stopped = false; } }
         static float nextError;
         public static int Pending { get { return worker.Pending; } }
         public static double OldestMilliseconds { get { return worker.OldestMilliseconds; } }
         public static bool TryQueue(Action operation) { return worker.TryPost(operation); }
-        public static bool Shutdown() { return worker.Complete(5000); }
+        public static bool Shutdown() { bool done = worker.Complete(5000); if (done) stopped = true; return done; }
         public static void Update()
         {
             if (UnityEngine.Time.realtimeSinceStartup < nextError) return;

@@ -24,6 +24,8 @@ namespace MWCoop
             catch (Exception e) { if (actionError.Length == 0) { actionError = e.ToString(); Log.Error("MSC cheat probe: " + e); } }
             bool ready = PlayerSync.InGame && Session.Players.Count >= expected;
             foreach (PlayerInfo player in Session.Players.Values) if (player.Level != 1) ready = false;
+            try { MscSaveQuitProbe.Update(ready); }
+            catch (Exception e) { if (actionError.Length == 0) { actionError = e.ToString(); Log.Error("MSC save quit probe: " + e); } }
             if (ready && readyAt < 0)
             {
                 readyAt = Time.realtimeSinceStartup; readyPlayers = Session.Players.Count;
@@ -92,7 +94,7 @@ namespace MWCoop
             // Long reconnect runs must be allowed to reach their requested
             // duration after loading, rather than hitting the default 180 s.
             timeout = Mathf.Max(timeout, duration + 180);
-            if (!(readyAt >= 0 && Time.realtimeSinceStartup - readyAt >= finish) && Time.realtimeSinceStartup - began < timeout) return;
+            if (!MscSaveQuitProbe.Completed && !(readyAt >= 0 && Time.realtimeSinceStartup - readyAt >= finish) && Time.realtimeSinceStartup - began < timeout) return;
             List<string> report = new List<string>();
             report.Add("Engine=MWCoop 0.95.3 / MSC adapter 1"); report.Add("Level=" + Application.loadedLevelName);
             report.Add("ModVersion=" + Version.Text); report.Add("NetVersion=" + Session.NetVersion);
@@ -118,6 +120,7 @@ namespace MWCoop
             report.AddRange(MscVehicleProbe.Results);
             report.AddRange(MscGarageProbe.Results);
             report.AddRange(MscWorkshopProbe.Results);
+            report.AddRange(MscSaveQuitProbe.Results);
             report.AddRange(MscWiringProbe.Results);
             report.AddRange(MscBeltProbe.Results);
             report.AddRange(MscPlatformProbe.Results);

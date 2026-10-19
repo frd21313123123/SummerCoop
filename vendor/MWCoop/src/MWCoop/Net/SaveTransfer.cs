@@ -421,22 +421,33 @@ namespace MWCoop.Net
         static readonly Dictionary<int, GuestSave> guestSaves = new Dictionary<int, GuestSave>();
         // Invite
         static float guestAskedAt = -100, guestCmpAt;
+        static bool guestQuitPending;
         static int guestCmpSeq, guestDone;
         static string lastUnsharedTop;
 
         // ------------------------------------------------------------ boutons
         static void Buttons(float now)
         {
-            if (!PlayerSync.InGame) { buttons.Clear(); held.Clear(); buttonsScanned = false; buttonsAt = -1; proceed = null; return; }
+            if (!PlayerSync.InGame) { buttons.Clear(); held.Clear(); buttonsScanned = false; buttonsAt = -1; proceed = null; guestQuitPending = false; return; }
             if (held.Count > 0) Release();
             if (proceed != null)
             {
+                if (MscShop.Busy || MscOrders.Busy) return;
                 SaveButton b = proceed;
                 proceed = null;
                 if (b.F != null && b.F.enabled && b.F.gameObject.activeInHierarchy)
                 {
                     Log.Info("toilettes : sauver et quitter au menu comme le jeu (" + Recon.Path(b.F.transform) + " -> " + b.Target + ")");
-                    Game.SetState(b.F, b.Target);
+                    if (MscRuntime.Enabled)
+                    {
+                        // Save actions synchronously, including the departing
+                        // host's player data. Broadcasting SAVEGAME also starts
+                        // MSC's setup/loading chains while the world is unloading.
+                        MscNativeSave.Capture(true);
+                        if (Session.IsHost) Session.Broadcast(new NetWriter(CoopMsg).U8(K_QUIT), true);
+                        Application.LoadLevel("MainMenu");
+                    }
+                    else Game.SetState(b.F, b.Target);
                 }
                 else Log.Warn("toilettes : sauver et quitter ABANDONNE, automate " + (b.F == null ? "detruit" : !b.F.enabled ? "coupe" : "inactif")
                               + (b.F != null ? " (" + Recon.Path(b.F.transform) + ")" : ""));
@@ -540,6 +551,7 @@ namespace MWCoop.Net
 
         static string LabelText(float now)
         {
+            if (MscRuntime.Enabled) return OrigLabel;
             if (Session.IsHost)
             {
                 return now < quitUntil ? "RECLIQUER : SAUVER ET QUITTER AU MENU" : "SAUVEGARDER (COOP, ON RESTE EN JEU)";
@@ -554,6 +566,21 @@ namespace MWCoop.Net
             if (now - lastClickAt < 1f) return;
             lastClickAt = now;
             string where = b.F.transform.root.name;
+            if (MscRuntime.Enabled)
+            {
+                MscFlow.SaveQuit = true; MscFlow.Requested = false;
+                if (Session.IsHost || Session.Host == null)
+                {
+                    proceed = b;
+                }
+                else if (!guestQuitPending)
+                {
+                    guestQuitPending = true;
+                    Session.SendToHost(new NetWriter(CoopMsg).U8(K_REQ), true);
+                    Hud.Toast(Lang.R("Saving..."));
+                }
+                return;
+            }
             if (Session.IsHost)
             {
                 // (hote seul aussi : sauvegarde en jeu, 2e clic pour quitter -- avant, seul, « sauver et quitter » du jeu
@@ -585,7 +612,7 @@ namespace MWCoop.Net
             float now = Time.realtimeSinceStartup;
             if (!PlayerSync.InGame) { Log.Info("sauvegarde coop demandee par " + by + " : l'hote n'est pas en jeu"); return; }
             if (coopPhase != 0) { Log.Info("sauvegarde coop demandee par " + by + " : deja en cours (" + coopBy + ")"); return; }
-            if (now - lastCoopDone < 5f)
+            if (!MscRuntime.Enabled && now - lastCoopDone < 5f)
             {
                 // Deuxieme demande juste apres (deux joueurs, deux clics) : elle vient d'etre faite.
                 Log.Info("sauvegarde coop demandee par " + by + " : faite il y a " + (now - lastCoopDone).ToString("F0") + " s, rien de plus");
@@ -649,7 +676,18 @@ namespace MWCoop.Net
                 string name = Session.Players.TryGetValue(from.Id, out pi) ? pi.Name : "#" + from.Id;
                 switch (k)
                 {
-                    case K_REQ: Log.Info("toilettes : " + name + " demande une sauvegarde"); StartCoop(name, false); break;
+                    case K_REQ:
+                        if (!PlayerSync.InGame) break;
+                        if (MscRuntime.Enabled && !MscShop.Busy && !MscOrders.Busy && coopPhase == 0)
+                        {
+                            // Native MSC save actions write synchronously. A guest
+                            // leaves only after the authoritative host has saved.
+                            Game.SaveInPlace();
+                            coopSeq = (coopSeq + 1) & 0xFFFF; if (coopSeq == 0) coopSeq = 1;
+                            Session.Broadcast(new NetWriter(CoopMsg).U8(K_DONE).U16(coopSeq).Str(name), true);
+                        }
+                        else StartCoop(name, false);
+                        break;
                     case K_NEED: Log.Info("sauvegarde : " + name + " est revenu au menu, il recevra la sauvegarde actuelle"); Queue(from); break;
                     case K_REPORT: OnReport(name, r); break;
                     case K_FBEGIN: case K_FCHUNK: case K_FEND: OnGuestFile(from, name, k, r); break;
@@ -683,11 +721,23 @@ namespace MWCoop.Net
                     int seq = r.U16();
                     string by = r.Str();
                     guestDone++;
+                    if (MscRuntime.Enabled && guestQuitPending)
+                    {
+                        guestQuitPending = false;
+                        Application.LoadLevel("MainMenu");
+                        break;
+                    }
                     Log.Info("sauvegarde coop #" + seq + " ecrite chez l'hote (demandee par " + by + "), l'invite reste en jeu");
                     Hud.Toast(Lang.T("Partie sauvegard\u00E9e chez l'h\u00F4te (", "Game saved on the host (") + by + ")");
                     break;
                 }
                 case K_QUIT:
+                    if (MscRuntime.Enabled)
+                    {
+                        MscFlow.SaveQuit = true; MscFlow.Requested = false;
+                        if (PlayerSync.InGame) Application.LoadLevel("MainMenu");
+                        break;
+                    }
                     Log.Info("l'hote sauvegarde et quitte au menu (toilettes) : l'invite le suivra");
                     Hud.Toast(Lang.T("L'h\u00F4te sauvegarde et quitte au menu : vous le suivez, puis revenez avec lui", "The host saves and quits to the menu: you follow, then come back with them"));
                     break;
@@ -1084,7 +1134,7 @@ namespace MWCoop.Net
         // Clic d'essai sur les toilettes accrochees les plus proches, par leur automate (jamais la souris) :
         // "Wait for click" avec ses MousePickEvent coupes (sans curseur dessus, ils renverraient aussitot a
         // "Wait"), puis CLICK : la vraie transition, et l'action de tete de "Wait".
-        static string TestPress()
+        internal static string TestPress()
         {
             GameObject pl = GameObject.Find("PLAYER");
             Vector3 me = pl != null ? pl.transform.position : Vector3.zero;
