@@ -648,6 +648,9 @@ static void DrawHeader(Graphics &g)
         g.DrawLine(&sp, right - 2, 32.0f, right - 2, 56.0f);
         right -= 14;
         g_navR[TAB_API] = RectF();
+        // The original creators' credits are always one click away (even without a game folder).
+        HeadPage(g, RectF(right - 44, 22, 44, 44), TAB_CREDITS, IC_STAR);
+        right -= 54;
         HeadPage(g, RectF(right - 44, 22, 44, 44), TAB_LOGS, IC_FILE);
         right -= 54;
     }
@@ -1355,10 +1358,19 @@ static void DrawSettings(Graphics &g)
 // ---- credits (demande de JD, 08/10 : ceux qui donnent quelque chose pour ameliorer MWCoop). Trois onglets (JD, 13/10) :
 // modeles 3D, images (musee de la Corse : la liste complete, generee dans credits-images.inc), remerciements. Le plus
 // recent en haut de chaque onglet ; la page defile a la molette.
-enum { CRED_3D, CRED_IMG, CRED_THANKS };
+enum { CRED_3D, CRED_IMG, CRED_THANKS, CRED_MWCOOP };
 struct Credit { int cat; const wchar_t *name, *roleFr, *roleEn, *fr, *en, *date; int img; };   // img : image integree (launcher.rc), 0 : initiale
 static Bitmap *LoadPngRes(int id);
 static const Credit kCredits[] = {
+    { CRED_MWCOOP, L"Parricidium", L"Dépôt original MWCoop", L"Original MWCoop repository",
+      L"Merci d'avoir publié le projet MWCoop et son code source. Ils ont rendu cette adaptation possible.",
+      L"Thank you for publishing the original MWCoop project and its source code. They made this adaptation possible.", L"", 0 },
+    { CRED_MWCOOP, L"MWCoop contributors", L"Développeurs et contributeurs", L"Original developers and contributors",
+      L"Merci pour le réseau, les joueurs, les véhicules, le monde partagé, les sauvegardes et toutes les améliorations du mod original.",
+      L"Thank you for the networking, players, vehicles, shared world, saves and all the improvements to the original mod.", L"", 0 },
+    { CRED_MWCOOP, L"MWCoop 0.95.3", L"Moteur coopératif et lanceur", L"Co-op engine and launcher",
+      L"Le moteur Steam/LAN, la synchronisation et les bases du lanceur ont été adaptés pour My Summer Car.",
+      L"The Steam/LAN engine, synchronization systems and launcher foundations were adapted for My Summer Car.", L"", 0 },
     { CRED_3D, L"Scan the World", L"Buste de Pascal Paoli", L"Bust of Pasquale Paoli",
       L"Le buste de Paoli du musée de la Corse, d'après celui du Palazzu Naziunale de Corte, numérisé par JF Andreani pour Scan the World (MyMiniFactory), licence CC BY-NC-SA. Simplifié pour le jeu.",
       L"The Paoli bust in the Museum of Corsica, after the one in the Palazzu Naziunale in Corte, scanned by JF Andreani for Scan the World (MyMiniFactory), CC BY-NC-SA license. Simplified for the game.", L"13/10/2026", 0 },
@@ -1376,7 +1388,7 @@ static const Credit kCredits[] = {
       L"A pack of 155 outfits for your character: 84 tops, 27 pants and 44 faces. In the Outfit tab, after the game's own (\"Outfit Dom 12\"…).", L"08/10/2026", 6 },
 };
 #include "credits-images.inc"
-static int g_credTab = CRED_3D;
+static int g_credTab = CRED_MWCOOP;
 static float g_credContentH;   // hauteur du contenu de l'onglet (pour la molette)
 static RectF CreditsArea() { return RectF(kMain.X + 24, kMain.Y + 168, kMain.Width - 48, kMain.Height - 168 - 64); }
 static float CreditsMaxScroll() { return max(0.0f, g_credContentH - CreditsArea().Height); }
@@ -1415,10 +1427,12 @@ static void DrawCreditsPage(Graphics &g)
     RectF c(kMain.X, kMain.Y, kMain.Width, kMain.Height);
     Glass(c);
     Title(g, T(L"Merci !", L"Thank you!"), RectF(c.X + 28, c.Y + 22, 400, 30), 22, kInk);
-    Para(g, T(L"MWCoop grandit aussi grâce à vous et aux créateurs qui partagent leur travail. Chaque personne qui donne quelque chose au mod est créditée ici.",
-              L"MWCoop also grows thanks to you and to the creators who share their work. Everyone who gives something to the mod is credited here."),
+    Para(g, T(L"SummerCoop existe grâce au travail des auteurs de MWCoop. Merci pour les sources, le moteur coopératif et le lanceur d'origine.",
+              L"SummerCoop exists thanks to MWCoop's authors. Thank you for the source code, co-op engine and original launcher."),
          RectF(c.X + 28, c.Y + 58, c.Width - 56, 40), 13, kGrey);
-    UiSeg(g, RectF(c.X + 24, c.Y + 106, 520, 40), { T(L"Modèles 3D", L"3D Models"), L"Images", T(L"Remerciements", L"Special Thanks") }, g_credTab, UI_CRED_TAB, 13);
+    UiSeg(g, RectF(c.X + 24, c.Y + 106, 740, 40),
+          { L"MWCoop", T(L"Modèles 3D", L"3D Models"), L"Images", T(L"Remerciements", L"Special Thanks") },
+          g_credTab == CRED_MWCOOP ? 0 : g_credTab + 1, UI_CRED_TAB, 13);
 
     RectF area = CreditsArea();
     float sc = g_scroll[TAB_CREDITS] = min(g_scroll[TAB_CREDITS], CreditsMaxScroll());
@@ -1446,17 +1460,37 @@ static void DrawCreditsPage(Graphics &g)
              RectF(area.X + 14, y, area.Width - 28, 22), 12.5f, FontStyleRegular, kInk, StringAlignmentNear);
         y += 30;
     } else {
+        if (g_credTab == CRED_MWCOOP) {
+            Title(g, L"MWCoop -> SummerCoop", RectF(area.X + 4, y, area.Width - 8, 30), 19, kInk);
+            Para(g, T(L"SummerCoop est une adaptation de MWCoop 0.95.3 pour My Summer Car. Nous remercions chaleureusement les auteurs du mod original et ses contributeurs.",
+                      L"SummerCoop adapts MWCoop 0.95.3 for My Summer Car. Our sincere thanks go to the original mod's authors and contributors."),
+                 RectF(area.X + 4, y + 35, area.Width - 8, 54), 13, kGrey);
+            y += 104;
+        }
         for (const Credit &k : kCredits) {
             if (k.cat != g_credTab) continue;
             CreditCard(g, k, y, area.X, area.Width);
             y += 116;
         }
+        if (g_credTab == CRED_MWCOOP) {
+            Para(g, T(L"Les droits des auteurs de MWCoop sont conservés. La licence MIT de SummerCoop ne remplace pas les droits sur le code et les ressources d'origine.",
+                      L"The original MWCoop authors retain their rights. SummerCoop's MIT license does not relicense the upstream code or assets."),
+                 RectF(area.X + 8, y + 2, area.Width - 16, 52), 12.5f, kGrey);
+            y += 64;
+        }
     }
     g_credContentH = y + sc - area.Y;
     g.Restore(st);
-    Para(g, T(L"Tu as fait quelque chose pour SummerCoop ? Partage-le sur GitHub (bouton en bas à gauche) : tu seras crédité ici et dans les notes de version.",
-              L"Made something for SummerCoop? Share it on GitHub (button at the bottom left): you'll be credited here and in the release notes."),
-         RectF(c.X + 28, c.Y + c.Height - 56, c.Width - 56, 40), 12.5f, kGrey);
+    if (g_credTab == CRED_MWCOOP) {
+        UiButton(g, RectF(c.X + 28, c.Y + c.Height - 55, 310, 40),
+                 T(L"Sources de MWCoop", L"MWCoop source on GitHub"), UI_CRED_SOURCE, false, IC_FILE);
+        UiButton(g, RectF(c.X + 350, c.Y + c.Height - 55, 280, 40),
+                 T(L"Crédits et droits", L"Third-party credits"), UI_CRED_NOTICE, false, IC_FILE);
+    } else {
+        Para(g, T(L"Tu as fait quelque chose pour SummerCoop ? Partage-le sur GitHub (bouton en bas à gauche) : tu seras crédité ici et dans les notes de version.",
+                   L"Made something for SummerCoop? Share it on GitHub (button at the bottom left): you'll be credited here and in the release notes."),
+             RectF(c.X + 28, c.Y + c.Height - 56, c.Width - 56, 40), 12.5f, kGrey);
+    }
 }
 
 // ---- lancement, partie en cours
@@ -1603,6 +1637,8 @@ static bool UiClick(int id)
     case UI_FACE_DEL: FaceRemove(); return true;
     case UI_SET_KEY: case UI_SET_KEY + 1: case UI_SET_KEY + 2: g_keyCapture = g_keyCapture == id - UI_SET_KEY ? -1 : id - UI_SET_KEY; return true;
     case UI_SET_GUIDE: TutoStart(true); return true;
+    case UI_CRED_SOURCE: ShellExecuteW(g_wnd, L"open", L"https://github.com/Parricidium/MWCoop", NULL, NULL, SW_SHOWNORMAL); return true;
+    case UI_CRED_NOTICE: ShellExecuteW(g_wnd, L"open", L"https://github.com/frd21313123123/SummerCoop/blob/main/THIRD_PARTY_NOTICES.md", NULL, NULL, SW_SHOWNORMAL); return true;
     case UI_SET_STEAM: case UI_SET_IP: if ((id == UI_SET_STEAM) != g_steamNet && g_lobby == LB_NONE) OnButton(id == UI_SET_STEAM ? B_NETSTEAM : B_NETIP); return true;
     case UI_SET_PORTM: case UI_SET_PORTP: for (int i = 0; i < (int)g_opts.size(); i++) if (!strcmp(g_opts[i].key, "Port")) OptStep(i, id == UI_SET_PORTP ? 1 : -1); return true;
     case UI_SET_FOLDER: ChooseExe(); return true;
@@ -1631,7 +1667,13 @@ static bool UiClick(int id)
     if (id >= UI_LOOKPIN && id < UI_LOOKPIN + 4) { g_lookZone = id - UI_LOOKPIN; return true; }
     if (id == UI_LOOKROT || id == UI_LOOKROT + 1) { g_skinYaw = fmodf(g_skinYaw + (id == UI_LOOKROT ? 2.0f : -2.0f) + 16, 16.0f); g_skinIdleT = GetTickCount(); return true; }
     if (id == UI_LOOKRAND) { LookRandom(); return true; }
-    if (id >= UI_CRED_TAB && id < UI_CRED_TAB + 3) { g_credTab = id - UI_CRED_TAB; g_scroll[TAB_CREDITS] = 0; return true; }
+    if (id >= UI_CRED_TAB && id < UI_CRED_TAB + 4) {
+        int index = id - UI_CRED_TAB;
+        g_credTab = index == 0 ? CRED_MWCOOP : index - 1;
+        g_scroll[TAB_CREDITS] = 0;
+        g_credContentH = 0;
+        return true;
+    }
     if (id == UI_LOOKRESET) { LookReset(); return true; }
     if (id >= UI_LOBBY_GEAR && id <= UI_LOBBY_ME_CAR) { LobbyOptsClick(id); return true; }
     if (id >= UI_API_DOC && id <= UI_API_EX1) { ApiClick(id); return true; }
