@@ -1,5 +1,6 @@
 ﻿using System.Collections.Generic;
 using HutongGames.PlayMaker;
+using HutongGames.PlayMaker.Actions;
 using MWCoop.Net;
 using UnityEngine;
 
@@ -58,6 +59,7 @@ namespace MWCoop
             public string LockState, SetLockState;     // "Reset 2" -> "Set lock 2" (camion : "Reset 3" -> "Set lock 3")
             public bool NoRot;                         // fermeture sans SetRotation (portieres gauches) : posee par nous
             public Rigidbody Body; public HingeJoint Hinge;
+            public Transform Parent;
             public DoorState State;
             public int Owner = -1; public bool Mine;   // dernier a l'avoir maniee ; nous (on envoie son angle)
             public int PendingOwn;                     // invite : evenements envoyes dont le retour de l'hote manque
@@ -87,6 +89,9 @@ namespace MWCoop
         static int gen = -1;   // VehicleSync.Generation au dernier releve
         static readonly List<KeyValuePair<float, Peer>> snapshots = new List<KeyValuePair<float, Peer>>();
         static bool applying;
+        sealed class Waiting { public string Key; public int Kind, Who; public float Until; }
+        static readonly List<Waiting> waiting = new List<Waiting>();
+        public static void SoonScan() { if (nextScan >= 0) nextScan = 0; }
         // Joueur local : ses collisionneurs pleins (controleur, objet tenu, poings...), revus toutes les 0,5 s.
         static Collider[] plColls = new Collider[0];
         static float plCollsAt = -10f;
@@ -114,6 +119,17 @@ namespace MWCoop
 
         public static bool Tracks(PlayMakerFSM f) { return hooked.Contains(f); }
 
+        internal static void PartRemoving(GameObject part)
+        {
+            PlayMakerFSM use = Game.FsmOn(part, "Use");
+            if (use == null || use.Fsm.GetState("Open door") == null) return;
+            // Native Removal destroys the hinge but leaves the closed latch.
+            // On reassembly SetJointConnectedBody would then bind that old
+            // FixedJoint instead of the new hinge, leaving the door locked and
+            // the hinge attached to the world.
+            foreach (FixedJoint latch in part.GetComponents<FixedJoint>()) UnityEngine.Object.Destroy(latch);
+        }
+
         // Attache posee par le verrou du jeu ("Set lock 2", reperee en fin d'etat, avant tout passage de
         // VehicleSync.ProtectJoints) : laissee cassable sur la copie -- incassable, elle soudait la portiere et le
         // clic suivant (qui la casse en tirant) ne l'ouvrait plus. Seulement elle : la charniere, le loquet de la
@@ -123,6 +139,7 @@ namespace MWCoop
         public static void OnLevelLoaded()
         {
             byKey.Clear(); hooked.Clear(); snapshots.Clear(); lockJoints.Clear(); plugWait.Clear();
+            waiting.Clear();
             plColls = new Collider[0]; plCollsAt = -10f; plCc = null; ccWasOn = false; gen = -1;
             nextScan = PlayerSync.InGame ? Time.realtimeSinceStartup + 12f : -1;
         }
@@ -160,6 +177,7 @@ namespace MWCoop
                     d.Body = f.GetComponentInParent<Rigidbody>();
                     if (d.Body != null && d.Body.transform == car.transform) d.Body = null;
                     d.Hinge = d.Body != null ? d.Body.GetComponent<HingeJoint>() : null;
+                    d.Parent = d.Body != null ? d.Body.transform.parent : null;
                     d.State = OpenVar(d) ? DoorState.Open : DoorState.Closed;
                     if (!Inject(d, open, K_OPEN) || !Inject(d, close, K_CLOSED)) continue;
                     if (grab != null) Inject(d, grab, K_GRAB);
@@ -257,8 +275,45 @@ namespace MWCoop
         // Pose fermee (repere de la voiture) : portiere fermee pour le jeu (verrouillee par ses butees).
         static void NoteRest(Door d)
         {
-            if (d.RestSet || d.Hinge == null || d.Body == null || d.Springing || d.State != DoorState.Closed || OpenVar(d)) return;
+            if (d.RestSet || d.Hinge == null || d.Body == null || d.Springing) return;
+            if (d.State != DoorState.Closed || OpenVar(d))
+            {
+                // A saved open door may never close before its first remote
+                // angle. Recover the closed rotation from its native action.
+                FsmState closed = d.Fsm.Fsm.GetState(d.IsDoor ? "Close door" : "Close hood");
+                if (closed == null) return;
+                foreach (FsmStateAction action in closed.Actions)
+                {
+                    SetRotation set = action as SetRotation;
+                    if (set == null || set.space != Space.Self) continue;
+                    GameObject target = set.gameObject.OwnerOption == OwnerDefaultOption.UseOwner ? d.Fsm.gameObject : set.gameObject.GameObject.Value;
+                    if (target != d.Body.gameObject) continue;
+                    Vector3 angles = set.vector != null && !set.vector.IsNone ? set.vector.Value : d.Body.transform.localEulerAngles;
+                    if (set.xAngle != null && !set.xAngle.IsNone) angles.x = set.xAngle.Value;
+                    if (set.yAngle != null && !set.yAngle.IsNone) angles.y = set.yAngle.Value;
+                    if (set.zAngle != null && !set.zAngle.IsNone) angles.z = set.zAngle.Value;
+                    d.RestRot = Quaternion.Euler(angles); d.RestPos = d.Body.transform.localPosition; d.RestSet = true;
+                    return;
+                }
+                return;
+            }
             d.RestSet = true; d.RestRot = d.Body.transform.localRotation; d.RestPos = d.Body.transform.localPosition;
+        }
+
+        static void RefreshPhysics(Door d)
+        {
+            if (d.Fsm == null || d.PlugOn != null) return;
+            Rigidbody body = d.Fsm.GetComponentInParent<Rigidbody>();
+            Transform car = VehicleSync.CarRoot(d.Fsm.transform);
+            if (car == null || body != null && body.transform == car) body = null;
+            HingeJoint hinge = body == null ? null : body.GetComponent<HingeJoint>();
+            Transform parent = body == null ? null : body.transform.parent;
+            if (d.Body == body && d.Hinge == hinge && d.Parent == parent) return;
+            if (d.Held && d.Body != null) { d.Body.isKinematic = false; d.Held = false; }
+            StopFollow(d);
+            d.Body = body; d.Hinge = hinge; d.Parent = parent; d.RestSet = false; d.Colls = null;
+            d.State = OpenVar(d) ? DoorState.Open : DoorState.Closed;
+            NoteRest(d);
         }
 
         // Angle (degres) autour de l'axe de la charniere depuis la pose fermee : le repere des butees du jeu.
@@ -278,6 +333,13 @@ namespace MWCoop
             float now = Time.realtimeSinceStartup;
             // Liste des voitures changee apres le premier releve (taxi active, cyclomoteur recree) : releve tout de suite.
             if (now >= nextScan || (gen >= 0 && gen != VehicleSync.Generation)) { nextScan = now + 30f; Scan(); }
+            for (int i = 0; i < waiting.Count; i++)
+            {
+                Waiting item = waiting[i]; Door ready;
+                if (byKey.TryGetValue(item.Key, out ready) && ready.Fsm != null)
+                { RefreshPhysics(ready); if (Session.IsHost) Apply(ready, item.Kind, item.Who); else Receive(ready, item.Kind, item.Who); waiting.RemoveAt(i--); }
+                else if (now > item.Until) { Log.Warn("portiere unavailable after retry: " + item.Key); waiting.RemoveAt(i--); }
+            }
             if (plugWait.Count > 0 && PlugReady())
             {
                 var waiting = new List<KeyValuePair<Door, string>>(plugWait);
@@ -317,6 +379,7 @@ namespace MWCoop
             bool trace = Config.GetInt("Test", "TracePortiere", 0) != 0;
             foreach (Door d in byKey.Values)
             {
+                RefreshPhysics(d);
                 Hold(d);
                 NoteRest(d);
                 if (trace && now < d.TraceUntil && now >= d.NextTrace && d.Hinge != null)
@@ -655,6 +718,7 @@ namespace MWCoop
                     if (me) StopFollow(d);
                     if (d.State != DoorState.Closed) { d.State = DoorState.Open; return; }
                     d.State = DoorState.Open; d.OpenedAt = Time.realtimeSinceStartup;
+                    Hold(d); // Release a closed kinematic copy before its open actions/servo.
                     // Ses butees d'ouverture se posent sur la pose du moment : fermee pour de bon d'abord.
                     if (d.IsDoor && CanSnap(d))
                     {
@@ -788,10 +852,21 @@ namespace MWCoop
             {
                 // Arbitre : applique dans l'ordre d'arrivee, renvoie a tous (l'auteur compris : son retour).
                 if (d != null) Apply(d, kind, who);
+                else { waiting.Add(new Waiting { Key = key, Kind = kind, Who = who, Until = Time.realtimeSinceStartup + 60 }); SoonScan(); }
                 Session.Broadcast(new NetWriter(Msg.CarDoor).U8(who).Str(key).U8(kind), true);
                 return;
             }
-            if (d == null) return;
+            if (d == null)
+            {
+                waiting.Add(new Waiting { Key = key, Kind = kind, Who = who, Until = Time.realtimeSinceStartup + 60 });
+                SoonScan(); return;
+            }
+            RefreshPhysics(d);
+            Receive(d, kind, who);
+        }
+
+        static void Receive(Door d, int kind, int who)
+        {
             if (who == Session.LocalId)
             {
                 // Retour d'un des notres : s'il est le dernier attendu, on se cale sur l'ordre de l'hote.

@@ -1183,6 +1183,7 @@ namespace MWCoop
                 c.InterpWas = new Dictionary<Rigidbody, RigidbodyInterpolation>();
                 foreach (Rigidbody rb in c.Body.GetComponentsInChildren<Rigidbody>(true))
                 {
+                    if (MscBoltPositions.IsFastenerBody(rb)) { rb.interpolation = RigidbodyInterpolation.None; continue; }
                     c.InterpWas[rb] = rb.interpolation;
                     rb.interpolation = RigidbodyInterpolation.Interpolate;
                 }

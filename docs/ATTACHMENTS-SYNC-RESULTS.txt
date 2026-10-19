@@ -1,0 +1,44 @@
+SummerCoop 0.5.2 - native attachment synchronization verification
+Recorded: 2026-10-20 00:30:44 +05:00
+Run: attachments-final-06
+Transport: localhost UDP, two isolated native game processes, separate profiles
+Fixture: collisions and gravity disabled on tested car; live physics during road phase; 35 m/s maximum
+Launcher SHA256 8F29B6D26468E9EBC158C6FF5856EE8BF3973EEE801B5E47B0045DB88076650C
+Native adapter: 41 PASS; network: 15 PASS; native launcher update: 28 PASS
+Defender: actual launcher and both DLL hashes match clean report
+
+host SHA256 331ACD1E629935F75F643711BDA14F8DAD8ED819CFE3F9E7C6F93CAE309B3C87  SummerCoop.dll
+host SHA256 4D28B7E043167F288AF5941B60404FCCFD2AB763C42BE20705F6CBC762C8EC8A  References/SummerCoop.Core.dll
+host: Attachments=moving-fasteners;Pass=True;samples=561;moving=538;bolts=248;boltError=0;batteryError=0.0001025134
+host: Attachments=host-battery-remove;Pass=True;id=mscitem:battery1;installed=False;joints=0;parent=none
+host: Attachments=host-battery-install;Pass=True;id=mscitem:battery1;installed=True;joints=1;parent=pivot_battery
+host: Attachments=guest-battery-remove;Pass=True;id=mscitem:battery1;installed=False;joints=0;parent=none
+host: Attachments=guest-battery-install;Pass=True;id=mscitem:battery1;installed=True;joints=1;parent=pivot_battery
+host: Attachments=host-wheel-remove;Pass=True;id=mscitem:wheel_gt2;installed=False
+host: Attachments=host-wheel-install;Pass=True;id=mscitem:wheel_gt2;installed=True
+host: Attachments=guest-wheel-remove;Pass=True;id=mscitem:wheel_gt2;installed=False
+host: Attachments=guest-wheel-install;Pass=True;id=mscitem:wheel_gt2;installed=True
+host: Attachments=host-door-open;Pass=True;SATSUMA(557kg, 248)/Body/pivot_door_left/door left(Clone)#0 etat Mouse off Open=True, angle 79.9 deg, Open, main #0 (nous) [Mouse off m19 butees 0..80 sur SATSUMA(557kg, 248) attaches en plus 0]
+host: Attachments=host-door-close;Pass=True;SATSUMA(557kg, 248)/Body/pivot_door_left/door left(Clone)#0 etat Mouse off Open=False, angle 0.0 deg, Closed, main #-1 [Mouse off m19 butees 0..80 sur SATSUMA(557kg, 248) attaches en plus 1 (casse 12000)]
+host: Attachments=remounted-guest-door-open;Pass=True;SATSUMA(557kg, 248)/Body/pivot_door_left/door left(Clone)#0 etat Mouse off Open=True, angle 79.9 deg, Open, main #1, suit [Mouse off m19 butees 0..80 sur SATSUMA(557kg, 248) attaches en plus 0 traverse 3]
+host: Attachments=remounted-guest-door-close;Pass=True;SATSUMA(557kg, 248)/Body/pivot_door_left/door left(Clone)#0 etat Mouse off Open=False, angle 0.0 deg, Closed, main #-1 [Mouse off dort m19 butees 0..80 sur SATSUMA(557kg, 248) attaches en plus 1 (casse 12000)]
+host: Attachments=starter-battery-identity;Pass=True;found=True
+host: Attachments=starter-battery-install;Pass=True;id=mscitem:battery0;installed=True;joints=1;parent=pivot_battery
+client SHA256 331ACD1E629935F75F643711BDA14F8DAD8ED819CFE3F9E7C6F93CAE309B3C87  SummerCoop.dll
+client SHA256 4D28B7E043167F288AF5941B60404FCCFD2AB763C42BE20705F6CBC762C8EC8A  References/SummerCoop.Core.dll
+client: Attachments=moving-fasteners;Pass=True;samples=480;moving=456;bolts=248;boltError=0;batteryError=0
+client: Attachments=host-battery-remove;Pass=True;id=mscitem:battery1;installed=False;joints=0;parent=none
+client: Attachments=host-battery-install;Pass=True;id=mscitem:battery1;installed=True;joints=1;parent=pivot_battery
+client: Attachments=guest-battery-remove;Pass=True;id=mscitem:battery1;installed=False;joints=0;parent=none
+client: Attachments=guest-battery-install;Pass=True;id=mscitem:battery1;installed=True;joints=1;parent=pivot_battery
+client: Attachments=host-wheel-remove;Pass=True;id=mscitem:wheel_gt2;installed=False
+client: Attachments=host-wheel-install;Pass=True;id=mscitem:wheel_gt2;installed=True
+client: Attachments=guest-wheel-remove;Pass=True;id=mscitem:wheel_gt2;installed=False
+client: Attachments=guest-wheel-install;Pass=True;id=mscitem:wheel_gt2;installed=True
+client: Attachments=host-door-open;Pass=True;SATSUMA(557kg, 248)/Body/pivot_door_left/door left(Clone)#0 etat Mouse off Open=True, angle 79.9 deg, Open, main #0, suit [Mouse off m19 butees 0..80 sur SATSUMA(557kg, 248) attaches en plus 0 traverse 3]
+client: Attachments=host-door-close;Pass=True;SATSUMA(557kg, 248)/Body/pivot_door_left/door left(Clone)#0 etat Mouse off Open=False, angle 0.0 deg, Closed, main #-1 [Mouse off cin m19 butees 0..80 sur SATSUMA(557kg, 248) attaches en plus 1 (casse inf)]
+client: Attachments=remounted-guest-door-open;Pass=True;SATSUMA(557kg, 248)/Body/pivot_door_left/door left(Clone)#0 etat Mouse off Open=True, angle 79.9 deg, Open, main #1 (nous) [Mouse off dort m19 butees 0..80 sur SATSUMA(557kg, 248) attaches en plus 0]
+client: Attachments=remounted-guest-door-close;Pass=True;SATSUMA(557kg, 248)/Body/pivot_door_left/door left(Clone)#0 etat Mouse off Open=False, angle 0.0 deg, Closed, main #-1 [Mouse off dort m19 butees 0..80 sur SATSUMA(557kg, 248) attaches en plus 1 (casse 12000)]
+client: Attachments=starter-battery-identity;Pass=True;found=True
+client: Attachments=starter-battery-install;Pass=True;id=mscitem:battery0;installed=True;joints=1;parent=pivot_battery
+PASS: 30 attachment checks; matching mod binaries; personal save hashes unchanged. ModMvid=e375891b-4604-415e-a9e6-77b09b173b1f

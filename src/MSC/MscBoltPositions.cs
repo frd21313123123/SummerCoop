@@ -14,6 +14,13 @@ namespace MWCoop
             public GameObject Visual;
             public Vector3 Position, MeshPosition;
             public Quaternion Rotation, MeshRotation;
+            public PlayMakerFSM Fsm;
+            public Rigidbody Body;
+            public FsmInt Stage;
+            public FsmInt[] Variables;
+            public int PoseStage = -1;
+            public Vector3 PosePosition, PoseMeshPosition;
+            public Quaternion PoseRotation, PoseMeshRotation;
         }
         static readonly Dictionary<PlayMakerFSM, Anchor> anchors = new Dictionary<PlayMakerFSM, Anchor>();
         internal static void Reset() { anchors.Clear(); }
@@ -80,7 +87,7 @@ namespace MWCoop
             if (visual == null) return;
             Anchor anchor;
             if (!anchors.TryGetValue(f, out anchor) || anchor.Visual != visual)
-                anchors[f] = new Anchor { Visual = visual, Position = f.transform.localPosition, Rotation = f.transform.localRotation,
+                anchors[f] = new Anchor { Fsm = f, Body = f.GetComponent<Rigidbody>(), Variables = f.FsmVariables.IntVariables, Stage = f.FsmVariables.FindFsmInt("Stage"), Visual = visual, Position = f.transform.localPosition, Rotation = f.transform.localRotation,
                     MeshPosition = visual.transform.localPosition, MeshRotation = visual.transform.localRotation };
             f.FsmVariables.FindFsmGameObject("ThisBolt").Value = visual;
             FsmString bolt = f.FsmVariables.FindFsmString("Bolt"), suffix = f.FsmVariables.FindFsmString("ArrayIndex");
@@ -163,7 +170,46 @@ namespace MWCoop
                     if (rotation.space == Space.Self) target.localRotation = value; else target.rotation = value;
                 }
             }
+            if (anchor != null)
+            {
+                anchor.PoseStage = stage;
+                anchor.PosePosition = f.transform.localPosition; anchor.PoseRotation = f.transform.localRotation;
+                anchor.PoseMeshPosition = visual.transform.localPosition; anchor.PoseMeshRotation = visual.transform.localRotation;
+            }
             return restored;
+        }
+
+        internal static bool IsFastenerBody(Rigidbody body)
+        {
+            return body != null && body.isKinematic && IsFastener(body.gameObject);
+        }
+        static bool IsFastener(GameObject go)
+        {
+            PlayMakerFSM f = Game.FsmOn(go, "Screw");
+            return MscParts.IsBolt(f) && f.FsmVariables.FindFsmGameObject("ThisBolt") != null;
+        }
+        internal static void LateUpdate()
+        {
+            if (!PlayerSync.InGame) return;
+            foreach (Anchor anchor in anchors.Values)
+            {
+                if (anchor.Fsm == null || anchor.Visual == null || anchor.Body == null || !anchor.Body.isKinematic
+                    || !anchor.Fsm.gameObject.activeInHierarchy) continue;
+                // A captive screw follows its parent (including wheel spin).
+                // Rigidbody interpolation instead retains an old WORLD pose.
+                if (!ReferenceEquals(anchor.Variables, anchor.Fsm.FsmVariables.IntVariables))
+                {
+                    anchor.Variables = anchor.Fsm.FsmVariables.IntVariables;
+                    anchor.Stage = anchor.Fsm.FsmVariables.FindFsmInt("Stage"); anchor.PoseStage = -1;
+                }
+                if (anchor.PoseStage != anchor.Stage.Value) Restore(anchor.Fsm);
+                Transform t = anchor.Fsm.transform;
+                anchor.Body.interpolation = RigidbodyInterpolation.None;
+                t.localPosition = anchor.PosePosition; t.localRotation = anchor.PoseRotation;
+                anchor.Visual.transform.localPosition = anchor.PoseMeshPosition;
+                anchor.Visual.transform.localRotation = anchor.PoseMeshRotation;
+                anchor.Body.position = t.position; anchor.Body.rotation = t.rotation;
+            }
         }
 
         public static string RestoreAll()

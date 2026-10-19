@@ -30,7 +30,7 @@ namespace MWCoop
         {
             Perf.FixedStart();
             Perf.Begin();
-            try { VehicleSync.RevLimiterFixed(); VehicleSync.FixedUpdate(); MscFireworks.FixedUpdate(); }
+            try { VehicleSync.RevLimiterFixed(); VehicleSync.FixedUpdate(); MscBattery.FixedUpdate(); MscFireworks.FixedUpdate(); }
             catch (System.Exception e) { if (Time.frameCount % 600 == 0) Log.Warn("voitures (physique) : " + e.Message); }
             Perf.End("(physique)");
             Perf.FixedEnd();
@@ -59,6 +59,9 @@ namespace MWCoop
                 Machines.LateUpdate(); Perf.Mark("[poses machines]");
                 Npcs.LateUpdate(); Perf.Mark("[poses PNJ]");
                 VehicleSync.LateUpdate(); Perf.Mark("[poses voitures]");
+                MscBattery.LateUpdate();
+                MscBoltPositions.LateUpdate(); Perf.Mark("[poses fixations MSC]");
+                MscAttachmentProbe.LateUpdate();
             }
             catch (System.Exception e) { if (Time.frameCount % 600 == 0) Log.Warn("poses : " + e.Message); }
             try { AssembleIcon.LateUpdate(); }

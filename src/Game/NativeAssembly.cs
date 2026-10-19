@@ -103,9 +103,50 @@ namespace SummerCoop.Game
                     if (joint == null) missing = true;
                     else if (add.storeComponent != null) add.storeComponent.Value = joint;
                 }
-                if (missing) foreach (FsmStateAction action in setup.Actions)
-                    if (action is AddComponent || action is SetProperty || action is SetHingeJointLimits || action is SetHingeJointProperties) action.OnEnter();
+                if (missing)
+                {
+                    PlaceForJoint(f, state);
+                    foreach (FsmStateAction action in setup.Actions)
+                        if (action is AddComponent || action is SetProperty || action is SetHingeJointLimits || action is SetHingeJointProperties) action.OnEnter();
+                }
                 if (found) return;
+            }
+        }
+        public static string JointMountState(PlayMakerFSM f, FsmState setup)
+        {
+            bool joint = false;
+            foreach (FsmStateAction action in setup.Actions)
+            {
+                AddComponent add = action as AddComponent;
+                if (add != null && add.component.Value.EndsWith("Joint", StringComparison.Ordinal)) joint = true;
+            }
+            if (!joint || MountAction(setup.Actions) != null) return null;
+            FsmState current = setup;
+            for (int i = 0; current != null && i < 8; i++)
+            {
+                if (MountAction(current.Actions) != null) return current.Name;
+                string next = null;
+                foreach (FsmTransition transition in current.Transitions) if (transition.EventName == "FINISHED") { next = transition.ToState; break; }
+                current = next == null ? null : f.Fsm.GetState(next);
+            }
+            return null;
+        }
+        public static void PlaceForJoint(PlayMakerFSM f, string mountState)
+        {
+            FsmGameObject part = f.FsmVariables.FindFsmGameObject("Part");
+            if (part == null || part.Value == null) return;
+            // A joint created at the old loose/held world pose can break during
+            // the native wait before SetParent. Establish its real mount first,
+            // so its initial anchors and zero rotation belong to the vehicle.
+            Complete(new FsmBinding { Component = f }, mountState, part.Value);
+            Rigidbody body = part.Value.GetComponent<Rigidbody>();
+            if (body == null) return;
+            body.position = part.Value.transform.position; body.rotation = part.Value.transform.rotation;
+            Rigidbody car = part.Value.transform.parent.GetComponentInParent<Rigidbody>();
+            if (!body.isKinematic)
+            {
+                body.velocity = car == null ? Vector3.zero : car.GetPointVelocity(body.position);
+                body.angularVelocity = car == null ? Vector3.zero : car.angularVelocity;
             }
         }
         public static Vector3 LocalOffset(IEnumerable<FsmStateAction> actions, Vector3 value)

@@ -43,6 +43,8 @@ namespace MWCoop
                 catch (Exception e) { if (actionError.Length == 0) { actionError = e.ToString(); Log.Error("MSC wallet probe: " + e); } }
                 if (Time.realtimeSinceStartup - readyAt > 6) MscToolCaseProbe.Update();
                 MscBoltPositionProbe.Update();
+                try { MscAttachmentProbe.Update(); }
+                catch (Exception e) { if (actionError.Length == 0) { actionError = e.ToString(); Log.Error("MSC attachment probe: " + e); } }
                 try { MscShoppingProbe.Update(); }
                 catch (Exception e) { if (actionError.Length == 0) { actionError = e.ToString(); Log.Error("MSC shopping probe: " + e); } }
                 if (!chatSent) { chatSent = true; Chat.Send("MSC smoke " + (Session.IsHost ? "host" : "guest")); }
@@ -132,6 +134,7 @@ namespace MWCoop
             report.AddRange(MscCarrierProbe.Results);
             report.AddRange(MscToolCaseProbe.Results);
             report.AddRange(MscBoltPositionProbe.Results);
+            report.AddRange(MscAttachmentProbe.Results);
             report.AddRange(MscOptimizationProbe.Results);
             report.Add("PartsDiscoveryPending=" + MscParts.DiscoveryPending + ";Age=" + MscParts.DiscoveryAge.ToString("F2", CultureInfo.InvariantCulture));
             foreach (string failure in MscRuntime.Failures) report.Add("ModuleError=" + failure);
