@@ -16,7 +16,7 @@ namespace MWCoop
         static AudioSource cdAudio, radioAudio;
         static MscAudioStream copyA, copyB;
         static AudioSource audioA, audioB;
-        static float sampleAt, maxRadioError;
+        static float sampleAt, cdSampleAt, maxRadioError;
         static int radioSamples;
         static string cdTrace;
         static bool sampleMismatch;
@@ -37,14 +37,20 @@ namespace MWCoop
             return 0;
         }
         static void Sample(string path, AudioSource audio)
-        { MscProbeFiles.WriteAllText(path, DateTime.UtcNow.Ticks + "|" + MscAudioStream.Time(audio).ToString("R", CultureInfo.InvariantCulture) + "|" + audio.isPlaying + "|" + MscMusic.ClipKey(audio.clip)); }
+        {
+            // Immutable publications avoid Mono's File.Replace sharing window
+            // while the other game process reads its independent audio clock.
+            long stamp = DateTime.UtcNow.Ticks;
+            MscProbeFiles.WriteAllText(path + "." + stamp + ".snapshot", stamp + "|" + MscAudioStream.Time(audio).ToString("R", CultureInfo.InvariantCulture) + "|" + audio.isPlaying + "|" + MscMusic.ClipKey(audio.clip));
+        }
         static float Error(string path, AudioSource audio)
         {
             if (audio == null || !audio.isPlaying)
             { if (!sampleMismatch) { sampleMismatch = true; Log.Warn("Music QA sample unavailable: playing=" + (audio != null && audio.isPlaying)); } return 999; }
-            // OpenSnapshot retries Windows' transient rename boundary; an
-            // Exists check can observe that gap before the retrying reader.
-            string[] fields = MscProbeFiles.ReadAllText(path).Split('|'); long ticks; float time;
+            string[] snapshots = Directory.GetFiles(Path.GetDirectoryName(path), Path.GetFileName(path) + ".*.snapshot");
+            if (snapshots.Length == 0) return 999;
+            Array.Sort(snapshots, StringComparer.Ordinal);
+            string[] fields = MscProbeFiles.ReadAllText(snapshots[snapshots.Length - 1]).Split('|'); long ticks; float time;
             if (fields.Length != 4 || !long.TryParse(fields[0], out ticks) || !float.TryParse(fields[1], NumberStyles.Float, CultureInfo.InvariantCulture, out time) || fields[2] != "True" || fields[3] != MscMusic.ClipKey(audio.clip))
             { if (!sampleMismatch) { sampleMismatch = true; Log.Warn("Music QA sample differs: host=" + string.Join("|", fields) + ";local=" + MscMusic.ClipKey(audio.clip) + ";time=" + MscAudioStream.Time(audio)); } return 999; }
             float elapsed = (float)TimeSpan.FromTicks(DateTime.UtcNow.Ticks - ticks).TotalSeconds;
@@ -109,10 +115,11 @@ namespace MWCoop
                     playback.SendEvent("PLAY CD");
                 }
                 if (i == 2 && At(101, t, when + 9.5f) && !Session.IsHost) Game.SetState(Find("TrackChannelSwitch", "ChangeTrack"), "State 1");
-                if (t >= when + 9 && t < when + 12 && Session.IsHost) Sample(Path.Combine(channel, "cd-time.txt"), cdAudio);
+                if (t >= when + 9 && t < when + 12 && Session.IsHost && t >= cdSampleAt)
+                { cdSampleAt = t + .2f; Sample(Path.Combine(channel, "cd-time-" + i + ".txt"), cdAudio); }
                 if (At(id + 8, t, when + 11))
                 {
-                    float error = Session.IsHost ? 0 : Error(Path.Combine(channel, "cd-time.txt"), cdAudio);
+                    float error = Session.IsHost ? 0 : Error(Path.Combine(channel, "cd-time-" + i + ".txt"), cdAudio);
                     record("cd-" + i + "-playback", Location(MscCd.DiscAt(i)) == 2 && cdAudio.isPlaying && error <= .5f && MscMusic.ClipKey(cdAudio.clip).StartsWith("msc-music:CD" + i + "/"), "Location=" + Location(MscCd.DiscAt(i)) + ";Playing=" + cdAudio.isPlaying + ";Error=" + error + ";Key=" + MscMusic.ClipKey(cdAudio.clip) + ";Parent=" + Recon.Path(MscCd.DiscAt(i).transform) + ";Slot=" + device.ActiveStateName + ";AudioState=" + playback.ActiveStateName + ";Index=" + playback.FsmVariables.GetFsmInt("Index").Value + ";Max=" + playback.FsmVariables.GetFsmInt("MaxTracks").Value + ";CD=" + playback.FsmVariables.GetFsmString("CurrentCD").Value);
                     if (i == 2) record("cd-next-track", playback.FsmVariables.GetFsmInt("CurrentTrack").Value == 2 && MscMusic.ClipKey(cdAudio.clip).StartsWith("msc-music:CD2/track2.ogg:"), "Track=" + playback.FsmVariables.GetFsmInt("CurrentTrack").Value + ";Key=" + MscMusic.ClipKey(cdAudio.clip));
                 }

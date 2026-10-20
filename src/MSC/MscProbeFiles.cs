@@ -1,4 +1,3 @@
-using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -12,28 +11,12 @@ namespace MWCoop
     internal static class MscProbeFiles
     {
         static readonly object publication = new object();
-        static T Snapshot<T>(string path, Func<T> run)
-        {
-            // Unity's Mono can open the replacement with exclusive sharing.
-            // Coordinate the two native QA processes as well as local threads.
-            string key = Codec.Hash(Encoding.UTF8.GetBytes(Path.GetFullPath(path).ToUpperInvariant()));
-            lock (publication)
-            using (var gate = new Mutex(false, "Local\\SummerCoop.QA." + key))
-            {
-                bool held = false;
-                try
-                {
-                    try { held = gate.WaitOne(5000); }
-                    catch (AbandonedMutexException) { held = true; }
-                    if (!held) throw new IOException("Timed out waiting for QA snapshot: " + path);
-                    return run();
-                }
-                finally { if (held) gate.ReleaseMutex(); }
-            }
-        }
         public static void WriteAllText(string path, string value)
         {
-            Snapshot(path, delegate { AtomicFile.Write(path, Encoding.UTF8.GetBytes(value)); return true; });
+            // File.Replace can race an open from another thread even when the
+            // reader shares DELETE. Serialize local diagnostic readers/writers;
+            // other game processes still receive complete atomic snapshots.
+            lock (publication) AtomicFile.Write(path, Encoding.UTF8.GetBytes(value));
         }
         public static void WriteAllLines(string path, string[] lines)
         {
@@ -41,14 +24,14 @@ namespace MWCoop
         }
         public static string ReadAllText(string path)
         {
-            return Snapshot(path, delegate {
+            lock (publication)
                 using (var file = OpenSnapshot(path))
                 using (var reader = new StreamReader(file, Encoding.UTF8, true)) return reader.ReadToEnd();
-            });
         }
         public static string[] ReadAllLines(string path)
         {
-            return Snapshot(path, delegate {
+            lock (publication)
+            {
                 var result = new List<string>();
                 using (var file = OpenSnapshot(path))
                 using (var reader = new StreamReader(file, Encoding.UTF8, true))
@@ -57,7 +40,7 @@ namespace MWCoop
                     while ((line = reader.ReadLine()) != null) result.Add(line);
                 }
                 return result.ToArray();
-            });
+            }
         }
         static FileStream OpenSnapshot(string path)
         {
