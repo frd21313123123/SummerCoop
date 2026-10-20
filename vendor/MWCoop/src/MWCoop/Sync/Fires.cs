@@ -66,6 +66,8 @@ namespace MWCoop
                 finally { Replay.Depth--; foreach (FsmStateAction action in pending.Off) if (action != null) action.Enabled = true; }
             }
         }
+        public static bool Cancelled(PlayMakerFSM f)
+        { foreach (Pending pending in cancels) if (pending.F == f) return true; return false; }
 
         public static void Update()
         {

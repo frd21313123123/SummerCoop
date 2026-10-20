@@ -47,6 +47,7 @@ namespace MWCoop
 
         void LateUpdateBody()
         {
+            MscComfort.Update();
             // (CarVisuals d'abord : volant et levier de vitesse poses, puis les mains des avatars dessus -- elles avaient une image de retard.)
             try
             {
@@ -127,6 +128,9 @@ namespace MWCoop
             new Mod("mscloader", MscMods.Update),
             new Mod("lanceur", MWCoop.Net.Admin.Update),
             new Mod("file IO", MscIo.Update),
+            new Mod("music transfer MSC", MscMusic.Update),
+            new Mod("CD MSC", MscCd.Update),
+            new Mod("summer fixes QA", MscSummerFixProbe.Update),
             new Mod("caisses outils MSC", MscToolCases.Update),
             new Mod("supports MSC", MscPlatforms.Update),
             new Mod("kilju MSC", MscBrewing.Update),

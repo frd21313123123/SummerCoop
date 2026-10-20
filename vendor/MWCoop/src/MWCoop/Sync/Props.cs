@@ -164,7 +164,7 @@ namespace MWCoop
             if (k == null) k = MscOrders.CatalogEnvelopeKey(rb.gameObject);
             // CD sorti de son boitier (ou d'un lecteur) : 'Remove part' le detache de PivotCD et lui rend un corps,
             // hors de toute racine du monde. Cle fixe par son nom de disque (Data.ThisCD : CD1, CD2...).
-            if (k == null && tn == "cd(itemx)") k = CdKey(t.gameObject);
+            if (k == null && tn.StartsWith("cd(item")) k = CdKey(t.gameObject);
             // Bagage du client du taxi : sorti de son pivot, il est a la racine de la scene (Jobs, bagages).
             if (k == null && tn.EndsWith("(lugga)")) k = Jobs.LuggageKey(t.gameObject);
             // Paquet de tracts du boulot des pubs (JOBS/ADs) : le jeu le change de parent (« Set parent », chargement) -- cle
@@ -194,7 +194,7 @@ namespace MWCoop
             foreach (Object o in Resources.FindObjectsOfTypeAll(typeof(PlayMakerFSM)))
             {
                 var f = (PlayMakerFSM)o;
-                if (f.FsmName != "Data" || f.gameObject.name != "cd(itemx)" || f.hideFlags != HideFlags.None) continue;
+                if ((f.FsmName != "Data" && f.FsmName != "Player") || !f.gameObject.name.StartsWith("cd(item") || f.hideFlags != HideFlags.None) continue;
                 FsmString n = f.FsmVariables.FindFsmString("ThisCD");
                 if (n != null && n.Value == disc) return f.gameObject;
             }
@@ -203,9 +203,10 @@ namespace MWCoop
 
         public static string CdKey(GameObject cd)
         {
-            PlayMakerFSM d = Game.FsmOn(cd, "Data");
+            if (cd == null) return null;
+            PlayMakerFSM d = Game.FsmOn(cd, "Player") ?? Game.FsmOn(cd, "Data");
             FsmString n = d != null ? d.FsmVariables.FindFsmString("ThisCD") : null;
-            return n != null && !string.IsNullOrEmpty(n.Value) ? "w:cd:" + n.Value : null;
+            return n != null && (n.Value == "CD1" || n.Value == "CD2" || n.Value == "CD3") ? "w:cd:" + n.Value : null;
         }
 
         const string SuitcaseKey = "w:mod:valise";
@@ -349,6 +350,18 @@ namespace MWCoop
             if (rb != null && byBody.TryGetValue(rb, out p))
             { p.RemoteBy = -1; p.HeadBy = -1; Unride(p); settling.Remove(p); SetKinematic(p, false); }
             if (rb != null) rb.isKinematic = false;
+        }
+        public static void DropForSimulation(GameObject go)
+        {
+            if (go == null) return;
+            if (hand != null && LocalHeld() == go)
+            {
+                Game.SetState(hand, "Drop part");
+                hand.FsmVariables.GetFsmGameObject("PickedObject").Value = null;
+            }
+            if (held != null && held.Body != null && held.Body.gameObject == go)
+            { HeldLook(held, false); settling.Remove(held); held = null; }
+            if (Game.UnderPlayer(go.transform)) go.transform.parent = null;
         }
 
         // Objet tout juste cree (Consume, a sa creation) : suivi tout de suite, sans attendre le releve.
@@ -592,6 +605,7 @@ namespace MWCoop
             if (p.Body == null) return false;
             Transform t = p.Transform;
             if (t == null) p.Transform = t = p.Body.transform;
+            if (MscCd.Mounted(t.gameObject)) return true;
             Transform parent = t.parent;
             if (parent == null) return false;
             Transform root = t.root;

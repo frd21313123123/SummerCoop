@@ -47,10 +47,11 @@ namespace MWCoop
 
         public static void Update()
         {
+            MscComfort.Update();
             if (!Session.Active || !Session.IsHost) return;
             if (Time.realtimeSinceStartup < nextAnnounce) return;
             nextAnnounce = Time.realtimeSinceStartup + 10f;
-            Session.SendAll(new NetWriter(Msg.Job).U8(Session.LocalId).Str("@triches").Bool(Allowed), true);
+            Session.SendAll(new NetWriter(Msg.Job).U8(Session.LocalId).Str("@triches").Bool(Allowed).Bool(MscComfort.NoHouseWasp), true);
         }
 
         public static void OnAllowed(bool on)
@@ -151,7 +152,16 @@ namespace MWCoop
                 case "soin":
                     foreach (string g in new[] { "PlayerHunger", "PlayerThirst", "PlayerFatigue", "PlayerStress", "PlayerUrine", "PlayerDirtiness", "PlayerBurns", "PlayerAllergy" })
                         if (Game.GlobalFloat(g) >= 0f) Game.SetGlobalFloat(g, 0f);
+                    return MscComfort.Cure(true);
+                case "curesting": return MscComfort.Cure(true);
+                case "clearblindness": return MscComfort.Cure(false);
+                case "wasphome":
+                {
+                    bool? on = OnOff(arg);
+                    if (on == null) return "/wasphome on|off";
+                    if (!Session.Active || Session.IsHost) { MscComfort.SetHouseWasp(on.Value); nextAnnounce = 0; Update(); }
                     return null;
+                }
                 case "liberer":
                     return Free();
                 case "heure":
@@ -185,6 +195,7 @@ namespace MWCoop
             if (a.Length == 0) return;
             string c = Canon(a[0].TrimStart('/').ToLowerInvariant()), arg = a.Length > 1 ? string.Join(" ", a, 1, a.Length - 1) : "";
             if (Session.IsHost && !Allowed) { Log.Warn("triches : " + name + " : " + line + " refusee (coupees ici)"); return; }
+            if (Session.IsHost && c == "wasphome") { bool? on = OnOff(arg); if (on != null) { MscComfort.SetHouseWasp(on.Value); nextAnnounce = 0; Update(); } }
             if (Session.IsHost && c == "heure") { int h; if (int.TryParse(arg, out h) && h >= 0 && h <= 24) SetHour(h); }
             if (Session.IsHost && (c == "pluie" || c == "neige")) { bool? on = OnOff(arg); if (on != null) SetRain(on.Value, from != null ? from.State.Feet : Game.PlayerT != null ? Game.PlayerT.position : Vector3.zero); }
             if (c == "amener" && from != null)

@@ -773,7 +773,7 @@ internal static class TestRunner
     {
         if (args.Length > 1 || (args.Length == 1 && args[0] != "--no-sockets")) { Console.Error.WriteLine("Usage: SummerCoop.Tests.exe [--no-sockets]"); return 2; }
         bool sockets = args.Length == 0;
-        try { ProtocolTests(); AuthorityTests(); OptimizationTests(); PerformanceTests.Run(Test); PersistenceTests(); LocalHierarchyTests.Run(Test); ToolInventoryTests.Run(Test); PersonalDeathHierarchyTests.Run(Test); ClientInteractionRegressionTests.Run(Test); TransferEncodingTests.Run(Test); NativeActionPolicyTests.Run(Test); PersonalInteractionTests.Run(Test); LobbyCreationTests.Run(Test); SandboxTests.Run(Test); NativeSaveBundleTests.Run(Test); MscSaveProfileTests.Run(Test); TransportTests(sockets); SessionTests.Run(Test); Console.WriteLine((sockets ? "ALL " : "PARTIAL (1 socket test skipped): ") + passed + " TESTS PASSED"); return 0; }
+        try { ProtocolTests(); AuthorityTests(); OptimizationTests(); PerformanceTests.Run(Test); PersistenceTests(); LocalHierarchyTests.Run(Test); ToolInventoryTests.Run(Test); PersonalDeathHierarchyTests.Run(Test); ClientInteractionRegressionTests.Run(Test); TransferEncodingTests.Run(Test); NativeActionPolicyTests.Run(Test); PersonalInteractionTests.Run(Test); LobbyCreationTests.Run(Test); SandboxTests.Run(Test); NativeSaveBundleTests.Run(Test); MusicManifestTests.Run(Test); MscSaveProfileTests.Run(Test); TransportTests(sockets); SessionTests.Run(Test); Console.WriteLine((sockets ? "ALL " : "PARTIAL (1 socket test skipped): ") + passed + " TESTS PASSED"); return 0; }
         catch (Exception e) { Console.Error.WriteLine("FAIL after " + passed + " tests: " + e); return 1; }
     }
 }

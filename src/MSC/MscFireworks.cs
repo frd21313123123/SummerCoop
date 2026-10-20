@@ -40,7 +40,7 @@ namespace MWCoop
         public static bool Flying(GameObject go)
         {
             if (go == null) return false;
-            Rocket rocket; return rockets.TryGetValue(Props.ItemId(go), out rocket) && rocket.Phase > 0 && rocket.Phase <= 3;
+            Rocket rocket; return rockets.TryGetValue(Props.ItemId(go), out rocket) && rocket.Phase >= 2 && rocket.Phase <= 3;
         }
         public static bool Owns(PlayMakerFSM f)
         {
@@ -75,13 +75,17 @@ namespace MWCoop
                 if (rocket.Root == null) continue;
                 if (Session.IsHost)
                 {
+                    // An intercepted ON 3 has no native effects yet. Publishing
+                    // it would turn the pending request into a false lit phase.
+                    if (FireTools.Cancelled(rocket.Use)) continue;
                     int phase = PhaseOf(rocket.Use);
+                    if (phase >= 2 && phase <= 3 && rocket.Phase < 2) Launch(rocket);
                     if (rocket.Phase != phase || Time.realtimeSinceStartup >= rocket.Next)
                     { rocket.Phase = phase; rocket.Next = Time.realtimeSinceStartup + 2; Publish(rocket); }
-                    if (pose && phase > 0 && phase <= 3)
+                    if (pose && phase >= 2 && phase <= 3)
                         Session.SendAll(new NetWriter(Msg.Home).U8(0).U8(Pose).Str(rocket.Id).I32(++rocket.PoseRevision).Vec(rocket.Body.position).Quat(rocket.Body.rotation).Vec(rocket.Body.velocity), false);
                 }
-                else if (rocket.Phase > 0 && rocket.Phase <= 3)
+                else if (rocket.Phase >= 2 && rocket.Phase <= 3)
                 {
                     rocket.Body.isKinematic = true;
                     float blend = 1 - Mathf.Exp(-Time.unscaledDeltaTime * 24);
@@ -102,12 +106,18 @@ namespace MWCoop
             if (state == "Wait player" || state == "Wait button" || state == "State 4") return 0;
             return 3;
         }
+        static void Launch(Rocket rocket)
+        {
+            Props.DropForSimulation(rocket.Root);
+            Props.TakePhysics(rocket.Root);
+        }
         public static void FixedUpdate()
         {
             if (!Session.Active || !Session.IsHost || !PlayerSync.InGame) return;
             foreach (Rocket rocket in rockets.Values)
                 if (rocket.Root != null && rocket.Thrust != null && rocket.Use.ActiveStateName == "ON")
                 {
+                    if (rocket.Phase < 2) { Launch(rocket); rocket.Phase = 2; Publish(rocket); }
                     AddForce action = rocket.Thrust;
                     Vector3 force = action.vector.IsNone ? Vector3.zero : action.vector.Value;
                     if (!action.x.IsNone) force.x = action.x.Value;
@@ -169,9 +179,10 @@ namespace MWCoop
                 }
                 else
                 {
-                    if (!rockets.TryGetValue(id, out rocket) || rocket.Root == null || PhaseOf(rocket.Use) != 0) return;
-                    Props.TakePhysics(rocket.Root);
-                    FireTools.Resume(rocket.Use); Game.SetState(rocket.Use, "ON 3"); rocket.Phase = 1;
+                    if (!rockets.TryGetValue(id, out rocket) || rocket.Root == null) return;
+                    FireTools.Resume(rocket.Use);
+                    if (rocket.Phase != 0 || PhaseOf(rocket.Use) != 0) return;
+                    Game.SetState(rocket.Use, "ON 3"); rocket.Phase = 1;
                 }
             }
             finally { applying = false; Replay.Depth--; }
@@ -211,9 +222,10 @@ namespace MWCoop
             rocket.Revision = revision; rocket.Position = pos; rocket.Rotation = rot; rocket.Velocity = velocity; rocket.PoseAt = Time.realtimeSinceStartup;
             if (created || rocket.Phase != phase)
             {
-                rocket.Body.position = pos; rocket.Body.rotation = rot;
-                rocket.Body.isKinematic = phase > 0 && phase <= 3;
-                if (!rocket.Body.isKinematic) rocket.Body.velocity = velocity;
+                if (phase != 1 || Props.LocalHeld() != rocket.Root)
+                { rocket.Body.position = pos; rocket.Body.rotation = rot; }
+                if (phase >= 2 && phase <= 3) { Props.DropForSimulation(rocket.Root); rocket.Body.isKinematic = true; }
+                else if (created || rocket.Phase >= 2) { rocket.Body.isKinematic = false; rocket.Body.velocity = velocity; }
                 applying = true; Replay.Depth++;
                 try
                 {

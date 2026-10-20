@@ -3,18 +3,21 @@ param([ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9_-]{0,48}$')][string]$Run = ('mwco
     [ValidateRange(320,7680)][int]$Width = 640, [ValidateRange(240,4320)][int]$Height = 480,
     [ValidateSet('Local','Host','Client')][string]$Role = 'Local', [string]$JoinAddress = '127.0.0.1',
     [ValidatePattern('^[a-zA-Z0-9_-]+$')][string[]]$ExtraClientGames,
-    [string]$BuildDirectory, [string]$SeedProfile, [switch]$Optimization, [switch]$PartsProfile, [switch]$ToolCases, [switch]$ToolCaseMenu, [switch]$BoltPositions, [switch]$Attachments, [switch]$AttachmentDoors, [switch]$Battery, [ValidateSet('Recovery','Unwired','Reload')][string]$BatteryMode = 'Recovery', [switch]$Shopping, [switch]$Bindings, [switch]$Wallet, [switch]$Cheats, [switch]$Engine, [ValidateSet('Host','Guest')][string]$ActionActor = 'Host', [ValidateSet('Host','Guest')][string]$SaveQuitActor)
+    [string]$SeedMusicCache,
+    [string]$BuildDirectory, [string]$SeedProfile, [switch]$Optimization, [switch]$PartsProfile, [switch]$ToolCases, [switch]$ToolCaseMenu, [switch]$BoltPositions, [switch]$Attachments, [switch]$AttachmentDoors, [switch]$Battery, [ValidateSet('Recovery','Unwired','Reload')][string]$BatteryMode = 'Recovery', [switch]$Shopping, [switch]$Bindings, [switch]$Wallet, [switch]$Cheats, [switch]$Engine, [switch]$SummerFixes, [switch]$MusicOnly, [ValidateSet('Host','Guest')][string]$ActionActor = 'Host', [ValidateSet('Host','Guest')][string]$SaveQuitActor)
 $ErrorActionPreference = 'Stop'
 if ($AttachmentDoors) { $Attachments = $true }
+if ($MusicOnly) { $SummerFixes = $true }
 $root = Split-Path -Parent $PSScriptRoot
 $local = Join-Path $root '.local'
 if (!$BuildDirectory) { $BuildDirectory = Join-Path $root 'build' }
 $BuildDirectory = (Resolve-Path -LiteralPath $BuildDirectory).Path
 if ($SeedProfile) { $SeedProfile = (Resolve-Path -LiteralPath $SeedProfile).Path }
+if ($SeedMusicCache) { $SeedMusicCache = (Resolve-Path -LiteralPath $SeedMusicCache).Path }
 if ($PartsProfile -and !$Performance) { throw 'Parts profiling requires passive performance mode.' }
 if ($Performance) {
     if ($SaveQuitActor) { throw 'Save/quit testing cannot run in performance mode.' }
-    if ($EngineLifecycle -or $Cabin -or $Actions -or $Vehicles -or $Garage -or $Workshop -or $Platforms -or $Activities -or $Regression -or $Assembly -or $Carrier -or $Optimization -or $BoltPositions -or $Attachments -or $Battery -or $Shopping -or $Bindings -or $Wallet -or $Cheats -or $Engine) { throw 'Performance mode cannot run functional probes.' }
+    if ($EngineLifecycle -or $Cabin -or $Actions -or $Vehicles -or $Garage -or $Workshop -or $Platforms -or $Activities -or $Regression -or $Assembly -or $Carrier -or $Optimization -or $BoltPositions -or $Attachments -or $Battery -or $Shopping -or $Bindings -or $Wallet -or $Cheats -or $Engine -or $SummerFixes) { throw 'Performance mode cannot run functional probes.' }
     if (!$PSBoundParameters.ContainsKey('Duration')) { $Duration = 600 }
     if (!$PSBoundParameters.ContainsKey('Width')) { $Width = 2560 }
     if (!$PSBoundParameters.ContainsKey('Height')) { $Height = 1440 }
@@ -51,6 +54,7 @@ if ($Battery -and !$PSBoundParameters.ContainsKey('Duration')) { $Duration = 85 
 if ($Carrier -and !$Assembly -and !$PSBoundParameters.ContainsKey('Duration')) { $Duration = 135 }
 if ($Shopping -and !$PSBoundParameters.ContainsKey('Duration')) { $Duration = 140 }
 if ($Cheats -and !$PSBoundParameters.ContainsKey('Duration')) { $Duration = 95 }
+if ($SummerFixes -and !$PSBoundParameters.ContainsKey('Duration')) { $Duration = if ($MusicOnly) { 130 } else { 280 } }
 $vehicleChannel = Join-Path $local ($Run + '-vehicles')
 $garageChannel = Join-Path $local ($Run + '-garage')
 $workshopChannel = Join-Path $local ($Run + '-workshop')
@@ -63,6 +67,7 @@ $shoppingChannel = Join-Path $local ($Run + '-shopping')
 $bindingsChannel = Join-Path $local ($Run + '-bindings')
 $walletChannel = Join-Path $local ($Run + '-wallet')
 $cheatsChannel = Join-Path $local ($Run + '-cheats')
+$summerFixChannel = Join-Path $local ($Run + '-summerfixes')
 if ($Port -lt 1024 -or $Port -gt 65535 -or $Duration -lt 10 -or $Duration -gt $(if ($Performance) { 3600 } else { 900 })) { throw 'Invalid test port or duration.' }
 foreach ($instance in $instances) {
     if (Test-Path -LiteralPath (Join-Path $local ($Run + '-' + $instance.Name))) { throw 'Use a fresh test run name.' }
@@ -111,6 +116,7 @@ if ($Engine) { New-Item -ItemType Directory -Path (Join-Path $local ($Run + '-en
 if ($Cabin) { New-Item -ItemType Directory -Path (Join-Path $local ($Run + '-cabin')) | Out-Null }
 if ($EngineLifecycle) { New-Item -ItemType Directory -Path (Join-Path $local ($Run + '-engine-lifecycle')) | Out-Null }
 if ($Cheats) { New-Item -ItemType Directory -Path $cheatsChannel | Out-Null }
+if ($SummerFixes) { New-Item -ItemType Directory -Path $summerFixChannel | Out-Null }
 $original = Join-Path $env:USERPROFILE 'AppData\LocalLow\Amistech\My Summer Car'
 $before = @(Get-ChildItem -LiteralPath $original -File -ErrorAction SilentlyContinue | Where-Object Name -in @('defaultES2File.txt','items.txt','meshsave.txt','graveyard.txt','trophies.txt','carparts.txt') | Get-FileHash -Algorithm SHA256 | Select-Object Path,Hash)
 $before | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $local ($Run + '-original-before.json')) -Encoding utf8
@@ -121,6 +127,10 @@ foreach ($instance in $instances) {
     Copy-Item -LiteralPath (Join-Path $BuildDirectory 'SummerCoop.dll') -Destination (Join-Path $dir 'Mods\SummerCoop.dll') -Force
     Copy-Item -LiteralPath (Join-Path $BuildDirectory 'SummerCoop.Core.dll') -Destination (Join-Path $dir 'Mods\References\SummerCoop.Core.dll') -Force
     $profile = Join-Path $local ($Run + '-' + $roleName)
+    if ($SeedMusicCache -and !$instance.Host) {
+        New-Item -ItemType Directory -Path $profile -Force | Out-Null
+        Copy-Item -LiteralPath $SeedMusicCache -Destination (Join-Path $profile 'music') -Recurse
+    }
     if ($SeedProfile -and $instance.Host) {
         $saveDestination = Join-Path $profile 'mwcoop-profiles\host'
         New-Item -ItemType Directory -Path $saveDestination -Force | Out-Null
@@ -131,10 +141,13 @@ foreach ($instance in $instances) {
     $mode = if ($instance.Host) { '--summercoop-host-lan ' + $Port } else { '--summercoop-join-lan ' + $JoinAddress + ' --summercoop-port ' + $Port }
     # An invisible desktop isolates input even before mods load. Keep graphics:
     # MSC's Unity 5 crashes while loading GAME with -nographics.
-    $arguments = '-nosound -screen-fullscreen 0 -screen-width ' + $Width + ' -screen-height ' + $Height + ' -logFile "' + $log + '" ' + $mode + ' --summercoop-profile "' + $profile + '" --summercoop-name Smoke-' + $roleName + ' --summercoop-test-report "' + $report + '" --summercoop-test-duration ' + $Duration
+    $sound = if ($SummerFixes) { '' } else { '-nosound ' }
+    $arguments = $sound + '-screen-fullscreen 0 -screen-width ' + $Width + ' -screen-height ' + $Height + ' -logFile "' + $log + '" ' + $mode + ' --summercoop-profile "' + $profile + '" --summercoop-name Smoke-' + $roleName + ' --summercoop-test-report "' + $report + '" --summercoop-test-duration ' + $Duration
     $arguments += ' --summercoop-test-players ' + $Players
     if ($Performance) { $arguments += ' --summercoop-test-performance yes --summercoop-test-warmup ' + $Warmup }
     if ($PartsProfile) { $arguments += ' --summercoop-test-parts-profile yes' }
+    if ($SummerFixes) { $arguments += ' --summercoop-test-summerfixes "' + $summerFixChannel + '"' }
+    if ($MusicOnly) { $arguments += ' --summercoop-test-music-only yes' }
     if ($Optimization) { $arguments += ' --summercoop-test-optimization yes' }
     if ($ToolCases) { $arguments += ' --summercoop-test-toolcases yes' }
     if ($ToolCaseMenu) { $arguments += ' --summercoop-test-toolcases-menu yes' }

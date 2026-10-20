@@ -87,6 +87,7 @@ namespace MWCoop
             foreach (Object o in Game.AllFsms())
             {
                 var f = (PlayMakerFSM)o; if (f == null) continue;
+                if (MscCd.Owns(f)) continue;
                 if (f.hideFlags != HideFlags.None || f.FsmName != "Use") continue;
                 string n = f.gameObject.name;
                 if (n.Contains("(Clone)") || n.Contains("(itemx)")) continue;   // objets crees en jeu : ids differents

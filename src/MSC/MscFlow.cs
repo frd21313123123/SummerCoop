@@ -19,7 +19,7 @@ namespace MWCoop
             if (Requested) SaveQuit = false;
             if (since == 0) since = Time.realtimeSinceStartup;
             if (Time.realtimeSinceStartup - since < 1.0f) return;
-            if (Contenu.MenuBusy) return;
+            if (!MscMusic.Ready || Contenu.MenuBusy) return;
 
             bool canStart = false;
             if (!Session.Active)

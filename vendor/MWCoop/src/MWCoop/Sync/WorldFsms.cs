@@ -172,7 +172,7 @@ namespace MWCoop
         static string GoRef(GameObject go)
         {
             if (go == null) return "";
-            if (go.name == "cd(itemx)") { string k = Props.CdKey(go); if (k != null) return "cd:" + k.Substring("w:cd:".Length); }
+            if (go.name.StartsWith("cd(item")) { string k = Props.CdKey(go); if (k != null) return "cd:" + k.Substring("w:cd:".Length); }
             return Recon.Path(go.transform);
         }
 
@@ -214,6 +214,7 @@ namespace MWCoop
         // ---------------------------------------------------------------- choix des automates
         static bool Skip(PlayMakerFSM f)
         {
+            if (MscCd.Owns(f)) return true;
             // Satsuma horn input stays local; VehicleSync sends its actual sound.
             // A loose GT wheel must not acquire generic hover/state replay.
             if (MscVehicleControls.IsHorn(f)) return true;

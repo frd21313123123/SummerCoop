@@ -16,7 +16,8 @@ namespace MWCoop
         // Unity 5.0.0f4's deprecated Screen.lockCursor getter is inverted.
         // Cursor.lockState is the native state actually used by its setter.
         public static bool CursorUnlocked { get { return Cursor.lockState == CursorLockMode.None; } }
-        public static bool AudioMuted { get { return AudioListener.pause && AudioListener.volume == 0; } }
+        static bool MusicClock { get { return MscRuntime.Argument("--summercoop-test-summerfixes").Length > 0; } }
+        public static bool AudioMuted { get { return AudioListener.volume == 0 && (MusicClock || AudioListener.pause); } }
 
         public static void Install()
         {
@@ -45,7 +46,7 @@ namespace MWCoop
             Screen.lockCursor = false;
             Cursor.lockState = CursorLockMode.None;
             Cursor.visible = true;
-            AudioListener.pause = true;
+            AudioListener.pause = !MusicClock;
             AudioListener.volume = 0;
             Application.runInBackground = true;
         }

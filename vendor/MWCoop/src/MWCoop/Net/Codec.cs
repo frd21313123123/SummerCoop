@@ -143,6 +143,8 @@ namespace MWCoop.Net
         PushDoor = 48,    // porte poussee hors vehicule (garage) : angle de celui qui pousse
         Summon = 49,      // hote -> un invite : viens a moi (position, cap) ; menu F10 ou lanceur (Admin)
         Radio = 50,       // hote -> invites : morceau, position et lecture de chaque canal radio (Radio)
+        Music = 55,       // authenticated catalogue and bounded music file pulls
+        Cd = 56,          // host-ordered CD controls and playback snapshots
         ModData = 51,     // donnees d'un autre mod (CoopApi) : canal, morceaux ; l'hote relaie
         Event = 53,       // evenement du monde decide par l'hote : objets allumes, valeurs reglees (Events)
         Talk = 54,        // vocal de proximite : paquet de voix compresse par Steam (Voice) ; l'hote relaie

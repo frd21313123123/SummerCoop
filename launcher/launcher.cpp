@@ -540,8 +540,30 @@ static int CmpVer(std::wstring a, std::wstring b)
 // (0 = pas de reponse).
 // Derniere erreur WinHTTP d'une requete sans reponse (12007 nom introuvable, 12029 connexion impossible, 12002 delai...).
 static DWORD g_httpErr;
+struct HttpReply {
+    DWORD status = 0;
+    long long retryAt = 0, resetAt = 0, remaining = -1;
+    std::wstring etag, location;
+};
+static std::wstring HttpHeader(HINTERNET request, const wchar_t *name)
+{
+    wchar_t value[2048] = {}; DWORD length = sizeof(value);
+    return WinHttpQueryHeaders(request, WINHTTP_QUERY_CUSTOM, name, value, &length, WINHTTP_NO_HEADER_INDEX) ? value : L"";
+}
+static long long HeaderNumber(const std::wstring &value, long long missing = 0)
+{ if (value.empty() || value.find_first_not_of(L"0123456789") != std::wstring::npos) return missing; return _wcstoi64(value.c_str(), NULL, 10); }
+static long long HttpRetryAt(const std::wstring &value, long long now)
+{
+    if (value.empty()) return 0;
+    long long seconds = HeaderNumber(value, -1); if (seconds >= 0) return now + seconds;
+    SYSTEMTIME st = {}; FILETIME ft = {};
+    if (!WinHttpTimeToSystemTime(value.c_str(), &st) || !SystemTimeToFileTime(&st, &ft)) return 0;
+    ULARGE_INTEGER n; n.LowPart = ft.dwLowDateTime; n.HighPart = ft.dwHighDateTime;
+    return (long long)(n.QuadPart / 10000000ULL) - 11644473600LL;
+}
 
-static bool HttpGet(const std::wstring &url, std::string *out, const std::wstring &toFile, bool progress, DWORD *status = NULL, int hops = 0, size_t maxBytes = 128u << 20)
+static bool HttpGet(const std::wstring &url, std::string *out, const std::wstring &toFile, bool progress, DWORD *status = NULL, int hops = 0, size_t maxBytes = 128u << 20,
+                    HttpReply *reply = NULL, const std::wstring &etag = L"", bool follow = true)
 {
     if (hops > 7) return false;
     if (status) *status = 0;
@@ -570,7 +592,8 @@ static bool HttpGet(const std::wstring &url, std::string *out, const std::wstrin
     if (r) WinHttpSetOption(r, WINHTTP_OPTION_REDIRECT_POLICY, &redirectPolicy, sizeof(redirectPolicy));
 
     std::wstring customHdr;
-    if (toFile.empty()) customHdr += L"Accept: application/vnd.github+json\r\n";
+    if (toFile.empty()) customHdr += _wcsicmp(host, L"api.github.com") == 0 ? L"Accept: application/vnd.github+json\r\n" : L"Accept: */*\r\n";
+    if (!etag.empty() && etag.find_first_of(L"\r\n") == std::wstring::npos) customHdr += L"If-None-Match: " + etag + L"\r\n";
     bool isGitHubHost = (_wcsicmp(host, L"api.github.com") == 0 || _wcsicmp(host, L"github.com") == 0);
     if (isGitHubHost) {
         wchar_t tok[256] = L"";
@@ -585,15 +608,21 @@ static bool HttpGet(const std::wstring &url, std::string *out, const std::wstrin
         DWORD code = 0, len = sizeof(code);
         WinHttpQueryHeaders(r, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &code, &len, WINHTTP_NO_HEADER_INDEX);
         if (status) *status = code;
+        if (reply) {
+            reply->status = code; reply->location = HttpHeader(r, L"Location"); reply->etag = HttpHeader(r, L"ETag");
+            reply->remaining = HeaderNumber(HttpHeader(r, L"X-RateLimit-Remaining"), -1);
+            reply->resetAt = HeaderNumber(HttpHeader(r, L"X-RateLimit-Reset"));
+            reply->retryAt = HttpRetryAt(HttpHeader(r, L"Retry-After"), (long long)_time64(NULL));
+        }
         if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) {
             wchar_t loc[2048] = {};
             DWORD locLen = sizeof(loc);
-            if (WinHttpQueryHeaders(r, WINHTTP_QUERY_LOCATION, WINHTTP_HEADER_NAME_BY_INDEX, loc, &locLen, WINHTTP_NO_HEADER_INDEX)) {
+            if (follow && WinHttpQueryHeaders(r, WINHTTP_QUERY_LOCATION, WINHTTP_HEADER_NAME_BY_INDEX, loc, &locLen, WINHTTP_NO_HEADER_INDEX)) {
                 if (r) { WinHttpCloseHandle(r); r = NULL; }
                 if (c) { WinHttpCloseHandle(c); c = NULL; }
                 WinHttpCloseHandle(s); s = NULL;
                 if (uc.nScheme == INTERNET_SCHEME_HTTPS && _wcsnicmp(loc, L"https://", 8)) return false;
-                return HttpGet(loc, out, toFile, progress, status, hops + 1, maxBytes);
+                return HttpGet(loc, out, toFile, progress, status, hops + 1, maxBytes, reply, etag, true);
             }
         }
         DWORD total = 0; len = sizeof(total);
@@ -617,6 +646,11 @@ static bool HttpGet(const std::wstring &url, std::string *out, const std::wstrin
                 }
             }
             if (ok && total && got != total) ok = false;
+        }
+        else if (code == 304 && toFile.empty() && !etag.empty()) ok = true;
+        else if ((code == 403 || code == 429) && out && toFile.empty()) {
+            char message[4096]; DWORD count = 0;
+            if (WinHttpReadData(r, message, sizeof(message), &count)) out->assign(message, count);
         }
     }
     if (!ok && !(status && *status)) g_httpErr = GetLastError();
@@ -1258,41 +1292,9 @@ static std::vector<Note> ParseReleases(const std::string &source)
 // REL_OFFLINE : pas de reponse (json : le cache, pour les notes seulement). g_relCode / g_relErr : code HTTP (403 ou
 // 429 : GitHub limite les demandes par adresse, ce n'est pas une coupure) et erreur WinHTTP, notes au journal du
 // lanceur (retour d'un joueur, 07/10 : « hors ligne » alors que Steam etait connecte).
-static DWORD g_relCode, g_relErr;
-static int FetchReleases(std::string &json)
-{
-    // Keep the standalone folder limited to EXE, checksum and user settings.
-    wchar_t local[MAX_PATH] = L"";
-    GetEnvironmentVariableW(L"LOCALAPPDATA", local, MAX_PATH);
-    std::wstring cache;
-    if (local[0]) {
-        std::wstring dir = std::wstring(local) + L"\\SummerCoop";
-        CreateDirectoryW(dir.c_str(), NULL);
-        cache = dir + L"\\launcher-releases.json";
-    }
-    DWORD code = 0;
-    bool got = HttpGet(L"https://api.github.com/repos/" + g_repo + L"/releases?per_page=100", &json, L"", false, &code, 0, 8u << 20);
-    g_relCode = code; g_relErr = got ? 0 : g_httpErr;
-    LaunchLog("versions sur GitHub : %s (code HTTP %lu, erreur WinHTTP %lu)", got ? "recues" : "pas de reponse", code, g_relErr);
-    if (got && json.find("\"tag_name\"") != std::string::npos) {
-        if (!cache.empty()) {
-            HANDLE f = CreateFileW(cache.c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, NULL);
-            if (f != INVALID_HANDLE_VALUE) { DWORD w; WriteFile(f, json.data(), (DWORD)json.size(), &w, NULL); CloseHandle(f); }
-        }
-        return REL_OK;
-    }
-    json.clear();
-    if ((got && code == 200) || code == 404) return REL_NONE;
-    if (!cache.empty()) {
-        HANDLE f = CreateFileW(cache.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
-        if (f != INVALID_HANDLE_VALUE) {
-            DWORD size = GetFileSize(f, NULL), r = 0;
-            if (size != INVALID_FILE_SIZE && size < 8u << 20) { json.resize(size); ReadFile(f, &json[0], size, &r, NULL); json.resize(r); }
-            CloseHandle(f);
-        }
-    }
-    return REL_OFFLINE;
-}
+static std::wstring UpdateChecksumHash(const std::string &text);
+#include "update-discovery.inc"
+#include "update-discovery-tests.inc"
 
 // ---------------------------------------------------------------- version checks
 // Check at startup and periodically. Install verified builds only while idle.
@@ -1324,7 +1326,7 @@ static bool IsNightlyVer(const std::wstring &v) { return v.find(L"nightly") != s
 static const Note *PickRelease(const std::vector<Note> &rel, bool nightly)
 {
     const Note *best = NULL;
-    for (const Note &n : rel) if (!n.zip.empty() && (nightly || !n.pre) && (!best || CmpVer(n.ver, best->ver) > 0)) best = &n;
+    for (const Note &n : rel) if (!n.zip.empty() && n.pre == nightly && (!best || CmpVer(n.ver, best->ver) > 0)) best = &n;
     return best;
 }
 static bool WantVer(const std::wstring &remote, const std::wstring &local, bool nightly)
@@ -1343,6 +1345,20 @@ static std::vector<Note> ChannelNotes(const std::vector<Note> &rel, bool nightly
     std::vector<Note> out;
     for (const Note &n : rel) if (!n.pre) out.push_back(n);
     return out;
+}
+static std::atomic<bool> g_newsChecking(false);
+static DWORD WINAPI ReleaseNewsThread(void *)
+{
+    std::string json; FetchReleases(json);
+    std::vector<Note> notes = ChannelNotes(ParseReleases(json), ChannelNightly());
+    if (!notes.empty()) { EnterCriticalSection(&g_cs); g_notes = notes; LeaveCriticalSection(&g_cs); }
+    g_newsChecking = false; return 0;
+}
+static void RefreshReleaseNews()
+{
+    if (g_newsChecking.exchange(true)) return;
+    HANDLE thread = CreateThread(NULL, 0, ReleaseNewsThread, NULL, 0, NULL);
+    if (thread) CloseHandle(thread); else g_newsChecking = false;
 }
 
 static std::atomic<bool> g_updating(false);
@@ -1407,7 +1423,13 @@ static DWORD WINAPI SelfUpdateThread(void *param)
     bool ok = HttpGet(p->url, NULL, p->dir + L"download.exe", true, &code, 0, 128u << 20);
     if (!ok || !VerifyUpdate(p->dir + L"download.exe", p->sha)) {
         LaunchLog("update %s rejected: HTTP %lu, WinHTTP %lu, hash/PE verification %d", Narrow(p->ver, CP_UTF8).c_str(), code, g_httpErr, ok);
-        SetStatus(K_WARN, T(L"Échec du téléchargement ou du contrôle SHA-256", L"Update download or SHA-256 verification failed"));
+        if (code == 404) SetStatus(K_WARN, T(L"Fichier de mise à jour introuvable (HTTP 404)", L"Update file was not found (HTTP 404)"));
+        else SetStatus(K_WARN, T(L"Échec du téléchargement ou du contrôle SHA-256", L"Update download or SHA-256 verification failed"));
+        return 0;
+    }
+    if (!UpdateVersionMatches(p->dir + L"download.exe", p->ver)) {
+        LaunchLog("update version does not match pinned tag %s", Narrow(p->ver, CP_UTF8).c_str());
+        SetStatus(K_WARN, T(L"La version du fichier ne correspond pas à la version choisie", L"Downloaded EXE version does not match the selected release"));
         return 0;
     }
     g_progress = 1.0f;
@@ -1433,10 +1455,17 @@ static DWORD WINAPI UpdateThread(void *param)
     struct Done { ~Done() { g_updChecking = false; } } done;
     std::string json;
     bool nightly = ChannelNightly();
-    int rs = FetchReleases(json);
+    Note stable;
+    bool direct = !nightly && StableRelease(stable);
+    int rs = direct ? REL_OK : FetchReleases(json);
+    if (direct) json = ReleaseCache();
     std::vector<Note> rel = ParseReleases(json);
-    const Note *pick = PickRelease(rel, nightly);
+    const Note *pick = direct ? &stable : PickRelease(rel, nightly);
     int result = CheckResult(rs, pick, LauncherVersion(), nightly);
+    if (!nightly && !direct && g_stableHasTag && !pick) result = CHECK_FAILED;
+    // Previously verified, pinned metadata can still install a known newer
+    // build. It cannot prove that an older/current build is the latest.
+    if (rs == REL_OFFLINE && pick && WantVer(pick->ver, LauncherVersion(), nightly)) result = CHECK_AVAILABLE;
     bool changed = result == CHECK_AVAILABLE && UpdAvail() != pick->ver;
     EnterCriticalSection(&g_cs);
     g_notes = ChannelNotes(rel, nightly);
@@ -1447,6 +1476,7 @@ static DWORD WINAPI UpdateThread(void *param)
         std::wstring exe = pick ? (!pick->exeUrl.empty() ? pick->exeUrl : (pick->zip.find(L".exe") != std::wstring::npos ? pick->zip : L"")) : L"";
         UpdSet(pick->ver, pick->page, exe, pick->sha256, pick->checksumUrl);
         g_updState = result;
+        if (direct) RefreshReleaseNews();
         if (g_wnd && AutoInstallUpdates() && !g_skipAutoUpdate && g_state == ST_IDLE && g_lobby == LB_NONE && !g_busy && !exe.empty()) {
             StartSelfUpdate(pick->ver, exe, pick->page, pick->sha256, pick->checksumUrl);
             return 0;
@@ -1455,6 +1485,7 @@ static DWORD WINAPI UpdateThread(void *param)
         UpdSet(L"", L"", L"");
     }
     g_updState = result;
+    if (direct && result != CHECK_AVAILABLE) RefreshReleaseNews();
     if (quiet && !changed) return 0;
     if (result == CHECK_AVAILABLE)
         SetStatus(K_WARN, T(L"SummerCoop %s disponible", L"SummerCoop %s available"), pick->ver.c_str());
@@ -1462,8 +1493,15 @@ static DWORD WINAPI UpdateThread(void *param)
         SetStatus(K_OK, T(L"SummerCoop %s est à jour", L"SummerCoop %s is up to date"), LauncherVersion().c_str());
     else if (result == CHECK_EMPTY)
         SetStatus(K_NORMAL, T(L"Aucune version de SummerCoop publiée", L"No SummerCoop release published"));
-    else if (g_relCode == 403 || g_relCode == 429)
-        SetStatus(K_WARN, T(L"Limite GitHub : réessaie plus tard", L"GitHub rate limit: try again later"));
+    else if (!nightly && !direct && g_stableHasTag && g_stableCode == 404)
+        SetStatus(K_WARN, T(L"Fichier de mise à jour introuvable (HTTP 404)", L"Update file was not found (HTTP 404)"));
+    else if (g_relRateLimited) {
+        __time64_t retry = g_relRetryAt; struct tm local = {}; wchar_t when[32] = L"";
+        _localtime64_s(&local, &retry); wcsftime(when, _countof(when), L"%H:%M", &local);
+        SetStatus(K_WARN, T(L"Limite GitHub : nouvel essai à %s", L"GitHub request limit: retry at %s"), when);
+    }
+    else if (g_relCode == 403)
+        SetStatus(K_WARN, T(L"GitHub refuse l'accès (HTTP 403)", L"GitHub denied access (HTTP 403)"));
     else
         SetStatus(K_WARN, T(L"Impossible de vérifier la version (HTTP %lu, WinHTTP %lu)", L"Version check failed (HTTP %lu, WinHTTP %lu)"), g_relCode, g_relErr);
     return 0;
@@ -7989,6 +8027,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
     {
         int ac = 0;
         wchar_t **av = CommandLineToArgvW(GetCommandLineW(), &ac);
+        if (ac == 4 && !_wcsicmp(av[1], L"/test-update-discovery")) { int result = TestUpdateDiscovery(av[2], av[3]); LocalFree(av); return result; }
         if (ac == 4 && !_wcsicmp(av[1], L"/test-saves")) {
             GdiplusStartupInput input; ULONG_PTR token = 0;
             GdiplusStartup(&token, &input, NULL);

@@ -31,6 +31,7 @@ namespace MWCoop
         static float applyAt = -1, reapplyAt = -1;
         static readonly HashSet<PlayMakerFSM> done = new HashSet<PlayMakerFSM>();
         static bool dumped;
+        static string musicDirectory;
 
         public static void OnLevelLoaded()
         {
@@ -70,12 +71,11 @@ namespace MWCoop
         static void Apply(string why)
         {
             string dir = Folder();
-            if (dir.Length == 0 || (Session.IsHost && Config.GetInt("Test", "ContenuHote", 0) == 0)) return;   // (l'hote lit le sien ; essais : ContenuHote=1)
+            if (dir.Length == 0 && string.IsNullOrEmpty(musicDirectory) || (Session.IsHost && Config.GetInt("Test", "ContenuHote", 0) == 0)) return;
             roots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (string r in Config.Get("Coop", "ContenuRecu", "").Split(',')) if (r.Trim().Length > 0) roots.Add(r.Trim().TrimEnd('/', '\\') + "/");
             images = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (string r in Config.Get("Coop", "ContenuImages", "").Split(',')) if (r.Trim().Length > 0) images.Add(r.Trim());
-            if (roots.Count == 0) return;
             var cdList = new List<GameObject>();
             int n = 0;
             foreach (UnityEngine.Object o in Game.AllFsms())
@@ -100,6 +100,7 @@ namespace MWCoop
                 PlayMakerFSM f = Game.FsmOn(go, "LoadSongs");
                 if (f == null || done.Contains(f)) continue;
                 string dir = Folder();
+                if (!string.IsNullOrEmpty(musicDirectory)) dir = musicDirectory;
                 if (dir.Length > 0 && Point(f, dir)) Log.Info("contenu de l'hote : musiques de " + go.name + " lues dans " + dir);
                 else done.Add(f);   // (pas envoye par l'hote : ses propres musiques)
             }
@@ -140,7 +141,10 @@ namespace MWCoop
                     }
                 }
             }
-            if (getPath == null || root == null || !roots.Contains(root)) return false;
+            bool music = f.FsmName == "LoadSongs" && !string.IsNullOrEmpty(musicDirectory);
+            if (getPath == null || root == null || !(music || roots.Contains(root))) return false;
+            if (music) dir = musicDirectory;
+            if (dir.Length == 0) return false;
             if (root == "Images/" && (file == null || !images.Contains(file))) return false;   // (image que l'hote n'envoie pas : la sienne)
             FieldInfo rf = getPath.GetType().GetField("AppFolderResult");
             FsmString var = rf != null ? rf.GetValue(getPath) as FsmString : null;
@@ -181,14 +185,57 @@ namespace MWCoop
 
         // ---- menu principal : lecteurs pointes, import des musiques quand le mod entre lui-meme en partie
         static float menuAt = -1, importUntil;
-        static bool menuDone;
-        public static bool MenuBusy { get { return (!menuDone && menuAt > 0) || importUntil > Time.realtimeSinceStartup; } }
+        static bool menuDone, importFailed, managedImport;
+        public static void MusicReset()
+        {
+            // At the first loader callback native menu FSMs have not completed
+            // Awake yet. Only reset an import that this module actually ran.
+            if (!managedImport && string.IsNullOrEmpty(musicDirectory)) return;
+            managedImport = false;
+            musicDirectory = null; done.Clear(); cds = null; roots = null; songFiles = null; songDir = null;
+            foreach (string group in SummerCoop.Core.MusicManifest.Groups)
+            { var songs = MscMusic.Songs(group); if (songs != null) songs.Clear(); }
+            foreach (UnityEngine.Object value in Game.AllFsms())
+            {
+                PlayMakerFSM f = value as PlayMakerFSM;
+                if (f == null || f.FsmName != "LoadSongs" || !(f.name == "Folk" || f.name == "CD1" || f.name == "CD2" || f.name == "CD3")) continue;
+                foreach (FsmState state in f.FsmStates)
+                    foreach (FsmStateAction action in FireTools.Actions(f, state) ?? new FsmStateAction[0])
+                        if (action != null && action.GetType().Name == "GetAppPath") action.Enabled = true;
+                FsmString marker = f.FsmVariables.FindFsmString("Path"); if (marker != null) marker.Value = "NOT IMPORTED";
+            }
+            PlayMakerFSM playlist = Fsm("CD", "Playlist");
+            if (playlist != null) playlist.FsmVariables.GetFsmString("Path").Value = "NOT IMPORTED";
+            menuDone = importFailed = false; menuAt = -1; importUntil = 0;
+        }
+        public static void MusicReceived(string directory)
+        {
+            managedImport = true;
+            musicDirectory = directory.TrimEnd('\\', '/') + "/";
+            done.Clear(); cds = null; roots = null; songFiles = null; songDir = null;
+            foreach (UnityEngine.Object value in Game.AllFsms())
+            {
+                PlayMakerFSM f = value as PlayMakerFSM;
+                if (f == null || !(f.FsmName == "LoadSongs" && (f.name == "Folk" || f.name == "CD1" || f.name == "CD2" || f.name == "CD3") || f.FsmName == "Playlist" && f.name == "CD")) continue;
+                FsmString p = f.FsmVariables.FindFsmString("Path"); if (p != null) p.Value = "NOT IMPORTED";
+                foreach (Component component in f.GetComponents<Component>())
+                {
+                    if (component == null || component.GetType().Name != "PlayMakerArrayListProxy") continue;
+                    var field = component.GetType().GetField("_arrayList", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                    var list = field == null ? null : field.GetValue(component) as System.Collections.ArrayList;
+                    if (list != null) list.Clear();
+                }
+            }
+            menuDone = importFailed = false; menuAt = Time.realtimeSinceStartup; importUntil = 0;
+        }
+        public static bool MenuBusy { get { return importFailed || (!menuDone && menuAt > 0) || importUntil > 0; } }
 
         public static void MenuUpdate()
         {
             if (Application.loadedLevelName != "MainMenu") { menuAt = -1; menuDone = false; importUntil = 0; return; }
             float now = Time.realtimeSinceStartup;
             if (menuAt < 0) { menuAt = now + 1f; done.Clear(); cds = null; roots = null; }
+            if (!MscMusic.Ready) return;
             if (!menuDone && now >= menuAt)
             {
                 menuDone = true;
@@ -203,7 +250,9 @@ namespace MWCoop
             bool doneSongs = (playlist != null && Imported(playlist)) || (playlist == null && Imported(Fsm("Folk", "LoadSongs")));
             if (importUntil > 0 && (doneSongs || now >= importUntil))
             {
-                Log.Info("musiques : " + (now >= importUntil ? "import pas fini apres 30 s" : "import fini") + " -- " + Songs());
+                string error = doneSongs ? MscMusic.ValidateImport() : "Music import did not finish within 30 seconds";
+                if (error != null) { importFailed = true; MscMusic.ImportFailed(error); }
+                Log.Info("musiques : " + (error ?? "import fini") + " -- " + Songs());
                 importUntil = 0;
             }
         }
@@ -214,7 +263,7 @@ namespace MWCoop
         static string songDir; static List<string> songFiles;
         public static string SongFile(int i)
         {
-            string dir = roots != null && roots.Contains("Radio/") && Folder().Length > 0 ? Folder() + "Radio/" : Path.Combine(Path.GetDirectoryName(Application.dataPath), "Radio").Replace('\\', '/') + "/";
+            string dir = !Session.IsHost && !string.IsNullOrEmpty(musicDirectory) ? musicDirectory + "Radio/" : roots != null && roots.Contains("Radio/") && Folder().Length > 0 ? Folder() + "Radio/" : Path.Combine(Path.GetDirectoryName(Application.dataPath), "Radio").Replace('\\', '/') + "/";
             if (songFiles == null || songDir != dir)
             {
                 songDir = dir; songFiles = new List<string>();
@@ -225,6 +274,11 @@ namespace MWCoop
 
         static bool HasMusic(string root)
         {
+            if (!Session.IsHost && !string.IsNullOrEmpty(musicDirectory))
+            {
+                for (int i = 1; i <= 200; i++) if (File.Exists(Path.Combine(musicDirectory, root.Trim('/', '\\') + "/track" + i + ".ogg"))) return true;
+                return false;
+            }
             if (roots != null)
             {
                 string normRoot = root.TrimEnd('/', '\\') + "/";
@@ -283,6 +337,7 @@ namespace MWCoop
                 }
             }
             importUntil = Time.realtimeSinceStartup + 30f;
+            managedImport = true;
             if (!folk.gameObject.activeSelf) folk.gameObject.SetActive(true);
             FsmBool si = button != null ? button.FsmVariables.FindFsmBool("SongImported") : null;
             if (si != null) si.Value = true;

@@ -23,8 +23,16 @@ namespace SummerCoop.Game
             // instead uses a literal GetChild name and has no HandChild variable.
             foreach (FsmGameObject variable in f.FsmVariables.GameObjectVariables)
                 if (variable.Name.StartsWith("Part", StringComparison.Ordinal) && variable.Name != "Part" && variable.Value == part) return true;
+            PlayMakerFSM removal = PlayMakerFSM.FindFsmOnGameObject(part, "Removal");
+            FsmGameObject database = removal == null ? null : removal.FsmVariables.FindFsmGameObject("db_ThisPart");
+            if (database != null && database.Value != null)
+                foreach (FsmGameObject variable in f.FsmVariables.GameObjectVariables)
+                    if (variable.Name.StartsWith("db_ThisPart", StringComparison.Ordinal) && variable.Value == database.Value) return true;
             foreach (FsmState state in f.FsmStates) foreach (FsmStateAction action in state.Actions)
             {
+                GameObjectCompare compare = action as GameObjectCompare;
+                if (compare != null && compare.gameObjectVariable.OwnerOption == OwnerDefaultOption.SpecifyGameObject
+                    && compare.gameObjectVariable.GameObject.Name == "Part" && compare.compareTo.Value == part) return true;
                 GetChild child = action as GetChild;
                 if (child != null && child.storeResult != null && child.storeResult.Name == "Part" && child.childName.Value == part.name) return true;
             }
@@ -108,6 +116,7 @@ namespace SummerCoop.Game
                     PlaceForJoint(f, state);
                     foreach (FsmStateAction action in setup.Actions)
                         if (action is AddComponent || action is SetProperty || action is SetHingeJointLimits || action is SetHingeJointProperties) action.OnEnter();
+                    ConnectJoint(f, state, setup);
                 }
                 if (found) return;
             }
@@ -130,6 +139,32 @@ namespace SummerCoop.Game
                 current = next == null ? null : f.Fsm.GetState(next);
             }
             return null;
+        }
+        // Native MSC leaves the new joint connected to WORLD during Wait 2.
+        // Connect the exact component just created before physics can pull the
+        // loose part against the car. Replays enter at the mount state instead.
+        public static void ConnectJoint(PlayMakerFSM f, string mountState, FsmState setup)
+        {
+            FsmGameObject part = f.FsmVariables.FindFsmGameObject("Part");
+            FsmState mount = f.Fsm.GetState(mountState);
+            if (part == null || part.Value == null || mount == null) return;
+            Rigidbody car = null;
+            foreach (FsmStateAction action in mount.Actions)
+            {
+                var connect = action as SetJointConnectedBody;
+                if (connect != null && connect.rigidBody.Value != null) car = connect.rigidBody.Value.GetComponent<Rigidbody>();
+            }
+            if (car == null) return;
+            foreach (FsmStateAction action in setup.Actions)
+            {
+                var add = action as AddComponent;
+                Joint joint = add == null || add.storeComponent == null ? null : add.storeComponent.Value as Joint;
+                if (joint == null || joint.gameObject != part.Value) continue;
+                joint.connectedBody = car;
+                Rigidbody body = part.Value.GetComponent<Rigidbody>();
+                if (body != null && !body.isKinematic)
+                { body.velocity = car.GetPointVelocity(body.position); body.angularVelocity = car.angularVelocity; }
+            }
         }
         public static void PlaceForJoint(PlayMakerFSM f, string mountState)
         {

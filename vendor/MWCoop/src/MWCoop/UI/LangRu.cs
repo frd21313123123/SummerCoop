@@ -7,6 +7,15 @@ namespace MWCoop
     {
         public static readonly Dictionary<string, string> Table = new Dictionary<string, string>
         {
+            { "Cure wasp sting", "Вылечить укус осы" },
+            { "Receiving host music: ", "Получение музыки хоста: " },
+            { "Music synchronization failed: ", "Ошибка синхронизации музыки: " },
+            { "Clear blindness", "Убрать ослепление" },
+            { "Sting cured", "Укус вылечен" },
+            { "Vision restored", "Зрение восстановлено" },
+            { "Keep wasps out of the house", "Не пускать осу в дом" },
+            { "House wasp setting changed", "Настройка осы в доме изменена" },
+            { "Camera effects are not ready.", "Эффекты камеры ещё не готовы." },
             { "Restore bolt positions", "Вернуть болты на место" },
             { "Restore bolt positions locally without changing tightness.", "Возвращает болты на место у вас, сохраняя текущую затяжку." },
             { "Bolt positions restored: ", "Восстановлено болтов: " },

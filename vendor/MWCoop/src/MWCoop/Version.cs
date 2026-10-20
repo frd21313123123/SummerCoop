@@ -3,6 +3,6 @@ namespace MWCoop
     public static class Version
     {
         // Version du mod ; dist\make-release.ps1 refuse de publier une autre version que celle-ci.
-        public const string Text = "0.5.3"; // MWCoop 0.95.3, MSC adapter 1
+        public const string Text = "0.5.4"; // MWCoop 0.95.3, MSC adapter 1
     }
 }

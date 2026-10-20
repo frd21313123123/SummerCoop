@@ -35,6 +35,8 @@ static const wchar_t *const kRu[][2] = {
     { L"SummerCoop %s is up to date", L"SummerCoop %s — актуальная версия" },
     { L"No SummerCoop release published", L"Пока нет выпусков SummerCoop" },
     { L"GitHub rate limit: try again later", L"Лимит запросов GitHub: повторите позже" },
+    { L"GitHub request limit: retry at %s", L"Лимит запросов GitHub: повторная проверка в %s" },
+    { L"GitHub denied access (HTTP 403)", L"GitHub запретил доступ (HTTP 403)" },
     { L"Version check failed (HTTP %lu, WinHTTP %lu)", L"Не удалось проверить версию (HTTP %lu, WinHTTP %lu)" },
     { L"Could not open the download page", L"Не удалось открыть страницу загрузки" },
     { L"Preview to redo: start a game (~30 s)", L"Обнови превью: зайди в игру (~30 с)" },
@@ -1157,4 +1159,6 @@ static const wchar_t *const kRu[][2] = {
     { L"The original MWCoop authors retain their rights. SummerCoop's MIT license does not relicense the upstream code or assets.", L"Права авторов MWCoop сохраняются. Лицензия MIT проекта SummerCoop не распространяется автоматически на заимствованный код и ресурсы." },
     { L"MWCoop source on GitHub", L"Исходники MWCoop на GitHub" },
     { L"Third-party credits", L"Авторы и лицензии" },
+    {L"Update file was not found (HTTP 404)", L"Файл обновления не найден (HTTP 404)"},
+    {L"Downloaded EXE version does not match the selected release", L"Версия скачанного EXE не совпадает с выбранным выпуском"},
 };

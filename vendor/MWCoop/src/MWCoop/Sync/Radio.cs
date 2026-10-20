@@ -23,12 +23,19 @@ namespace MWCoop
         static AudioSource[] ch;              // Channel1, Folk
         static PlayMakerFSM[] upd;
         static bool found, muted;
+        static int sentRevision, receivedRevision;
         static float nextSend, nextFind, nextClips, nextLog;
         static Dictionary<string, AudioClip> clips;
+        static readonly MscAudioStream[] streams = new MscAudioStream[2];
+        static readonly float[] wantedTime = new float[2], wantedAt = new float[2];
+        static readonly bool[] wantedPlaying = new bool[2];
 
         public static void OnLevelLoaded()
         {
+            for (int i = 0; i < streams.Length; i++) { if (streams[i] != null) streams[i].Dispose(); streams[i] = null; }
+            foreach (Ghost g in ghosts) foreach (MscAudioStream stream in g.Streams) if (stream != null) stream.Dispose();
             found = muted = false; ch = null; upd = null; clips = null; nextFind = 0;
+            sentRevision = receivedRevision = 0;
             ghosts.Clear(); realT = null; fetch = null; lastSet = false; winK = null; winUntil = 0f;
             inRemote = false; nextBeat = nextSend = 0f; beatSent = null;
         }
@@ -60,15 +67,18 @@ namespace MWCoop
         {
             if (!Session.Active || !PlayerSync.InGame || !Find()) return;
             float now = Time.realtimeSinceStartup;
+            if (!Session.IsHost)
+                for (int i = 0; i < streams.Length; i++) if (streams[i] != null)
+                    streams[i].Apply(ch[i], wantedPlaying[i], wantedTime[i] + (wantedPlaying[i] ? now - wantedAt[i] : 0));
             Watch(now);
             Beat(now);
             if (!Session.IsHost || now < nextSend || Session.RemoteCount == 0) return;
             nextSend = now + 1f;
-            var w = new NetWriter(Msg.Radio).U8(ch.Length);
+            var w = new NetWriter(Msg.Radio).I32(++sentRevision).U8(ch.Length);
             foreach (AudioSource a in ch)
             {
                 AudioClip c = a != null ? a.clip : null;
-                w.Str(ClipKey(c)).F32(c != null ? a.time : 0f).Bool(a != null && a.isPlaying);
+                w.Str(ClipKey(c)).F32(MscAudioStream.Time(a)).Bool(a != null && a.isPlaying);
             }
             Session.Broadcast(w, false);
         }
@@ -80,6 +90,8 @@ namespace MWCoop
         static string ClipKey(AudioClip c)
         {
             if (c == null) return "";
+            string imported = MscMusic.ClipKey(c);
+            if (imported.StartsWith("msc-music:", System.StringComparison.Ordinal)) return imported;
             if (c.name.Length > 0) return c.name;
             System.Collections.ArrayList songs = Songs();
             int i = songs != null ? songs.IndexOf(c) : -1;
@@ -88,21 +100,12 @@ namespace MWCoop
 
         static System.Collections.ArrayList Songs()
         {
-            GameObject folk = GameObject.Find("Radio/Folk");
-            if (folk == null) return null;
-            foreach (Component comp in folk.GetComponents<Component>())
-            {
-                if (comp == null || comp.GetType().Name != "PlayMakerArrayListProxy") continue;
-                var rn = comp.GetType().GetField("referenceName");
-                if (rn != null && (rn.GetValue(comp) as string) != "Songs") continue;
-                var al = comp.GetType().GetField("_arrayList", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                return al != null ? al.GetValue(comp) as System.Collections.ArrayList : null;
-            }
-            return null;
+            return MscMusic.Songs("Radio");
         }
 
         static AudioClip ClipNamed(string n)
         {
+            if (n.StartsWith("msc-music:", System.StringComparison.Ordinal)) return MscMusic.Clip(n);
             AudioClip c;
             if (n.StartsWith("#chanson:"))
             {
@@ -122,7 +125,8 @@ namespace MWCoop
         {
             public Transform K; public GameObject Go; public AudioSource[] Ch; public PlayMakerFSM Fetch; public int Who; public float Born;
             // Chanson importee (flux WWW) : un seul lecteur a la fois -- la copie charge son propre exemplaire.
-            public string[] SongKey = new string[2]; public WWW[] SongWww = new WWW[2]; public AudioClip[] SongClip = new AudioClip[2];
+            public MscAudioStream[] Streams = new MscAudioStream[2];
+            public string[] Requested = new string[2];
         }
         struct Snap { public Transform Parent; public Vector3 LP; public Quaternion LR; public bool On, M1, MF, St; }
         static readonly List<Ghost> ghosts = new List<Ghost>();
@@ -173,6 +177,7 @@ namespace MWCoop
 
         static void Kill(Ghost g, string why)
         {
+            foreach (MscAudioStream stream in g.Streams) if (stream != null) stream.Dispose();
             if (g.Go != null) Object.Destroy(g.Go);
             ghosts.Remove(g);
             Log.Info("radio : poste de " + (g.K != null ? g.K.name : "?") + " " + why);
@@ -279,7 +284,7 @@ namespace MWCoop
             for (int i = ghosts.Count - 1; i >= 0; i--)
             {
                 Ghost g = ghosts[i];
-                if (g.Go == null || g.Go.transform.parent == null) { ghosts.RemoveAt(i); continue; }
+                if (g.Go == null || g.Go.transform.parent == null) { Kill(g, "source absente"); continue; }
                 if (!Session.Players.ContainsKey(g.Who)) { Kill(g, "coupe : #" + g.Who + " parti"); continue; }
                 for (int c = 0; c < 2 && c < g.Ch.Length; c++)
                 {
@@ -290,13 +295,13 @@ namespace MWCoop
                     // le vrai canal, que le jeu croyait fini : morceau suivant, et ainsi de suite jusqu'a une pub (retour d'un
                     // joueur, 0.75.35 : « plusieurs radios allumees : que des pubs »). La copie joue son propre exemplaire,
                     // charge depuis le fichier, depuis le debut (un flux ne se positionne pas).
-                    string key = src.clip != null && src.clip.name.Length == 0 ? ClipKey(src.clip) : null;
-                    if (key != null && key.StartsWith("#chanson:"))
+                    string key = src.clip != null ? ClipKey(src.clip) : null;
+                    if (key != null && (key.StartsWith("#chanson:") || key.StartsWith("msc-music:")))
                     {
                         OwnSong(g, c, key, src, dst);
                         continue;
                     }
-                    if (g.SongKey[c] != null) { g.SongKey[c] = null; g.SongWww[c] = null; g.SongClip[c] = null; }
+                    if (g.Streams[c] != null) { g.Streams[c].Dispose(); g.Streams[c] = null; } g.Requested[c] = null;
                     if (dst.clip != src.clip) { dst.clip = src.clip; if (src.clip != null) dst.time = Mathf.Min(src.time, src.clip.length - 0.05f); }
                     if (src.isPlaying && !dst.isPlaying && dst.clip != null && dst.gameObject.activeInHierarchy) { dst.Play(); dst.time = src.time; }
                     else if (!src.isPlaying && dst.isPlaying) dst.Stop();
@@ -354,25 +359,17 @@ namespace MWCoop
 
         static void OwnSong(Ghost g, int c, string key, AudioSource src, AudioSource dst)
         {
-            if (g.SongKey[c] != key)
+            if (g.Requested[c] != key)
             {
-                g.SongKey[c] = key; g.SongClip[c] = null; g.SongWww[c] = null;
+                g.Requested[c] = key;
+                if (g.Streams[c] != null) g.Streams[c].Dispose(); g.Streams[c] = null;
                 int i;
-                string file = int.TryParse(key.Substring(9), out i) ? Contenu.SongFile(i) : null;
-                if (file != null) g.SongWww[c] = new WWW("file:///" + file);
+                string file = key.StartsWith("msc-music:") ? MscMusic.FileFor(key) : int.TryParse(key.Substring(9), out i) ? Contenu.SongFile(i) : null;
+                if (file != null) g.Streams[c] = new MscAudioStream(file, key);
                 else Log.Info("radio : copie de " + (g.K != null ? g.K.name : "?") + ", fichier de " + key + " introuvable : muette pendant ce morceau");
                 if (dst.isPlaying) dst.Stop();
             }
-            if (g.SongWww[c] != null && g.SongWww[c].isDone)
-            {
-                try { g.SongClip[c] = g.SongWww[c].GetAudioClip(false, true, AudioType.OGGVORBIS); } catch (System.Exception e) { Log.Warn("radio : " + e.Message); }
-                g.SongWww[c] = null;
-            }
-            AudioClip own = g.SongClip[c];
-            if (own == null) return;
-            if (dst.clip != own) dst.clip = own;
-            if (src.isPlaying && !dst.isPlaying && dst.gameObject.activeInHierarchy) dst.Play();
-            else if (!src.isPlaying && dst.isPlaying) dst.Stop();
+            if (g.Streams[c] != null) g.Streams[c].Apply(dst, src.isPlaying, MscAudioStream.Time(src));
         }
 
         // Essai [Test] Autotest=radioflux : une chanson importee (Radio/trackN.ogg, flux WWW) jouee par une source A, puis a
@@ -433,7 +430,8 @@ namespace MWCoop
 
         public static void OnMessage(Peer from, NetReader r)
         {
-            if (Session.IsHost || !PlayerSync.InGame || !Find()) return;
+            if (Session.IsHost || from == null || from.Id != 0 || !PlayerSync.InGame || !Find()) return;
+            int revision = r.I32(); if (revision <= receivedRevision) return; receivedRevision = revision;
             if (!muted)
             {
                 muted = true;
@@ -446,10 +444,22 @@ namespace MWCoop
                 string name = r.Str();
                 float t = r.F32();
                 bool playing = r.Bool();
+                if (playing) t += Mathf.Clamp(Session.HostPing * .0005f, 0, .25f);
                 if (i >= ch.Length || ch[i] == null || (i == 1 && testFolk)) continue;
                 AudioSource a = ch[i];
                 try
                 {
+                    if (name.StartsWith("msc-music:", System.StringComparison.Ordinal))
+                    {
+                        if (streams[i] == null || streams[i].Key != name)
+                        {
+                            if (streams[i] != null) streams[i].Dispose(); streams[i] = null; a.Stop();
+                            string file = MscMusic.FileFor(name); if (file != null) streams[i] = new MscAudioStream(file, name);
+                        }
+                        wantedTime[i] = t; wantedAt[i] = Time.realtimeSinceStartup; wantedPlaying[i] = playing;
+                        continue;
+                    }
+                    if (streams[i] != null) { streams[i].Dispose(); streams[i] = null; }
                     if (name.Length == 0) { if (a.isPlaying) a.Stop(); continue; }
                     bool swap = a.clip == null || ClipKey(a.clip) != name;
                     if (swap)
@@ -465,7 +475,7 @@ namespace MWCoop
                     bool started = playing && !a.isPlaying && a.gameObject.activeInHierarchy;
                     if (started) a.Play();
                     else if (!playing && a.isPlaying) a.Stop();
-                    if (started || swap || Mathf.Abs(a.time - t) > 1.5f) a.time = Mathf.Clamp(t, 0f, Mathf.Max(0f, a.clip.length - 0.05f));
+                    if (started || swap || Mathf.Abs(MscAudioStream.Time(a) - t) > .25f) MscAudioStream.Seek(a, t);
                     if (swap) Log.Info("radio : canal " + (i == 0 ? "local" : "folk") + " -> " + name + " a " + t.ToString("F0") + " s (hote)");
                 }
                 catch (System.Exception e) { if (Time.realtimeSinceStartup >= nextLog) { nextLog = Time.realtimeSinceStartup + 30f; Log.Warn("radio : " + e.Message); } }

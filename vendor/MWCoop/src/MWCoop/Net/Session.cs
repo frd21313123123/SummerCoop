@@ -31,7 +31,7 @@ namespace MWCoop.Net
     // Session coop : l'hote fait autorite et relaie tout. [Coop] Mode=solo|hote|invite.
     public static class Session
     {
-        public const int NetVersion = 1049;   // MSC native orders, two-item personal sets and save order baseline.
+        public const int NetVersion = 1050;   // MSC music catalogue, CD playback and shared comfort setting.
         static readonly HashSet<int> authenticated = new HashSet<int>();
         internal static bool AuthenticatedForSave(Peer peer) { return peer != null && peer.Accepted && authenticated.Contains(peer.Id); }
         public static Transport T;
@@ -54,6 +54,8 @@ namespace MWCoop.Net
 
         public static void Start()
         {
+            MscComfort.OnHost(false);
+            MscMusic.Reset();
             string mode = Config.Get("Coop", "Mode", "solo").ToLowerInvariant();
             Steam = Config.Get("Coop", "Reseau", "ip").ToLowerInvariant() == "steam";
             if (!ulong.TryParse(Config.Get("Coop", "HoteSteam", ""), out hostSteam)) hostSteam = 0;
@@ -106,6 +108,7 @@ namespace MWCoop.Net
                 Active = IsHost = true;
                 LocalId = Me.Id = 0;
                 Players[0] = Me;
+                MscMusic.BeginHost();
                 Status = Steam ? "hote Steam" : "hote, port " + port;
                 Log.Info(Steam ? "hote par Steam (salon et pair-a-pair)" : "hote sur le port UDP " + port);
             }
@@ -169,7 +172,7 @@ namespace MWCoop.Net
             if (Steam) SteamNet.Leave();
             if (T != null) T.Close();
             T = null;
-            Active = false; Players.Clear(); authenticated.Clear(); hostPeer = null; MscSaveTransfer.Reset();
+            Active = false; Players.Clear(); authenticated.Clear(); hostPeer = null; MscSaveTransfer.Reset(); MscMusic.Reset();
         }
 
         // ------------------------------------------------------------ envoi
@@ -202,6 +205,7 @@ namespace MWCoop.Net
         // ------------------------------------------------------------ evenements
         static void Connected(Peer p)
         {
+            if (!IsHost) { MscMusic.Reset(); MscComfort.OnHost(false); }
             if (IsHost)
             {
                 Log.Info("nouveau pair " + p);
@@ -285,6 +289,8 @@ namespace MWCoop.Net
                     case Msg.PushDoor: PushDoors.OnMessage(from, r); break;
                     case Msg.Summon: Admin.OnSummon(from, r); break;
                     case Msg.Radio: Radio.OnMessage(from, r); break;
+                    case Msg.Music: MscMusic.OnMessage(from, r); break;
+                    case Msg.Cd: MscCd.OnMessage(from, r); break;
                     case Msg.ModData: CoopApi.OnMessage(from, r); break;
                     case Msg.Knob: Knobs.OnMessage(from, r); break;
                     case Msg.Event: Events.OnMessage(from, r); break;
@@ -328,8 +334,8 @@ namespace MWCoop.Net
             catch (Exception e)
             {
                 Log.Error("message " + type + " de " + from + " : " + e);
-                if (!IsHost && (type == Msg.SaveBegin || type == Msg.SaveChunk || type == Msg.SaveEnd))
-                { Stop(); Status = "MSC save transfer failed: " + e.Message; }
+                if (!IsHost && (type == Msg.SaveBegin || type == Msg.SaveChunk || type == Msg.SaveEnd || type == Msg.Music))
+                { Stop(); Status = "MSC transfer failed: " + e.Message; }
             }
         }
 
@@ -355,7 +361,10 @@ namespace MWCoop.Net
             bool firstHello = authenticated.Add(from.Id);
             Hud.Toast(pi.Name + Lang.T(" a rejoint la partie", " joined the game"));
             SendRoster();
-            if (firstHello) SaveTransfer.Queue(from);
+            if (firstHello) {
+                SaveTransfer.Queue(from); MscMusic.Queue(from);
+                T.SendReliable(from, new NetWriter(Msg.Job).U8(0).Str("@triches").Bool(Cheats.Allowed).Bool(MscComfort.NoHouseWasp).ToArray());
+            }
         }
 
         // Pseudo/apparence changes en cours de partie : l'invite previent l'hote, qui renvoie la liste.

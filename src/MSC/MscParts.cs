@@ -82,7 +82,7 @@ namespace MWCoop
         public static void Reset() { MscBoltPositions.Reset(); parts.Clear(); ids.Clear(); modelKeys.Clear(); databases.Clear(); databaseCache.Clear(); modelCache.Clear(); MscRepairCache.Clear(); changedRoots.Clear(); changedSet.Clear(); changedStack.Clear(); scanFsms = null; scanCursor = scanPhase = 0; keyGeneration++; partStates.Clear(); pendingParts.Clear(); completedParts.Clear(); bindings.Clear(); byFsm.Clear(); hooked.Clear(); pending.Clear(); pendingBolts.Clear(); completedBolts.Clear(); totalClocks.Clear(); totalPending.Clear(); repairs.Clear(); remote.Clear(); nextScan = nextBoltSnapshot = nextPartSnapshot = 0; localBoltRevision = hostBoltRevision = 0; }
         public static bool Owns(PlayMakerFSM f)
         {
-            return f != null && !MscBrewing.Owns(f) && (IsBoltCheck(f) || f.FsmName == "Assembly" || f.FsmName == "Removal" || f.FsmName == "Assemble" && Recon.Path(f.transform).IndexOf("Wiring", StringComparison.OrdinalIgnoreCase) >= 0 || IsBolt(f));
+            return f != null && !MscCd.Owns(f) && !MscBrewing.Owns(f) && (IsBoltCheck(f) || f.FsmName == "Assembly" || f.FsmName == "Removal" || f.FsmName == "Assemble" && Recon.Path(f.transform).IndexOf("Wiring", StringComparison.OrdinalIgnoreCase) >= 0 || IsBolt(f));
         }
         // These FSMs consume the totals sent with Msg.Bolt. Generic job/world
         // replay must not also drive their Bolts ON/OFF transitions: a delayed
@@ -292,6 +292,17 @@ namespace MWCoop
                 Finish();
             }
         }
+        sealed class JointReady : ModHook
+        {
+            public PlayMakerFSM Assembly; public string Mount;
+            public override string Module { get { return "msc-parts"; } }
+            public override void OnEnter()
+            {
+                try { NativeAssembly.ConnectJoint(Assembly, Mount, State); }
+                catch (Exception e) { Replay.HookError(e); }
+                Finish();
+            }
+        }
         static bool ActionState(PlayMakerFSM f, FsmState state)
         {
             string name = state.Name;
@@ -351,6 +362,7 @@ namespace MWCoop
         }
         static void ScanFsm(PlayMakerFSM f)
         {
+            if (MscCd.Owns(f)) return;
                 if (f == null || f.hideFlags != HideFlags.None) return;
                 MscVehicleControls.Prepare(f);
                 if (IsBoltCheck(f)) return; // Native observer; only its Screw FSM publishes edits.
@@ -379,7 +391,8 @@ namespace MWCoop
                     if (jointMount != null)
                     {
                         var setup = new List<FsmStateAction>(state.Actions);
-                        setup.Insert(0, new JointPose { Assembly = f, Mount = jointMount }); state.Actions = setup.ToArray();
+                        setup.Insert(0, new JointPose { Assembly = f, Mount = jointMount });
+                        setup.Add(new JointReady { Assembly = f, Mount = jointMount }); state.Actions = setup.ToArray();
                     }
                     if (!ActionState(f, state)) continue;
                     List<FsmStateAction> actions = new List<FsmStateAction>(state.Actions); actions.Insert(0, new Hook { Binding = binding, StateName = state.Name }); state.Actions = actions.ToArray(); installed = true;

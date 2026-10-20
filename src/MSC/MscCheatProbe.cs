@@ -106,9 +106,15 @@ namespace MWCoop
                     }
                     CheatPanel.Open = true;
                     CheatPanel.Draw();
+                    for (int turn = 0; turn < 8 && !CheatPanel.ContentViewport.Contains(CheatPanel.MoneyButtonRect.center); turn++)
+                    {
+                        Event.current = new Event { type = EventType.ScrollWheel, delta = new Vector2(0, 3), mousePosition = CheatPanel.ContentViewport.center };
+                        CheatPanel.Draw();
+                    }
                     Event.current = new Event { type = EventType.MouseDown, button = 0, mousePosition = CheatPanel.MoneyButtonRect.center };
                     CheatPanel.Draw();
-                    Record("loading-money-click", loading && Mathf.Abs(cash.Value - before - 1000) < .01f, "Loading=" + loading + ";Before=" + before + ";Cash=" + cash.Value);
+                    Record("loading-money-click", loading && Mathf.Abs(cash.Value - before - 1000) < .01f, "Loading=" + loading + ";Before=" + before + ";Cash=" + cash.Value
+                        + ";Button=" + CheatPanel.MoneyButtonRect + ";Viewport=" + CheatPanel.ContentViewport);
                     CheatPanel.Open = false;
                     bool active = Session.Active;
                     try

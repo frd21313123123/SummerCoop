@@ -11,8 +11,12 @@ namespace MWCoop
     {
         public static bool Open;
         static float openedAt;
+        static Vector2 scroll;
+        static Vector2 pointer;
+        static bool pressed;
+        static bool pointerVisible = true;
         static string note; static float noteUntil; static bool noteBad;
-        internal static Rect MoneyButtonRect;
+        internal static Rect MoneyButtonRect, ContentViewport;
 
         public static void Update()
         {
@@ -24,11 +28,11 @@ namespace MWCoop
 
         static bool Button(Rect r, string label, bool accent, Event e, bool enabled = true)
         {
-            bool hover = enabled && r.Contains(e.mousePosition);
+            bool hover = enabled && pointerVisible && r.Contains(pointer);
             Color bg = !enabled ? new Color(1f, 1f, 1f, 0.04f) : accent ? (hover ? Style.Accent : Style.AccentDeep) : new Color(1f, 1f, 1f, hover ? 0.14f : 0.08f);
             Style.Round(r, r.height / 2, bg);
             Style.Text(r, label, 14, TextAnchor.MiddleCenter, !enabled ? Style.Dim : accent ? Style.OnAccent : Style.White);
-            if (enabled && e.type == EventType.MouseDown && e.button == 0 && hover) { e.Use(); return true; }
+            if (enabled && pressed && hover) { pressed = false; e.Use(); Event.current.Use(); return true; }
             return false;
         }
 
@@ -48,7 +52,10 @@ namespace MWCoop
         public static void Draw()
         {
             if (!Open) return;
-            Event e = Event.current;
+            // Keep the screen event intact while Unity's scroll view handles
+            // and transforms its own current event for native GUI controls.
+            Event e = new Event(Event.current);
+            pressed = e.type == EventType.MouseDown && e.button == 0;
             float k = Mathf.Clamp01((Time.realtimeSinceStartup - openedAt) / 0.14f);
             Style.Alpha = 1f - (1f - k) * (1f - k);
             var players = new List<PlayerInfo>();
@@ -58,7 +65,8 @@ namespace MWCoop
             float w = Mathf.Min(Style.Px(680), Screen.width - Style.Px(32));
             int perRow = 4, placeRows = (Cheats.Places.Length + perRow - 1) / perRow;
             float h = Style.Px(120) + (Session.Active ? Style.Px(30) + Mathf.Max(1, players.Count) * rowH : 0f) + Style.Px(30) + placeRows * (bh + gap) + Style.Px(30) + bh + gap + Style.Px(30) + 2 * (bh + gap) + Style.Px(60);
-            h = Mathf.Min(h + bh + gap, Screen.height - Style.Px(24));
+            float contentHeight = h + 3 * (bh + gap);
+            h = Mathf.Min(h + 4 * (bh + gap), Screen.height - Style.Px(24));
             float x = Mathf.Round((Screen.width - w) / 2), y = Mathf.Round((Screen.height - h) / 2 + (1f - k) * Style.Px(12));
             Style.Glass(new Rect(x, y, w, h), Style.Px(20));
             Style.Title(new Rect(x + pad, y + Style.Px(12), w - 2 * pad, Style.Px(40)), Lang.T("TRICHES", "CHEATS"), Style.White, TextAnchor.MiddleLeft, 26);
@@ -70,6 +78,12 @@ namespace MWCoop
                                                                     : Lang.T("Coupées : F10 > TRICHES > Autoriser les triches.", "Off: F10 > CHEATS > Allow cheats."));
             Style.Text(new Rect(ix, cy, iw, Style.Px(26)), state, 15, TextAnchor.MiddleLeft, ok ? Style.Good : Style.Warn, false);
             cy += Style.Px(40);
+            Rect viewport = new Rect(ix, cy, iw, Mathf.Max(Style.Px(60), y + h - Style.Px(54) - cy));
+            ContentViewport = viewport; pointer = e.mousePosition; pointerVisible = viewport.Contains(pointer);
+            float scrollbarSpace = Mathf.Max(20, Style.Px(20));
+            scroll = GUI.BeginScrollView(viewport, scroll, new Rect(0, 0, iw - scrollbarSpace, contentHeight));
+            pointer = pointer - viewport.position + scroll;
+            ix = 0; cy = 0; iw -= scrollbarSpace;
             if (Button(new Rect(ix, cy, iw, bh), Lang.R("Tool cases"), true, e)) Menu.ShowToolCases();
             cy += bh + gap;
             // joueurs
@@ -101,11 +115,16 @@ namespace MWCoop
             Header(ix, ref cy, iw, Lang.T("MOI", "ME"));
             float mw = Mathf.Floor((iw - 3 * gap) / 4);
             if (Button(new Rect(ix, cy, mw, bh), Lang.T("SOIGNER", "HEAL"), false, e, ok)) Do("/soin", Lang.T("En pleine forme", "Feeling great"));
-            MoneyButtonRect = new Rect(ix + (mw + gap), cy, mw, bh);
-            if (Button(MoneyButtonRect, "+1 000 mk", false, e, ok)) Do("/argent 1000", "+1 000 mk");
+            Rect money = new Rect(ix + (mw + gap), cy, mw, bh);
+            MoneyButtonRect = new Rect(viewport.x + money.x - scroll.x, viewport.y + money.y - scroll.y, mw, bh);
+            if (Button(money, "+1 000 mk", false, e, ok)) Do("/argent 1000", "+1 000 mk");
             if (Button(new Rect(ix + 2 * (mw + gap), cy, mw, bh), "+10 000 mk", false, e, ok)) Do("/argent 10000", "+10 000 mk");
             if (Button(new Rect(ix + 3 * (mw + gap), cy, mw, bh), Lang.T("LIBÉRER", "FREE"), false, e, ok)) Do("/liberer", Lang.T("Plus recherché", "No longer wanted"));
             cy += bh + gap + Style.Px(6);
+            float cureWidth = (iw - gap) / 2;
+            if (Button(new Rect(ix, cy, cureWidth, bh), Lang.R("Cure wasp sting"), false, e, ok)) Do("/curesting", Lang.R("Sting cured"));
+            if (Button(new Rect(ix + cureWidth + gap, cy, cureWidth, bh), Lang.R("Clear blindness"), false, e, ok)) Do("/clearblindness", Lang.R("Vision restored"));
+            cy += bh + gap;
             // monde
             Header(ix, ref cy, iw, Lang.T("MONDE (POUR TOUS)", "WORLD (FOR EVERYONE)"));
             int[] hours = { 6, 8, 12, 16, 18, 22 };
@@ -120,6 +139,11 @@ namespace MWCoop
             if (Button(new Rect(ix + Style.Px(90) + sw + gap, cy, sw, bh), Lang.T("NON", "OFF"), false, e, ok)) Do("/pluie non", Lang.T("Temps sec", "Dry weather"));
             cy += bh + gap;
             // bas : resultat, ou rappel du tchat
+            if (Button(new Rect(ix, cy, iw, bh), (MscComfort.NoHouseWasp ? "[x] " : "[ ] ") + Lang.R("Keep wasps out of the house"), MscComfort.NoHouseWasp, e, ok))
+                Do("/wasphome " + (MscComfort.NoHouseWasp ? "off" : "on"), Lang.R("House wasp setting changed"));
+            GUI.EndScrollView();
+            pointerVisible = true;
+            ix = x + pad; iw = w - 2 * pad;
             Rect foot = new Rect(ix, y + h - Style.Px(44), iw, Style.Px(30));
             if (note != null && Time.realtimeSinceStartup < noteUntil) Style.Text(foot, note, 15, TextAnchor.MiddleLeft, noteBad ? Style.Warn : Style.Good, false);
             else Style.Text(foot, Lang.T("Aussi dans le tchat (", "Also in the chat (") + Keys.Label(Keys.Chat) + Lang.T(") : /aide", "): /help"), 14, TextAnchor.MiddleLeft, Style.Dim, false);

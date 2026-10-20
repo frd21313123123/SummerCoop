@@ -37,6 +37,8 @@ jobs:
         run: ./tools/test-launcher.ps1
       - name: Test release selection, checksums and native EXE replacement
         run: ./tools/test-native-updates.ps1
+      - name: Test stable discovery, HTTP limits and persistent conditional cache
+        run: ./tools/test-update-discovery.ps1 -LauncherPath SummerCoop-Launcher/SummerCoop-Launcher.exe
       - name: Test automatic Steam launcher registration and legacy copies
         run: ./tools/test-steam-binding.ps1 -LauncherPath SummerCoop-Launcher/SummerCoop-Launcher.exe
       - name: Test native save selection and new lobby worlds
@@ -47,7 +49,7 @@ jobs:
         if: always()
         run: |
           $fence = [string]([char]96) * 3
-          foreach ($report in @('build/test-results.txt','build/mwcoop-network-tests/test-results.txt','build/installer-tests/test-results.txt','build/launcher-tests/test-results.txt','build/native-update-tests/test-results.txt','build/native-save-tests/test-results.txt','build/steam-binding-tests/test-results.txt','build/release-notes-tests/test-results.txt')) {
+          foreach ($report in @('build/test-results.txt','build/mwcoop-network-tests/test-results.txt','build/installer-tests/test-results.txt','build/launcher-tests/test-results.txt','build/native-update-tests/test-results.txt','build/update-discovery-tests/test-results.txt','build/native-save-tests/test-results.txt','build/steam-binding-tests/test-results.txt','build/release-notes-tests/test-results.txt')) {
             if (Test-Path -LiteralPath $report) {
               @($report, '', ($fence + 'text')) + @(Get-Content -LiteralPath $report) + @($fence, '') |
                 Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding UTF8
@@ -83,6 +85,8 @@ jobs:
         run: ./tools/test-msc-adapter.ps1 -GamePath build/ci-game
       - name: Verify the actual release launcher
         run: ./tools/test-native-updates.ps1 -LauncherPath SummerCoop-Launcher/SummerCoop-Launcher.exe
+      - name: Verify update discovery with the actual release launcher
+        run: ./tools/test-update-discovery.ps1 -LauncherPath SummerCoop-Launcher/SummerCoop-Launcher.exe
       - name: Verify Steam registration with the actual release launcher
         run: ./tools/test-steam-binding.ps1 -LauncherPath SummerCoop-Launcher/SummerCoop-Launcher.exe
       - name: Verify saves with the actual release launcher

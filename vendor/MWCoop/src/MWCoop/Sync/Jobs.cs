@@ -248,6 +248,7 @@ namespace MWCoop
                 bool jobCar = vehicle && r.transform.parent != null;
                 foreach (PlayMakerFSM f in r.GetComponentsInChildren<PlayMakerFSM>(true))
                 {
+                    if (MscCd.Owns(f)) continue;
                     if (!vehicle && UnderJobCar(f.transform)) continue;   // taxi : vu comme vehicule
                     if (playerT != null && f.transform.IsChildOf(playerT)) continue;
                     if (reserved.Contains(f)) continue;                   // bois, fosses, fendeuse (meme attelee)
@@ -1637,7 +1638,7 @@ namespace MWCoop
                 case "@taxicarte": MapPanel.OnTaxi(who, r); break;
                 case "@don": { int to = r.U8(); Wallet.OnGift(who, to, r.I32()); break; }
                 case "@visage?": CustomFace.OnAsk(who, r.Str()); break;
-                case "@triches": if (!Session.IsHost) Cheats.OnAllowed(r.Bool()); break;
+                case "@triches": if (!Session.IsHost && who == 0) { Cheats.OnAllowed(r.Bool()); MscComfort.OnHost(r.Bool()); } break;
                 case "@pvp": if (!Session.IsHost) Pvp.OnAllowed(r.Bool()); break;
                 case "@poste": Radio.OnBeat(who, r.Str()); break;
                 case "@emit": Particles.OnMessage(who, r); break;

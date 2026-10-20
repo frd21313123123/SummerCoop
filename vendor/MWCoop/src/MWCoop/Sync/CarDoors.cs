@@ -122,7 +122,7 @@ namespace MWCoop
         internal static void PartRemoving(GameObject part)
         {
             PlayMakerFSM use = Game.FsmOn(part, "Use");
-            if (use == null || use.Fsm.GetState("Open door") == null) return;
+            if (use == null || use.Fsm.GetState("Open door") == null && use.Fsm.GetState("Open hood") == null) return;
             // Native Removal destroys the hinge but leaves the closed latch.
             // On reassembly SetJointConnectedBody would then bind that old
             // FixedJoint instead of the new hinge, leaving the door locked and
