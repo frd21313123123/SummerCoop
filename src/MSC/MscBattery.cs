@@ -19,7 +19,8 @@ namespace MWCoop
             public RigidbodyInterpolation Interpolation;
         }
         static readonly Dictionary<GameObject, Battery> batteries = new Dictionary<GameObject, Battery>();
-        internal static void Reset() { batteries.Clear(); }
+        static bool terminalsRestored;
+        internal static void Reset() { batteries.Clear(); terminalsRestored = false; }
         internal static bool IsBattery(GameObject go)
         {
             return go != null && go.name == "battery(Clone)";
@@ -98,6 +99,40 @@ namespace MWCoop
             }
             MscParts.Changed(go); Props.Track(go);
         }
+        static bool Wired(string name)
+        {
+            PlayMakerFSM data = Game.FindFsm("Database/DatabaseWiring/" + name, "Data");
+            FsmBool installed = data == null ? null : data.FsmVariables.FindFsmBool("Installed");
+            return installed != null && installed.Value;
+        }
+        static bool RestoreTerminal(string name, bool wired)
+        {
+            PlayMakerFSM data = Game.FindFsm("Database/DatabaseWiring/" + name, "Data");
+            if (data == null || !data.Fsm.Initialized) return false;
+            FsmBool installed = data.FsmVariables.FindFsmBool("Installed");
+            FsmGameObject model = data.FsmVariables.FindFsmGameObject("ActivateThis");
+            if (installed == null || model == null || model.Value == null) return false;
+            // Older builds destroyed the terminal when removing a battery while
+            // leaving its actual cable installed. Recover only that existing
+            // connection; an unwired car must not gain a terminal or a cable.
+            if (wired && !installed.Value)
+            {
+                installed.Value = true;
+                Game.SetState(data, "Installed");
+                Log.Info("MSC battery terminal restored from its connected cable: " + name);
+            }
+            // The native uninstalled load state leaves scene visibility as-is;
+            // reconcile it too, including the otherwise visible minus screw.
+            if (model.Value.activeSelf != installed.Value) model.Value.SetActive(installed.Value);
+            return true;
+        }
+        static void RestoreTerminals()
+        {
+            if (terminalsRestored || Time.timeSinceLevelLoad < 10) return;
+            bool plus = RestoreTerminal("WiringBatteryPlus", Wired("WiringBatteryHarness") || Wired("WiringStarter"));
+            bool minus = RestoreTerminal("WiringBatteryMinus", Wired("WiringGround1"));
+            terminalsRestored = plus && minus;
+        }
         static void Follow(Battery b)
         {
             if (b.Body == null || !b.Following || b.Mount == null) return;
@@ -115,6 +150,7 @@ namespace MWCoop
             {
                 if (b.Use == null || b.Installed == null) continue;
                 b.Installed = b.Use.FsmVariables.FindFsmBool("Installed");
+                if (b.Installed != null && b.Installed.Value) RestoreTerminals();
                 if (Session.IsHost && b.Installed.Value && !b.SnapshotSeeded)
                 {
                     FsmGameObject trigger = b.Use.FsmVariables.FindFsmGameObject("Trigger");

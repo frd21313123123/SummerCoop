@@ -67,7 +67,7 @@ namespace MWCoop
             foreach (string name in new[] { "WiringBatteryPlus", "WiringBatteryMinus" })
             {
                 var data = Fsm("Database/DatabaseWiring/" + name, "Data");
-                if (!installed) correct &= !data.FsmVariables.FindFsmBool("Bolted").Value && !data.FsmVariables.FindFsmBool("Installed").Value;
+                if (!installed) correct &= !data.FsmVariables.FindFsmBool("Bolted").Value;
             }
             Record(phase, correct, "id=" + batteryId + ";installed=" + Installed(batteryId) + ";joints=" + joints + ";parent=" + (part == null || part.transform.parent == null ? "none" : part.transform.parent.name));
         }

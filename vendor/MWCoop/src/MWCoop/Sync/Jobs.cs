@@ -111,7 +111,7 @@ namespace MWCoop
         static bool IsControl(PlayMakerFSM f)
         {
             if (MscVehicleControls.IsIgnition(f)) return true;
-            if (MscParts.Owns(f) || MscTuning.Owns(f) || MscBrewing.Owns(f) || MscSleep.Owns(f) || Fires.OwnsMsc(f)) return false;
+            if (MscParts.Owns(f) || MscTuning.Owns(f) || MscBattery.Owns(f) || MscBrewing.Owns(f) || MscSleep.Owns(f) || Fires.OwnsMsc(f)) return false;
             if (!ControlFsms.Contains(f.FsmName) || CarDoors.Tracks(f)) return false;
             if (CarDoorsLike(f)) return false;                          // portieres, capots, hayons : CarDoors (meme pas encore vus)
             if (f.FsmName == "Screw" && Parts.IsBolt(f)) return false;   // vis des pieces : Parts
@@ -278,7 +278,7 @@ namespace MWCoop
                                     // Pieces et points de montage : Parts (comme WorldFsms). Une piece montee est sous la voiture : son
                                     // automate Data (sauvegarde) etait suivi ici aussi -- clics de demontage / montage rejoues en double,
                                     // la piece montee chez l'un restait en l'air chez l'autre (Hall0wMan, 11/10 : reservoir 19 L, siege).
-                                    && !(f.FsmName == "Data" && Parts.IdOf(f.gameObject).Length > 0) && !on.StartsWith("VINP") && !MscParts.Owns(f) && !MscTuning.Owns(f)
+                                    && !(f.FsmName == "Data" && Parts.IdOf(f.gameObject).Length > 0) && !on.StartsWith("VINP") && !MscParts.Owns(f) && !MscTuning.Owns(f) && !MscBattery.Owns(f)
                                     && !MscFluids.Owns(f) && !MscSleep.Owns(f) && !MscIsland.Owns(f) && !MscShop.Owns(f);
                         c = new Classified { Path = keep ? Recon.Path(f.transform) + "::" + f.FsmName : null, Control = control };
                         classified[f] = c;

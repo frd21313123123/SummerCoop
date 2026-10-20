@@ -729,14 +729,13 @@ namespace MWCoop
                 total.Tightness.Value = 0;
                 if (total.Bolted != null) total.Bolted.Value = false;
                 MscBoltPositions.Restore(binding.Fsm);
-                // Keep the native saved array consistent with Stage, even when
-                // the terminal is hidden immediately by Data.Destroy below.
+                // A loose clamp remains connected to its existing cable. Native
+                // battery removal does not destroy the wiring database/model;
+                // doing so hides the plus clamp and strands the minus clamp.
+                // Keep the saved array consistent without disconnecting either.
                 var array = total.Fsm.GetComponent<PlayMakerArrayListProxy>();
                 if (array != null && array.arrayList != null) for (int i = 0; i < array.arrayList.Count; i++) array.arrayList[i] = 0;
                 FsmInt saved = total.Fsm.FsmVariables.FindFsmInt("bolt0"); if (saved != null) saved.Value = 0;
-                var db = total.Fsm.FsmVariables.FindFsmGameObject("db_ThisPart");
-                PlayMakerFSM data = db == null || db.Value == null ? null : Game.FsmOn(db.Value, "Data");
-                if (data != null) Game.SetState(data, "Destroy");
                 if (publish)
                 {
                     if (!Session.IsHost) { binding.PendingBolt.Begin(); PendingTotal(total).Begin(); }
