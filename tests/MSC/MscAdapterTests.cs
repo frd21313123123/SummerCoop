@@ -568,6 +568,27 @@ class MscAdapterTests
                     .Quat(new UnityEngine.Quaternion(0f, 0f, 0f, 1f)).Vec(new UnityEngine.Vector3()).Vec(new UnityEngine.Vector3()).ToArray();
                 Assert(VehicleSnapshot.Read(new NetReader(parked, 1, parked.Length - 1), 0).Position.x == 5f, "Parked packet changed");
             });
+            Test("engine phases preserve outside cranking and boat motor state without depending on a driver seat", delegate {
+                var expected = new EngineSnapshot { Vehicle = "BOAT", Sequence = 7, Kind = EngineSnapshot.State,
+                    NativeState = "0-2000rpm", Running = true, Starting = true, Accessory = true, Rpm = 850, Thrust = -85, Gear = -10, BatteryCharge = 109.5f };
+                var w = new NetWriter(Msg.Job); expected.Write(w); byte[] bytes = w.ToArray();
+                EngineSnapshot actual = EngineSnapshot.Read(new NetReader(bytes, 1, bytes.Length - 1));
+                Assert(actual.SamePhase(expected) && actual.Rpm == 850 && actual.Thrust == -85 && actual.Sequence == 7 && actual.BatteryCharge == 109.5f, "Engine state changed on the wire");
+                byte[] truncated = new byte[bytes.Length - 1]; Array.Copy(bytes, truncated, truncated.Length);
+                Reject(delegate { EngineSnapshot.Read(new NetReader(truncated, 1, truncated.Length - 1)); });
+                expected.Rpm = float.NaN; w = new NetWriter(Msg.Job); expected.Write(w); bytes = w.ToArray();
+                Reject(delegate { EngineSnapshot.Read(new NetReader(bytes, 1, bytes.Length - 1)); });
+                expected.Rpm = 60000; w = new NetWriter(Msg.Job); expected.Write(w); bytes = w.ToArray();
+                Reject(delegate { EngineSnapshot.Read(new NetReader(bytes, 1, bytes.Length - 1)); });
+            });
+            Test("old engine heartbeats cannot undo release or replay pull-start sounds and reconnect clocks reset", delegate {
+                var order = new EngineOrder();
+                Assert(order.Accept(1, 2) && !order.Accept(1, 2), "Pull-start event replayed twice");
+                Assert(order.Accept(1, 4) && !order.Accept(1, 3), "Old crank heartbeat overrode release");
+                Assert(order.Accept(0, 1), "Next owner's independent sequence rejected");
+                order.Forget(1);
+                Assert(order.Accept(1, 1) && !order.Accept(0, 1), "Reconnect clock affected another actor");
+            });
             Test("optional cabin heat cannot weaken validation of vehicle motion", delegate {
                 Assert(float.IsNaN(new NetReader(BitConverter.GetBytes(float.NaN), 0, 4).OptionalF32()), "Missing heat not retained");
                 foreach (float v in new[] { float.PositiveInfinity, float.NegativeInfinity }) Reject(delegate { new NetReader(BitConverter.GetBytes(v), 0, 4).OptionalF32(); });
@@ -588,6 +609,22 @@ class MscAdapterTests
                 Assert(VehicleSnapshot.AcceptMotion(0, 1, 1), "Current driver cannot release vehicle");
                 Assert(VehicleSnapshot.AcceptMotion(1, 2, 1), "Next driver cannot take over");
                 Assert(VehicleSnapshot.AcceptMotion(0, 0, -1), "Host cannot sync parked vehicle");
+                Assert(!VehicleSnapshot.AcceptMotion(1, 2, 1, 1), "Passenger replaced a seated driver");
+                Assert(VehicleSnapshot.AcceptMotion(1, 1, 1, 1), "Seated driver lost authority");
+                Assert(VehicleSnapshot.AcceptMotion(1, 2, 1, -1), "Cannot take over a coasting vehicle");
+            });
+            Test("vehicle releases and driving updates share per-sender ordering across handoffs", delegate {
+                var order = new VehicleMotionOrder();
+                Assert(order.Accept(1, 10f) && order.Accept(1, 11f), "Initial motion/release rejected");
+                Assert(!order.Accept(1, 10.5f) && !order.Accept(1, 11f), "Old driving packet resurrected released driver");
+                Assert(order.Accept(2, 2f), "New driver's independent clock rejected");
+                Assert(!order.Accept(1, 10.9f), "Owner change erased old sender watermark");
+                Assert(order.Accept(1, 12f), "Returning driver cannot send a new sample");
+                Assert(!order.Accept(2, float.NaN) && !order.Accept(2, float.PositiveInfinity), "Invalid timestamp changed motion");
+                Assert(order.Accept(3, -1f), "Legacy packet without timestamp rejected");
+                order.Forget(1);
+                Assert(order.Accept(1, 1f), "Reconnected player inherited the previous connection's clock");
+                Assert(!order.Accept(2, 1f), "Disconnect cleared another driver's watermark");
             });
             Test("MWCoop reliable UDP protocol preserves three clients' ordering through loss and reordering", delegate {
                 Simulated.Time = 0; Simulated.Nodes.Clear(); Transport host = Create(); host.Host(new Simulated("host")); List<Transport> clients = new List<Transport>();

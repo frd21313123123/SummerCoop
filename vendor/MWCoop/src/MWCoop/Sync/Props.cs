@@ -290,7 +290,7 @@ namespace MWCoop
         static void ScanBody(Rigidbody rb, bool census, Dictionary<string, int> noId)
         {
                 if (rb == null) return;
-                if (Game.RootName(rb.transform) == "PLAYER" && MscParts.IdOf(rb.gameObject).Length == 0 && (rb.transform.parent == null || rb.transform.parent.name != "ItemPivot")) return;
+                if (MscVehicleControls.PlayerObject(rb.transform) && MscParts.IdOf(rb.gameObject).Length == 0 && (rb.transform.parent == null || rb.transform.parent.name != "ItemPivot")) return;
                 if (Garage.Owns(rb)) return;
                 string bagKey = SleepingBags.KeyOf(rb) ?? Kauppa.KeyOf(rb) ?? Kauppa.ItemKeyOf(rb);   // (sacs de couchage de MWCoop, sacs de courses de la boutique)
                 if (bagKey != null) { Register(rb, bagKey, null); return; }

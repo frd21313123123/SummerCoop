@@ -17,9 +17,10 @@ namespace MWCoop.Net
 
         // A new driver may take over. Delayed parked/coasting samples from the
         // previous owner must not move a vehicle that is already driven elsewhere.
-        public static bool AcceptMotion(int mode, int sender, int currentOwner)
+        public static bool AcceptMotion(int mode, int sender, int currentOwner, int seatedDriver = -1)
         {
-            return mode == 1 || currentOwner < 0 || sender == currentOwner;
+            if (mode == 1) return seatedDriver < 0 || sender == seatedDriver;
+            return currentOwner < 0 || sender == currentOwner;
         }
 
         public static VehicleSnapshot Read(NetReader reader, int mode)
@@ -40,6 +41,23 @@ namespace MWCoop.Net
             if (reader.More) state.Timestamp = reader.F32();
             if (reader.More) throw new IOException("Trailing vehicle motion data");
             return state;
+        }
+    }
+
+    // Keep each sender's watermark across ownership changes and releases. A late
+    // driving packet must not resurrect a driver or undo a newer parked pose.
+    public sealed class VehicleMotionOrder
+    {
+        readonly Dictionary<int, float> timestamps = new Dictionary<int, float>();
+        public void Forget(int sender) { timestamps.Remove(sender); }
+        public bool Accept(int sender, float timestamp)
+        {
+            if (float.IsNaN(timestamp) || float.IsInfinity(timestamp)) return false;
+            if (timestamp < 0f) return true; // Older packets without a timestamp.
+            float previous;
+            if (timestamps.TryGetValue(sender, out previous) && timestamp <= previous) return false;
+            timestamps[sender] = timestamp;
+            return true;
         }
     }
 }

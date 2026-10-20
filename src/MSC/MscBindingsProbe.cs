@@ -13,7 +13,7 @@ namespace MWCoop
         static bool dumped;
         static readonly HashSet<int> steps = new HashSet<int>();
         static long start;
-        static float cash;
+        static float cash, serviceCost;
         static int shelfBefore;
         static FsmStateAction deliveryWait;
         static string[] packages;
@@ -32,12 +32,15 @@ namespace MWCoop
             {
                 var f = obj as PlayMakerFSM; if (f == null || f.hideFlags != HideFlags.None) continue;
                 string path = Recon.Path(f.transform);
-                if (!path.StartsWith("REPAIRSHOP/") && !path.StartsWith("Sheets/") && !path.StartsWith("STORE/")
+                if (path != "REPAIRSHOP" && !path.StartsWith("REPAIRSHOP/") && !path.StartsWith("Sheets/") && !path.StartsWith("STORE/")
                     && !path.StartsWith("ITEMS/helmet") && !path.StartsWith("ITEMS/coffee cup")
                     && !path.StartsWith("ITEMS/sofa") && !path.StartsWith("Systems/Leaks")
                     && !path.StartsWith("Spawner/") && !path.Contains("SteamFountain")) continue;
                 try {
-                    if (!f.Fsm.Initialized) continue;
+                    if (!f.Fsm.Initialized) {
+                        if (path == "REPAIRSHOP" || path == "Sheets/ServiceBrochure" || path == "REPAIRSHOP/LOD/Office/Fleetari/Brochure") f.Fsm.Init(f);
+                        else continue;
+                    }
                     text.AppendLine("===== " + path + "::" + f.FsmName);
                     Recon.AppendFsm(text, "", f, true);
                 } catch (Exception e) { text.AppendLine("DUMP ERROR " + path + ": " + e); }
@@ -84,7 +87,7 @@ namespace MWCoop
         static void Exercise(string channel)
         {
             bool host = MWCoop.Net.Session.IsHost;
-            if (!MscOrders.Bound) return;
+            if (!MscOrders.Bound || !Wallet.Ready) return;
             string ready = Path.Combine(channel, Role + "-ready.txt");
             if (!File.Exists(ready)) MscProbeFiles.WriteAllText(ready, "ready");
             string clock = Path.Combine(channel, "start.txt");
@@ -93,29 +96,58 @@ namespace MWCoop
             float t = (float)TimeSpan.FromTicks(DateTime.UtcNow.Ticks - start).TotalSeconds;
             var order = Fsm(MscOrders.RepairPath, "Data");
             if (At(0, t, 0)) {
+                Wallet.AddLocal(20000);
                 cash = FsmVariables.GlobalVariables.GetFsmFloat("PlayerMoney").Value;
+                Transform visitor = Game.PlayerT;
+                var cc = visitor.GetComponent<CharacterController>(); if (cc != null) cc.enabled = false;
+                visitor.position = host ? new Vector3(-10, 1, 10) : Game.FindAny("REPAIRSHOP/LOD/Office/PlayerDistance").transform.position;
+                if (cc != null) cc.enabled = true;
                 if (host) {
+                    FsmVariables.GlobalVariables.GetFsmInt("GlobalDay").Value = 1;
+                    Fsm("MAP/SUN/Pivot/SUN", "Color").FsmVariables.GetFsmInt("Time").Value = 12;
+                    Game.SetState(Fsm("REPAIRSHOP", "OpeningHours"), "State 1");
                     Rigidbody car = VehicleSync.Body("SATSUMA");
-                    car.position = Game.FindAny("REPAIRSHOP/DistanceTarget").transform.position + Vector3.up;
-                    car.velocity = car.angularVelocity = Vector3.zero;
+                    foreach (Rigidbody body in car.GetComponentsInChildren<Rigidbody>(true)) {
+                        body.velocity = body.angularVelocity = Vector3.zero;
+                        body.useGravity = false; body.isKinematic = true;
+                    }
+                    car.transform.position = Game.FindAny("REPAIRSHOP/DistanceTarget").transform.position + Vector3.up;
                 }
                 Fsm("Database/DatabaseMotor/Distributor", "Data").FsmVariables.GetFsmFloat("SparkAngle").Value = 4;
                 Fsm("Database/DatabaseMotor/Carburator", "Data").FsmVariables.GetFsmFloat("IdleAdjust").Value = 12;
                 Record(channel, "references", Wear.ItemObject(0) != null && Wear.ItemObject(1) != null && typeof(MscRuntime).Assembly.GetType("MWCoop.CarSale") == null,
                     "Helmet=" + (Wear.ItemObject(0) != null) + ";Cup=" + (Wear.ItemObject(1) != null) + ";Wallet=" + Wallet.Ready);
-                if (!host) Enable(Game.FindAny("Sheets/ServiceBrochure/ButtonOrder"));
+                // Simulate a guest's stale closed scene at join. The shared
+                // opening snapshot must repair it without activating LODs.
+                if (!host) {
+                    Fsm("REPAIRSHOP", "OpeningHours").FsmVariables.GetFsmBool("OpenRepairShop").Value = false;
+                    Transform building = Game.FindAny("REPAIRSHOP/Building").transform;
+                    Transform door = building.Find("Door1Open/garage_door 1");
+                    if (door != null) { door.parent = building.Find("Door1Closed"); door.localPosition = Vector3.zero; door.localRotation = Quaternion.identity; }
+                }
             }
+            if (At(25, t, 2.5f)) Opening(channel, "open", true);
             if (!host && At(1, t, 3)) {
+                var entry = Fsm("REPAIRSHOP/LOD/Office/Fleetari/Brochure", "Activate");
+                // The test desktop has no mouse over the counter. Enter the
+                // actual click target; the native hover state would exit at
+                // once and discard ACTIVATE before it could be delivered.
+                Game.SetState(entry, "State 3");
+            }
+            if (At(26, t, 3.5f)) Record(channel, "brochure-local", Game.FindAny("Sheets/ServiceBrochure").activeInHierarchy == !host
+                && Game.GlobalBool("PlayerInMenu") == !host, "Visible=" + Game.FindAny("Sheets/ServiceBrochure").activeInHierarchy + ";Menu=" + Game.GlobalBool("PlayerInMenu"));
+            if (!host && At(27, t, 4)) {
                 ClickService("EngineTune");
-                var button = Fsm("Sheets/ServiceBrochure/ButtonOrder", "Button"); Enable(button.gameObject);
-                button.FsmVariables.GetFsmFloat("Price").Value = 100;
-                Game.SetState(button, "Date");
+            }
+            if (!host && At(28, t, 5.5f)) {
+                serviceCost = Fsm("Sheets/ServiceBrochure/PriceDiscount", "Name").FsmVariables.GetFsmFloat("FinalPrice").Value;
+                Game.SetState(Fsm("Sheets/ServiceBrochure/ButtonOrder", "Button"), "Check zero");
             }
             if (At(2, t, 8)) {
                 Record(channel, "fleetari-order", order.FsmVariables.GetFsmBool("_Order").Value && order.FsmVariables.GetFsmBool("EngineTune").Value,
                     "Active=" + order.FsmVariables.GetFsmBool("_Order").Value + ";Tune=" + order.FsmVariables.GetFsmBool("EngineTune").Value);
                 float actual = FsmVariables.GlobalVariables.GetFsmFloat("PlayerMoney").Value;
-                Record(channel, "fleetari-payment", Mathf.Abs(actual - (cash - (host ? 0 : 100))) < .05f, "Before=" + cash + ";After=" + actual);
+                Record(channel, "fleetari-payment", (host || serviceCost > 0) && Mathf.Abs(actual - (cash - (host ? 0 : serviceCost))) < .05f, "Before=" + cash + ";After=" + actual + ";Cost=" + serviceCost);
             }
             if (At(3, t, 10)) {
                 // Native Fleetari requires the player to leave the workshop.
@@ -130,6 +162,13 @@ namespace MWCoop
                 float spark = Fsm("Database/DatabaseMotor/Distributor", "Data").FsmVariables.GetFsmFloat("SparkAngle").Value;
                 float carb = Fsm("Database/DatabaseMotor/Carburator", "Data").FsmVariables.GetFsmFloat("IdleAdjust").Value;
                 Record(channel, "fleetari-tuning", Mathf.Abs(spark - 14.5f) < .001f && Mathf.Abs(carb - 16.75f) < .001f, "Spark=" + spark + ";Carb=" + carb);
+                var job = Fsm("REPAIRSHOP/Jobs/EngineTune", "Work");
+                var diagnostic = new StringBuilder(); Recon.AppendFsm(diagnostic, "", job, true);
+                foreach (string part in new[] { "CarburatorStock", "Distributor", "Rockershaft" }) {
+                    GameObject native = job.FsmVariables.GetFsmGameObject(part).Value;
+                    diagnostic.AppendLine(part + ";Position=" + native.transform.position + ";Distance=" + Vector3.Distance(native.transform.position, Game.FindAny("REPAIRSHOP/DistanceTarget").transform.position));
+                }
+                MscProbeFiles.WriteAllText(Path.Combine(channel, Role + "-fleetari-job.txt"), diagnostic.ToString());
                 var result = new StringBuilder();
                 foreach (UnityEngine.Object obj in Game.AllFsms()) {
                     var f = obj as PlayMakerFSM; if (f == null || !Recon.Path(f.transform).StartsWith("Database/")) continue;
@@ -203,6 +242,28 @@ namespace MWCoop
             }
             if (!host && At(22, t, 64)) Game.SetState(Fsm("STORE/LOD/ActivateStore/FoodProducts/Sausages", "Buy"), "Check if 0");
             if (At(23, t, 67)) ShelfState(channel, "guest-return", shelfBefore + 1, host ? 1 : 0);
+            if (host && At(29, t, 70)) {
+                Fsm("MAP/SUN/Pivot/SUN", "Color").FsmVariables.GetFsmInt("Time").Value = 20;
+                Game.SetState(Fsm("REPAIRSHOP", "OpeningHours"), "State 1");
+            }
+            if (At(30, t, 74)) Opening(channel, "closed", false);
+            if (host && At(31, t, 76)) {
+                Fsm("MAP/SUN/Pivot/SUN", "Color").FsmVariables.GetFsmInt("Time").Value = 12;
+                Game.SetState(Fsm("REPAIRSHOP", "OpeningHours"), "State 1");
+            }
+            if (At(32, t, 80)) Opening(channel, "reopened", true);
+        }
+        static void Opening(string channel, string name, bool expected)
+        {
+            var hours = Fsm("REPAIRSHOP", "OpeningHours");
+            Transform building = Game.FindAny("REPAIRSHOP/Building").transform;
+            bool door = building.Find("Door1Open/garage_door 1") != null;
+            bool open = hours.FsmVariables.GetFsmBool("OpenRepairShop").Value;
+            bool visible = Game.FindAny("REPAIRSHOP/LOD/Office/Fleetari").activeSelf;
+            bool stocked = Game.FindAny("REPAIRSHOP/LOD/Store/Parts").activeSelf;
+            bool cashRegister = Fsm("REPAIRSHOP/LOD/Store/ShopCashRegister/Register", "Data").enabled;
+            Record(channel, "fleetari-" + name, open == expected && door == expected && visible == expected && stocked == expected && cashRegister == expected,
+                "Open=" + open + ";Garage=" + door + ";Fleetari=" + visible + ";Parts=" + stocked + ";Register=" + cashRegister + ";HoursEnabled=" + hours.enabled);
         }
         static int ShelfBought()
         {

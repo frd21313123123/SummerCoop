@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using HutongGames.PlayMaker;
 using HutongGames.PlayMaker.Actions;
+using UnityEngine;
 
 namespace MWCoop
 {
@@ -9,6 +10,12 @@ namespace MWCoop
         static readonly HashSet<PlayMakerFSM> prepared = new HashSet<PlayMakerFSM>();
         static PlayMakerFSM ignition;
         static MousePickEvent ignitionPick;
+        internal static bool PlayerObject(Transform transform)
+        {
+            for (Transform t = transform; t != null; t = t.parent)
+                if (t.name == "PLAYER") return true;
+            return false;
+        }
         internal static void Reset() { prepared.Clear(); ignition = null; ignitionPick = null; }
         internal static bool IgnitionTargeted()
         {

@@ -27,7 +27,7 @@ namespace MWCoop
 
         static PlayerSync()
         {
-            Session.PlayerLeft += pi => { RemoveAvatar(pi.Id); Seats.PlayerLeft(pi.Id); Gestures.PlayerLeft(pi.Id); HandTools.PlayerLeft(pi.Id); Stock.PlayerLeft(pi.Id); CarDoors.PlayerLeft(pi.Id); Voice.PlayerLeft(pi.Id); };
+            Session.PlayerLeft += pi => { RemoveAvatar(pi.Id); Seats.PlayerLeft(pi.Id); VehicleSync.PlayerLeft(pi.Id); Gestures.PlayerLeft(pi.Id); HandTools.PlayerLeft(pi.Id); Stock.PlayerLeft(pi.Id); CarDoors.PlayerLeft(pi.Id); Voice.PlayerLeft(pi.Id); };
         }
 
         public static bool InGame { get { return Application.loadedLevelName == "GAME"; } }

@@ -39,7 +39,7 @@ namespace MWCoop
         {
             if (f == null) return false;
             string p = Recon.Path(f.transform);
-            return p == RepairPath || p.StartsWith("REPAIRSHOP/Jobs/", StringComparison.Ordinal)
+            return p == RepairPath || p == "REPAIRSHOP/LOD/Office/Fleetari/Brochure" || p.StartsWith("REPAIRSHOP/Jobs/", StringComparison.Ordinal)
                 || p.StartsWith("Sheets/ServiceBrochure", StringComparison.Ordinal)
                 || p == CatalogPath || p.StartsWith(CatalogPath + "/", StringComparison.Ordinal)
                 || p == "STORE/LOD/Post Box/OrderTrigger" || p == "STORE/LOD/ActivateStore/PostOffice/PostOrderBuy";

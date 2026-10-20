@@ -40,6 +40,7 @@ namespace MWCoop
             nextLook = Time.realtimeSinceStartup + 5f;
             GameObject shop = Game.FindAny("REPAIRSHOP");
             PlayMakerFSM f = shop != null ? Game.FsmOn(shop, "OpeningHours") : null;
+            if (MscFleetari.Owns(f)) { hooked = true; return; }
             FsmState s = f != null ? f.Fsm.GetState("Wait distance 2") : null;
             if (s == null || !s.IsInitialized) return;
             hooked = true;

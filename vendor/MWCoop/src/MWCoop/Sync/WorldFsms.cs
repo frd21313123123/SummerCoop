@@ -217,12 +217,12 @@ namespace MWCoop
             // Satsuma horn input stays local; VehicleSync sends its actual sound.
             // A loose GT wheel must not acquire generic hover/state replay.
             if (MscVehicleControls.IsHorn(f)) return true;
-            if (MscParts.Owns(f) || MscTuning.Owns(f) || MscBattery.Owns(f)) return true;
+            if (MscParts.Owns(f) || MscTuning.Owns(f) || MscBattery.Owns(f) || MscFleetari.Owns(f)) return true;
             Transform root = f.transform.root;
             if (!root.gameObject.activeInHierarchy) return true;                        // modeles (prefabs)
             if (SkipRoots.Contains(root.name) || root.name.StartsWith("MWCoop") || Game.UnderPlayer(f.transform)) return true;
             // Vehicules : Jobs, CarDoors... Sauf le lecteur CD (DiscTriggerPlayer* :: Data, point d'insertion du CD).
-            if (root.GetComponent("CarDynamics") != null && !(f.gameObject.name.StartsWith("DiscTrigger") && f.FsmName == "Data")) return true;
+            if ((root.GetComponent("CarDynamics") != null || root.name == "BOAT") && !(f.gameObject.name.StartsWith("DiscTrigger") && f.FsmName == "Data")) return true;
             if (SkipFsmNames.Contains(f.FsmName)) return true;
             string n = f.gameObject.name;
             // Objets portes : Props, Consume. Sauf l'ouverture des boitiers de CD (Systems/CDs/cd case(itemN) :: Use,

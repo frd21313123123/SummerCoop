@@ -34,6 +34,10 @@ namespace MWCoop
             }
             if (readyAt >= 0)
             {
+                try { MscEngineLifecycleProbe.Update(); }
+                catch (Exception e) { if (actionError.Length == 0) { actionError = e.ToString(); Log.Error("MSC engine lifecycle probe: " + e); } }
+                try { MscCabinProbe.Update(); }
+                catch (Exception e) { if (actionError.Length == 0) { actionError = e.ToString(); Log.Error("MSC cabin probe: " + e); } }
                 try { MscEngineProbe.Update(); }
                 catch (Exception e) { if (actionError.Length == 0) { actionError = e.ToString(); Log.Error("MSC engine probe: " + e); } }
                 frames.Add(Time.unscaledDeltaTime * 1000);

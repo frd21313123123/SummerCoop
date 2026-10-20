@@ -135,6 +135,7 @@ namespace MWCoop
             new Mod("feux MSC", MscFireworks.Update),
             new Mod("liquides MSC", MscFluids.Update),
             new Mod("magasin MSC", MscShop.Update),
+            new Mod("ouverture Fleetari MSC", MscFleetari.Update),
             new Mod("commandes MSC", MscOrders.Update),
             new Mod("joueurs", PlayerSync.Update),
             new Mod("monde", World.Update),
@@ -142,6 +143,7 @@ namespace MWCoop
             new Mod("particules", Particles.Update),
             new Mod("interactions", Interactions.Update),
             new Mod("voitures", VehicleSync.Update),
+            new Mod("moteurs MSC", MscEngineSync.Update),
             new Mod("pieces", Parts.Update),
             new Mod("objets", Props.Update),
             new Mod("argent", Wallet.Update),
@@ -262,6 +264,7 @@ namespace MWCoop
             MscRuntime.Run(Props.OnLevelLoaded);
             MscRuntime.Run(Wallet.OnLevelLoaded);
             MscRuntime.Run(Shop.OnLevelLoaded);
+            MscFleetari.OnLevelLoaded();
             MscOrders.OnLevelLoaded();
             MscRuntime.Run(MscShop.OnLevelLoaded);
             MscRuntime.Run(Paint.OnLevelLoaded);

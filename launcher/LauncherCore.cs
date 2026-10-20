@@ -125,7 +125,7 @@ namespace SummerCoop.Launcher
 
     public static class LauncherInfo
     {
-        public const string ModVersion = "0.5.2";
+        public const string ModVersion = "0.5.3";
         public const int ProtocolVersion = 2;
         public const int DefaultPort = 27842;
     }

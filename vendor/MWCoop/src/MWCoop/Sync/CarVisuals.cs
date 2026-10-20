@@ -7,7 +7,7 @@ namespace MWCoop
     // Tout ce qui bouge ou s'allume dans les vehicules, vu par tous : aiguilles du tableau de bord,
     // voyants, feux, clignotants, vitres, essuie-glaces, frein a main, leviers, volant, pedales,
     // ceintures, pare-soleil, retroviseurs, lecteur CD, givre... Pour chaque voiture, on retient les
-    // objets dont le nom l'indique ; celui qui conduit (ou, a l'arret, le joueur a cote) envoie 10 fois
+    // objets dont le nom l'indique ; celui qui fait autorite sur sa physique envoie 10 fois
     // par seconde ce qui a change : pose locale (objets qui bougent) ou visibilite (objets qui
     // s'allument). Chez les autres, les valeurs recues sont reappliquees apres la logique du jeu
     // (LateUpdate), tant que la voiture est conduite par l'autre, ou 3 s apres le dernier message.
@@ -43,16 +43,15 @@ namespace MWCoop
         const float ShiftDelay = 0.15f, ShiftTime = 0.35f;
         static readonly Dictionary<Transform, float> lastShift = new Dictionary<Transform, float>();
         public static float LastShift(Transform carRoot) { float t; return carRoot != null && lastShift.TryGetValue(carRoot, out t) ? t : -1f; }
-        class Car { public string Name; public Transform Root; public List<Item> Items = new List<Item>(); public Dictionary<string, Item> ByKey = new Dictionary<string, Item>(); }
+        class Car { public string Name; public Transform Root; public float NextSnapshot; public List<Item> Items = new List<Item>(); public Dictionary<string, Item> ByKey = new Dictionary<string, Item>(); }
 
         static readonly Dictionary<string, Car> cars = new Dictionary<string, Car>();
         static float nextScan = -1, nextSend;
-        static Transform player;
         static int sentTotal, gen = -1;
 
         public static void OnLevelLoaded()
         {
-            cars.Clear(); player = null; gen = -1;
+            cars.Clear(); gen = -1;
             nextScan = PlayerSync.InGame ? Time.realtimeSinceStartup + 13f : -1;
         }
 
@@ -84,7 +83,7 @@ namespace MWCoop
                 var seen = new Dictionary<string, int>();
                 foreach (Transform t in rb.GetComponentsInChildren<Transform>(true))
                 {
-                    if (t == rb.transform || t.GetComponent<Rigidbody>() != null) continue;
+                    if (t == rb.transform || MscVehicleControls.PlayerObject(t) || t.GetComponent<Rigidbody>() != null) continue;
                     string n = t.name.ToLowerInvariant();
                     if (Has(n, SkipWords)) continue;
                     bool pose = Has(n, PoseWords), show = Has(n, ShowWords) || ShowNames.Contains(n) || t.GetComponent<Light>() != null;   // toute lampe
@@ -113,13 +112,12 @@ namespace MWCoop
         }
         static int scanNext = -1;
 
-        // Ce joueur doit-il envoyer l'etat de cette voiture ? Il la conduit, ou personne ne la conduit
-        // et il est a moins de 6 m.
+        // The motion owner publishes visuals too. Nearby passengers must not
+        // compete over idle dashboards; their actual control actions use Jobs.
         static bool Sender(Car c)
         {
-            if (ReferenceEquals(VehicleSync.LocalDrivingRoot, c.Root)) return true;
-            if (VehicleSync.RemotelyDriven(c.Root)) return false;
-            return player != null && (c.Root.position - player.position).sqrMagnitude < 36f;
+            int index = VehicleSync.CarIndex(c.Root.GetComponent<Rigidbody>());
+            return index >= 0 && VehicleSync.Authority(index) == Session.LocalId;
         }
 
         public static void Update()
@@ -130,7 +128,6 @@ namespace MWCoop
             if (gen < 0 ? now >= nextScan : gen != VehicleSync.Generation) { nextScan = now + 30f; scanNext = -1; Scan(); }
             else if (now >= nextScan) { nextScan = now + 30f; scanNext = 0; }
             if (scanNext >= 0) { if (scanNext < VehicleSync.LocalCount) ScanCar(scanNext++); else scanNext = -1; }
-            if (player == null) { GameObject p = GameObject.Find("PLAYER"); if (p == null) return; player = p.transform; }
             if (now < nextSend || Session.RemoteCount == 0) return;
             // 20 fois par seconde pour la voiture qu'on conduit (volant, aiguilles : retour d'un joueur, "le volant tourne
             // avec du retard"), 10 sinon ; chez les autres, chaque pose recue est rejointe en douceur (LateUpdate).
@@ -139,17 +136,22 @@ namespace MWCoop
             {
                 if (c.Root == null || !c.Root.gameObject.activeInHierarchy || !Sender(c)) continue;
                 bool driving = ReferenceEquals(VehicleSync.LocalDrivingRoot, c.Root);
+                bool snapshot = now >= c.NextSnapshot;
+                if (snapshot) c.NextSnapshot = now + 2f;
                 NetWriter w = null;
                 foreach (Item it in c.Items)
                 {
-                    if (it.T == null || it.Held) continue;
+                    if (it.T == null) continue;
+                    // A newly authoritative car immediately resumes its native
+                    // visuals, rather than holding the previous owner's pose.
+                    if (it.Held) { it.Held = false; it.Shown = false; }
                     // Pedales : celles de la CORRIS (pedalier, automates Brake/Clutch) suivent les touches du joueur meme a pied --
                     // reculer (S) enfoncait le frein d'une voiture garee, recopie chez les autres (retour de witefold, 11/10).
                     if (it.Pedal && !driving) continue;
                     bool act = it.T.gameObject.activeSelf;
                     bool showCh = it.Show && act != it.Active;
                     bool poseCh = it.Pose && (Quaternion.Angle(it.T.localRotation, it.Rot) > 0.5f || (it.T.localPosition - it.Pos).sqrMagnitude > 4e-6f);
-                    if (!showCh && !poseCh) continue;
+                    if (!snapshot && !showCh && !poseCh) continue;
                     it.Active = act; it.Pos = it.T.localPosition; it.Rot = it.T.localRotation;
                     if (w != null && w.Length + 40 + it.Key.Length > 1000) { Session.SendAll(w, false); w = null; }
                     if (w == null) w = new NetWriter(Msg.CarVisual).U8(Session.LocalId).Str(c.Name);
@@ -220,6 +222,12 @@ namespace MWCoop
             NetWriter relay = Session.IsHost ? new NetWriter(Msg.CarVisual).U8(who).Str(car) : null;
             Car c;
             cars.TryGetValue(car, out c);
+            // Passenger/nearby-player packets in flight cannot override the
+            // driver's pedals, dashboard or switches after authority changes.
+            if (c != null && c.Root != null)
+            {
+                if (VehicleSync.Authority(c.Root.GetComponent<Rigidbody>()) != who) return;
+            }
             float now = Time.realtimeSinceStartup;
             while (r.More)
             {
@@ -229,7 +237,7 @@ namespace MWCoop
                 if ((fl & 1) != 0) { pos = r.Vec(); rot = r.Quat(); }
                 if (relay != null) { relay.Str(key).U8(fl); if ((fl & 1) != 0) relay.Vec(pos).Quat(rot); }
                 Item it;
-                if (c == null || !c.ByKey.TryGetValue(key, out it) || it.T == null) continue;
+                if (c == null || !c.ByKey.TryGetValue(key, out it) || it.T == null || MscVehicleControls.PlayerObject(it.T)) continue;
                 it.Held = true; it.HeldAt = now;
                 if ((fl & 1) != 0) { it.HeldPos = pos; it.HeldRot = rot; }
                 if ((fl & 2) != 0) { it.HeldShow = true; it.HeldActive = (fl & 4) != 0; }

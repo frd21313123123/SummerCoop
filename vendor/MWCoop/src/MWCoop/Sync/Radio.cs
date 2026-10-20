@@ -30,6 +30,7 @@ namespace MWCoop
         {
             found = muted = false; ch = null; upd = null; clips = null; nextFind = 0;
             ghosts.Clear(); realT = null; fetch = null; lastSet = false; winK = null; winUntil = 0f;
+            inRemote = false; nextBeat = nextSend = 0f; beatSent = null;
         }
 
         static bool Find()
@@ -158,6 +159,9 @@ namespace MWCoop
             go.name = "MWCoop-RadioAutre";
             foreach (PlayMakerFSM f in go.GetComponentsInChildren<PlayMakerFSM>(true)) if (f.FsmName != "Fetch") f.enabled = false;   // (tirage des morceaux : celui du vrai)
             go.transform.parent = speaker; go.transform.localPosition = Vector3.zero; go.transform.localRotation = Quaternion.identity;
+            // An idle MSC receiver may have disabled the shared channels.
+            // Its clone must be active in the receiving vehicle to initialize.
+            go.SetActive(true);
             var g = new Ghost { K = k, Go = go, Who = who, Fetch = Game.FsmOn(go, "Fetch"), Born = Time.realtimeSinceStartup };
             Transform c1 = go.transform.Find("Channel1"), fk = go.transform.Find("Folk");
             g.Ch = new[] { c1 != null ? c1.GetComponent<AudioSource>() : null, fk != null ? fk.GetComponent<AudioSource>() : null };
@@ -311,9 +315,11 @@ namespace MWCoop
             if (Session.RemoteCount == 0 || realT == null || fetch == null || now < nextBeat) return;
             Snap s = Take();
             string k = Off(s) || !s.On ? "" : Recon.Path(KeyOf(s.Parent));
-            if (k == beatSent && now < nextBeat + 8f) { nextBeat = now + 2f; return; }
+            bool changed = k != beatSent;
             nextBeat = now + 2f; beatSent = k;
-            Session.SendAll(new NetWriter(Msg.Job).U8(Session.LocalId).Str("@poste").Str(k), false);
+            // Always repeat: the old nextBeat + 8 check postponed unchanged
+            // heartbeats forever, so one lost cut-off left a ghost playing.
+            Session.SendAll(new NetWriter(Msg.Job).U8(Session.LocalId).Str("@poste").Str(k), changed);
         }
 
         // Essais (radioautre, RadioCoupe=1) : le vrai jeu de canaux rendu a RADIO sans geste, comme un poste qui perd le courant.
@@ -324,6 +330,15 @@ namespace MWCoop
             realT.parent = r.transform; fetch.enabled = false;
             last = Take(); lastSet = true;
             return "radio : vrai jeu de canaux rendu a RADIO (coupe sans geste)";
+        }
+
+        public static bool PlayingIn(Transform root)
+        {
+            if (root == null || !Find()) return false;
+            if (realT != null && realT.parent != null && realT.parent.IsChildOf(root) && fetch.enabled && !Off(Take())) return true;
+            foreach (Ghost g in ghosts)
+                if (g.K == root && g.Go != null && g.Fetch != null && g.Fetch.enabled) return true;
+            return false;
         }
 
         public static void OnBeat(int who, string key)
@@ -397,6 +412,7 @@ namespace MWCoop
         public static string GhostState()
         {
             var sb = new System.Text.StringBuilder("vrai jeu de canaux sous " + (realT != null && realT.parent != null ? Recon.Path(realT.parent) : "-") + (fetch != null ? (fetch.enabled ? " (allume" : " (eteint") + ", locale " + (!FB("OnMuteChannel1")) + ", folk " + (!FB("OnMuteFolk")) + ")" : ""));
+            if (realT != null) sb.Append(" ; active ").Append(realT.gameObject.activeSelf).Append('/').Append(realT.gameObject.activeInHierarchy);
             if (fetch != null)
             {
                 FsmGameObject par = fetch.FsmVariables.FindFsmGameObject("Parent");
@@ -446,9 +462,10 @@ namespace MWCoop
                         }
                         a.clip = c;
                     }
-                    if (swap || Mathf.Abs(a.time - t) > 1.5f) a.time = Mathf.Clamp(t, 0f, Mathf.Max(0f, a.clip.length - 0.05f));
-                    if (playing && !a.isPlaying && a.gameObject.activeInHierarchy) a.Play();
+                    bool started = playing && !a.isPlaying && a.gameObject.activeInHierarchy;
+                    if (started) a.Play();
                     else if (!playing && a.isPlaying) a.Stop();
+                    if (started || swap || Mathf.Abs(a.time - t) > 1.5f) a.time = Mathf.Clamp(t, 0f, Mathf.Max(0f, a.clip.length - 0.05f));
                     if (swap) Log.Info("radio : canal " + (i == 0 ? "local" : "folk") + " -> " + name + " a " + t.ToString("F0") + " s (hote)");
                 }
                 catch (System.Exception e) { if (Time.realtimeSinceStartup >= nextLog) { nextLog = Time.realtimeSinceStartup + 30f; Log.Warn("radio : " + e.Message); } }

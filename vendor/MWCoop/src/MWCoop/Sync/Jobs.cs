@@ -516,6 +516,7 @@ namespace MWCoop
         {
             if (from != null && j.ClickStates.Contains(from.Name) && ev != "FINISHED") { j.FromReplay = false; j.KeyClickAt = Time.realtimeSinceStartup; }   // clic du joueur d'ici
             if (j.FromReplay || !IgnitionStates.Contains(state)) return;
+            if (state == "Motor starting") VehicleSync.ClaimEngine(VehicleSync.CarRoot(j.F.transform));
             var w = new NetWriter(Msg.Job).U8(Session.LocalId).Str(j.Key).Str(from != null ? from.Name : "").Str(ev).Str(state);
             WriteVars(j.F, w);
             Log.Info("cle : " + j.Key + " " + (from != null ? from.Name : "?") + " -" + ev + "-> " + state);
@@ -1594,6 +1595,8 @@ namespace MWCoop
         //  @etape  Stage atteint par la fendeuse      (fiable, U8)
         static void OnSpecial(int who, string kind, NetReader r)
         {
+            if (kind == "@engine") { MscEngineSync.OnRemote(who, r); return; }
+            if (kind == "@fleetari") { MscFleetari.OnRemote(who, r); return; }
             if (Session.IsHost) Session.Broadcast(new NetWriter(Msg.Job).U8(who).Str(kind).Raw(r.Rest()), kind != "@benne" && kind != "@pousse" && kind != "@drone" && kind != "@bout", who);
             switch (kind)
             {
