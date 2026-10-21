@@ -43,6 +43,13 @@ namespace MWCoop
             if (err == null && (cmd.StartsWith("/tp") || cmd.StartsWith("/lieu"))) Open = false;   // (teleporte : on regarde ou on est)
         }
 
+        static void SpawnToolCase(int kind)
+        {
+            string error = MscToolCases.Spawn(kind);
+            note = error ?? Lang.R(kind == 0 ? "Spanner case spawned in front of you." : "Ratchet case spawned in front of you.");
+            noteBad = error != null; noteUntil = Time.realtimeSinceStartup + 4f;
+        }
+
         static void Header(float x, ref float y, float w, string s)
         {
             Style.Text(new Rect(x, y, w, Style.Px(24)), s, 13, TextAnchor.MiddleLeft, Style.Dim);
@@ -65,8 +72,8 @@ namespace MWCoop
             float w = Mathf.Min(Style.Px(680), Screen.width - Style.Px(32));
             int perRow = 4, placeRows = (Cheats.Places.Length + perRow - 1) / perRow;
             float h = Style.Px(120) + (Session.Active ? Style.Px(30) + Mathf.Max(1, players.Count) * rowH : 0f) + Style.Px(30) + placeRows * (bh + gap) + Style.Px(30) + bh + gap + Style.Px(30) + 2 * (bh + gap) + Style.Px(60);
-            float contentHeight = h + 6 * (bh + gap);
-            h = Mathf.Min(h + 6 * (bh + gap), Screen.height - Style.Px(24));
+            float contentHeight = h + 8 * (bh + gap);
+            h = Mathf.Min(h + 8 * (bh + gap), Screen.height - Style.Px(24));
             float x = Mathf.Round((Screen.width - w) / 2), y = Mathf.Round((Screen.height - h) / 2 + (1f - k) * Style.Px(12));
             Style.Glass(new Rect(x, y, w, h), Style.Px(20));
             Style.Title(new Rect(x + pad, y + Style.Px(12), w - 2 * pad, Style.Px(40)), Lang.T("TRICHES", "CHEATS"), Style.White, TextAnchor.MiddleLeft, 26);
@@ -84,6 +91,11 @@ namespace MWCoop
             scroll = GUI.BeginScrollView(viewport, scroll, new Rect(0, 0, iw - scrollbarSpace, contentHeight));
             pointer = pointer - viewport.position + scroll;
             ix = 0; cy = 0; iw -= scrollbarSpace;
+            bool canManageCases = MscToolCases.CanManage(Session.Active, Session.IsHost, PlayerSync.InGame);
+            if (Button(new Rect(ix, cy, iw, bh), Lang.R("Spawn spanner case"), true, e, canManageCases)) SpawnToolCase(0);
+            cy += bh + gap;
+            if (Button(new Rect(ix, cy, iw, bh), Lang.R("Spawn ratchet case"), true, e, canManageCases)) SpawnToolCase(1);
+            cy += bh + gap;
             if (Button(new Rect(ix, cy, iw, bh), Lang.R("Tool cases"), true, e)) Menu.ShowToolCases();
             cy += bh + gap;
             // joueurs

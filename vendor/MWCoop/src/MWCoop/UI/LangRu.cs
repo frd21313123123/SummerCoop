@@ -42,6 +42,7 @@ namespace MWCoop
             { "; failed: ", "; ошибок: " },
             { "Load the game first.", "Сначала загрузите игру." },
             { "Tool cases", "Ящики с инструментами" },
+            { "Manage extra tool cases shared by everyone in the session.", "Управление дополнительными ящиками с инструментами, общими для всех участников сессии." },
             { "Spawn cases in front of you. Everyone in the session sees them.", "Ящики появляются перед вами и видны всем участникам сессии." },
             { "Cases in this session: ", "Ящиков в этой сессии: " },
             { "Only the host can spawn and delete cases in game.", "Создавать и удалять ящики может только хост в игре." },

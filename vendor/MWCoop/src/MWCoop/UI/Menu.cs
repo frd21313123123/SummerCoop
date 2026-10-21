@@ -469,17 +469,13 @@ namespace MWCoop
         static void ToolCasesTab()
         {
             Header(Lang.R("Tool cases"));
-            Para(Lang.R("Spawn cases in front of you. Everyone in the session sees them."), Style.Dim);
+            Para(Lang.R("Manage extra tool cases shared by everyone in the session."), Style.Dim);
             Para(Lang.R("Cases in this session: ") + MscToolCases.Count, Style.Dim);
             if (toolCaseNote != null) Para(toolCaseNote, toolCaseNoteBad ? Style.Warn : Style.Good);
             if (!MscToolCases.CanManage(Session.Active, Session.IsHost, PlayerSync.InGame))
             {
                 Para(Lang.R("Only the host can spawn and delete cases in game."), Style.Warn); return;
             }
-            if (Item(Lang.R("Spawn spanner case"), "+", false, null, false) == 2)
-                ToolCaseResult(MscToolCases.Spawn(0), Lang.R("Spanner case spawned in front of you."));
-            if (Item(Lang.R("Spawn ratchet case"), "+", false, null, false) == 2)
-                ToolCaseResult(MscToolCases.Spawn(1), Lang.R("Ratchet case spawned in front of you."));
             Header(Lang.R("Delete extra cases"));
             Para(Lang.R("The original case and purchased sets are preserved. Put carried cases down first."), Style.Dim);
             for (int i = 1; i < MscToolCases.Count; i++)
