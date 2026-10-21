@@ -63,7 +63,10 @@ namespace MWCoop
             PlayMakerFSM status = Fsm("Database/PartsStatus/Battery", "Data");
             correct &= status.FsmVariables.FindFsmBool("Installed").Value == installed;
             if (installed) correct &= part.transform.parent != null && part.transform.parent.name == "pivot_battery" && joints == 1 && part.transform.localPosition.magnitude < .025f;
-            else correct &= VehicleSync.CarRoot(part.transform) == null && joints == 0;
+            // Props legitimately makes the guest's loose copy kinematic while
+            // it follows the host. The physical owner must regain dynamics.
+            else correct &= VehicleSync.CarRoot(part.transform) == null && joints == 0
+                && (!Session.IsHost || part.GetComponent<Rigidbody>() == null || !part.GetComponent<Rigidbody>().isKinematic);
             foreach (string name in new[] { "WiringBatteryPlus", "WiringBatteryMinus" })
             {
                 var data = Fsm("Database/DatabaseWiring/" + name, "Data");

@@ -1,4 +1,4 @@
-param([string]$GamePath = $env:SUMMERCOOP_GAME_PATH, [switch]$SkipTests)
+param([string]$GamePath = $env:SUMMERCOOP_GAME_PATH, [switch]$SkipTests, [switch]$SkipVendorCopy)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 if (!$GamePath) { $GamePath = 'E:\SteamLibrary\steamapps\common\My Summer Car' }
@@ -42,7 +42,11 @@ if (!$SkipTests) {
         & (Join-Path $PSScriptRoot 'test-msc-adapter.ps1') -GamePath $GamePath
     } finally { $env:TEMP = $oldTemp; $env:TMP = $oldTmp }
 }
-$vendorBin = Join-Path $root 'vendor\bin'
-New-Item -ItemType Directory -Path $vendorBin -Force | Out-Null
-Copy-Item -LiteralPath (Join-Path $build 'SummerCoop.dll') -Destination (Join-Path $vendorBin 'SummerCoop.dll') -Force
+# Isolated QA can keep its two outputs in build while a running game has the
+# convenience vendor DLL mapped. Release/default builds still update it.
+if (!$SkipVendorCopy) {
+    $vendorBin = Join-Path $root 'vendor\bin'
+    New-Item -ItemType Directory -Path $vendorBin -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $build 'SummerCoop.dll') -Destination (Join-Path $vendorBin 'SummerCoop.dll') -Force
+}
 Write-Output ('MWCoop engine for My Summer Car built: ' + (Join-Path $build 'SummerCoop.dll'))

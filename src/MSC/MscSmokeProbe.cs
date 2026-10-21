@@ -18,6 +18,11 @@ namespace MWCoop
         string boltBefore = "", boltAfter = "";
         readonly List<float> frames = new List<float>();
         void Start() { began = Time.realtimeSinceStartup; Application.targetFrameRate = 60; int value; if (int.TryParse(MscRuntime.Argument("--summercoop-test-players"), out value)) expected = Math.Max(2, Math.Min(8, value)); }
+        void FixedUpdate()
+        {
+            try { MscCabinProbe.FixedUpdate(); }
+            catch (Exception e) { if (actionError.Length == 0) { actionError = e.ToString(); Log.Error("MSC cabin physics probe: " + e); } }
+        }
         void Update()
         {
             try { MscCheatProbe.Tick(); }

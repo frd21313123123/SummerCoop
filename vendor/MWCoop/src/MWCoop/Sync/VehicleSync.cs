@@ -72,6 +72,9 @@ namespace MWCoop
             public float LastRemote;
             public float Ts = -1f; public int TsFrom = -1;   // heure de la mesure (horloge de l'emetteur) et emetteur
             public readonly VehicleMotionOrder MotionOrder = new VehicleMotionOrder();
+            public SummerCoop.Core.VehicleMotionBuffer Motion;
+            public MscVehicleReplica Replica;
+            public float PresentationAt;
             public Vector3 Pos, Vel, AngVel;
             public Quaternion Rot;
             public bool Kinematic;
@@ -265,6 +268,7 @@ namespace MWCoop
 
         public static void OnLevelLoaded()
         {
+            foreach (Car c in cars) if (c.Motion != null && c.Body != null && c.Kinematic) SetKinematic(c, false);
             cars.Clear(); under.Clear(); byNet.Clear(); netKeys.Clear(); missingLogged.Clear();
             scanned = false; tableSeen = false; inCarWas = false; curVehicle = null; curVehicleLooked = false;
             LocalDriving = -1; owned = -1; moving = null; bumped = -1;
@@ -278,6 +282,7 @@ namespace MWCoop
             foreach (Car c in cars)
             {
                 c.MotionOrder.Forget(id);
+                if (c.Motion != null && (c.RemoteBy == id || c.TsFrom == id)) c.Motion.Clear();
                 if (c.TsFrom == id) c.TsFrom = -1;
                 if (c.RemoteBy == id) c.RemoteBy = c.RemoteDriver = -1;
             }
@@ -294,6 +299,7 @@ namespace MWCoop
             if (owned >= 0 && owned != c.Index) return;
             c.RemoteBy = c.RemoteDriver = -1;
             owned = c.Index; c.EngineClaimUntil = now + 1f;
+            if (c.Motion != null) c.Motion.Clear();
             SetKinematic(c, false); MscEngineSync.SetCopy(c.T, false);
             Send(c, 2, true);
         }
@@ -439,6 +445,11 @@ namespace MWCoop
                                 Dt = go.GetComponent<Drivetrain>(), Wheels = go.GetComponentsInChildren<Wheel>(true),
                                 Axis = go.GetComponent<AxisCarController>(), Sound = go.GetComponent<SoundController>(),
                                 Mod = go.GetComponent("CarDynamics") == null };
+            if (go.name.StartsWith("SATSUMA", System.StringComparison.Ordinal))
+            {
+                car.Motion = new SummerCoop.Core.VehicleMotionBuffer();
+                car.Replica = new MscVehicleReplica(rb);
+            }
             if (car.Mod)
             {
                 car.ModDt = go.GetComponent("SnowmobileDrivetrain");
@@ -691,7 +702,11 @@ namespace MWCoop
                 // (derniere pose, etat 0). Avant : lachee d'un coup -- chez les autres la copie repassait brutalement sous la
                 // physique et le jeu arrachait toutes ses pieces (CORRIS demontee « toute seule », retour de HowardCS, 11/10).
                 if (driving >= 0 && owned >= 0 && owned != driving && owned < cars.Count) { Release(cars[owned], now); Log.Info("au volant d'une autre : " + cars[owned].Key + " rendue"); pushCar = -1; }
-                if (driving >= 0) owned = -1;
+                if (driving >= 0)
+                {
+                    owned = -1;
+                    if (cars[driving].Motion != null) cars[driving].Motion.Clear();
+                }
                 LocalDriving = driving;
             }
             if (LocalDriving >= 0 && now >= nextSeatCheck) { nextSeatCheck = now + 0.5f; SeatGuard(cars[LocalDriving]); }
@@ -769,9 +784,10 @@ namespace MWCoop
                 if (!remote && c.RemoteBy >= 0 && now - c.LastRemote >= 1.5f) { c.RemoteBy = -1; c.RemoteDriver = -1; }
                 SetKinematic(c, remote);
                 MscEngineSync.SetCopy(c.T, Authority(c.Net) != Session.LocalId);
-                Ride(c, remote && (Seats.SeatedCar == c.T || MscPlatforms.SupportBody == c.Body));
+                Ride(c, remote && (c.Motion != null || Seats.SeatedCar == c.T || MscPlatforms.SupportBody == c.Body));
                 if (remote)
                 {
+                    MaintainSatsumaCopy(c);
                     if (c.Framewise && c.Body.gameObject.activeInHierarchy) FollowFrame(c);
                     if (now >= c.NextJoints) ProtectJoints(c);   // pieces montees entre-temps
                     Animate(c);
@@ -1229,6 +1245,7 @@ namespace MWCoop
                 if (c.JointsLater != null) { c.JointsWas = c.JointsLater; c.JointsLater = null; }
                 c.SettleUntil = 0f;
                 ProtectJoints(c);
+                if (c.Replica != null) c.Replica.Begin(c.InterpWas);
             }
             else
             {
@@ -1238,13 +1255,19 @@ namespace MWCoop
                 // attaches encore incassables, pieces a la vitesse de la voiture, vitesse verticale et rotation bridees a
                 // celles recues (+ une marge) ; ensuite les limites de casse d'avant.
                 float now0 = Time.realtimeSinceStartup;
+                if (c.Motion != null) c.Motion.Clear();
+                if (c.Replica != null) c.Replica.End(c.Vel, c.AngVel);
                 if (c.JointsWas != null) { c.JointsLater = c.JointsWas; c.JointsWas = null; }
                 c.Body.isKinematic = c.WasKinematic;
                 if (!c.Body.isKinematic)
                 {
                     c.Body.velocity = c.Vel; c.Body.angularVelocity = c.AngVel;
                     foreach (Rigidbody rb in c.Body.GetComponentsInChildren<Rigidbody>())
-                        if (rb != c.Body && !rb.isKinematic && !MscVehicleControls.PlayerObject(rb.transform)) { rb.velocity = c.Vel; rb.angularVelocity = c.AngVel; }
+                        if (rb != c.Body && !rb.isKinematic && !MscVehicleControls.PlayerObject(rb.transform))
+                        {
+                            rb.velocity = c.Motion == null ? c.Vel : c.Body.GetPointVelocity(rb.worldCenterOfMass);
+                            rb.angularVelocity = c.AngVel;
+                        }
                     c.SettleUntil = now0 + 1.5f; c.SettleVel = c.Vel; c.SettleAng = c.AngVel;
                 }
                 else c.SettleUntil = now0;
@@ -1280,7 +1303,9 @@ namespace MWCoop
             if (!scanned) return;
             if (frozenCar != null) HoldFrozen();
             foreach (Car c in cars)
-                if (c.Body != null && c.Kinematic && c.Body.gameObject.activeInHierarchy && !c.Framewise) Follow(c);
+                if (c.Motion != null && c.Kinematic && c.Body != null && Remote(c, Time.realtimeSinceStartup)) MaintainSatsumaCopy(c);
+            foreach (Car c in cars)
+                if (c.Body != null && c.Kinematic && c.Body.gameObject.activeInHierarchy && !c.Framewise && c.Motion == null) Follow(c);
                 else if (c.Body != null && !c.Kinematic && c.SettleUntil > 0f) Settle(c);
             foreach (Car c in cars)
                 if (c.CalmUntil > 0f && c.Body != null && !c.Kinematic) Calm(c);
@@ -1298,6 +1323,37 @@ namespace MWCoop
             float now = Time.realtimeSinceStartup;
             foreach (Car c in cars)
                 if (c.Body != null && (c.Key == root || c.T != null && c.T.root.name == root)) c.CalmUntil = now + 1.5f;
+        }
+
+        internal static void PartsChanged()
+        {
+            foreach (Car c in cars) if (c.Replica != null) c.Replica.Invalidate();
+        }
+
+        internal static void PartRemoving(GameObject part)
+        {
+            foreach (Car c in cars) if (c.Replica != null) c.Replica.Removing(part, c.Vel, c.AngVel);
+        }
+
+        internal static float PresentationTime(Rigidbody body)
+        {
+            foreach (Car c in cars) if (c.Body == body) return c.PresentationAt;
+            return 0f;
+        }
+
+        static void MaintainSatsumaCopy(Car c)
+        {
+            if (c.Motion == null) return;
+            // Native assembly and LOD can re-enable physics after the initial
+            // ownership transition. Preserve their intended component states
+            // for handoff, while the remote chassis stays a presentation copy.
+            if (!c.Body.isKinematic) c.Body.isKinematic = true;
+            if (c.Body.interpolation != RigidbodyInterpolation.None) c.Body.interpolation = RigidbodyInterpolation.None;
+            if (c.Dt != null && c.Dt.enabled) { c.DtWas = true; c.Dt.enabled = false; c.Dt.startEngine = false; }
+            if (c.Axis != null && c.Axis.enabled) { c.AxisWas = true; c.Axis.enabled = false; }
+            for (int i = 0; i < c.Wheels.Length; i++)
+                if (c.Wheels[i] != null && c.Wheels[i].enabled)
+                { if (c.WheelsWas != null) c.WheelsWas[i] = true; c.Wheels[i].enabled = false; }
         }
 
         static int calmLogs;
@@ -1365,6 +1421,22 @@ namespace MWCoop
 
         static void FollowFrame(Car c)
         {
+            if (c.Motion != null)
+            {
+                SummerCoop.Core.VehicleMotionPose pose;
+                float presentationAt = Time.realtimeSinceStartup;
+                if (!c.Motion.TrySample(presentationAt, out pose)) return;
+                c.PresentationAt = presentationAt;
+                Vector3 position = new Vector3(pose.Position.X, pose.Position.Y, pose.Position.Z);
+                Quaternion rotation = new Quaternion(pose.Rotation.X, pose.Rotation.Y, pose.Rotation.Z, pose.Rotation.W);
+                if ((position - c.T.position).sqrMagnitude > 25f) MoveCargo(c, position, rotation, c.Vel);
+                // One presentation pose for the chassis, passenger, controls and
+                // rigid installed parts. FixedUpdate must not move it again.
+                c.Body.position = position; c.Body.rotation = rotation;
+                c.T.position = position; c.T.rotation = rotation;
+                c.Replica.Apply();
+                return;
+            }
             float dt = Since(c);
             Vector3 target = c.Pos + c.Vel * dt;
             Quaternion rot = c.Rot;
@@ -2250,6 +2322,13 @@ namespace MWCoop
             if (c.Index == bumped) { bumped = -1; Log.Info("poussee en voiture : " + c.Key + " prise par #" + who); }
             if (driven)
             {
+                if (c.Motion != null)
+                {
+                    if (c.RemoteBy != who || now0 - c.LastRemote >= 1.5f) c.Motion.Clear();
+                    c.Motion.Add(ts, now0,
+                        new SummerCoop.Core.V3(pos.x, pos.y, pos.z), new SummerCoop.Core.Q4(rot.x, rot.y, rot.z, rot.w),
+                        new SummerCoop.Core.V3(vel.x, vel.y, vel.z), new SummerCoop.Core.V3(ang.x, ang.y, ang.z));
+                }
                 c.RemoteBy = who;
                 c.RemoteDriver = mode == 1 ? who : -1;
                 c.RemoteHead = dhead;
@@ -2273,6 +2352,7 @@ namespace MWCoop
                 return;
             }
             // Sans conducteur : recalage si la voiture locale a derive (> 1 m ou > 10 degres).
+            if (c.Motion != null) c.Motion.Clear();
             if (c.RemoteBy == who) { c.RemoteBy = -1; c.RemoteDriver = -1; }
             c.Vel = vel; c.AngVel = ang;
             Transform t = c.Body.transform;

@@ -241,7 +241,11 @@ namespace MWCoop
             {
                 try
                 {
-                    if (Binding.Fsm.FsmName == "Removal") CarDoors.PartRemoving(Binding.Fsm.gameObject);
+                    if (Binding.Fsm.FsmName == "Removal")
+                    {
+                        VehicleSync.PartRemoving(Binding.Fsm.gameObject);
+                        CarDoors.PartRemoving(Binding.Fsm.gameObject);
+                    }
                     if (Session.Active && PlayerSync.InGame && Time.timeSinceLevelLoad > 3 && Replay.Depth == 0 && !remote.ContainsKey(Fsm))
                     {
                         RefreshKey(Binding);
@@ -320,6 +324,7 @@ namespace MWCoop
         }
         public static void Changed(GameObject go)
         {
+            VehicleSync.PartsChanged();
             keyGeneration++; Props.InvalidateHierarchy();
             CarDoors.SoonScan();
             if (go != null && changedSet.Add(go)) changedRoots.Enqueue(go);

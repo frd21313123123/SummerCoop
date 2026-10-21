@@ -1,5 +1,5 @@
 param([ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9_-]{0,48}$')][string]$Run = ('mwcoop-' + (Get-Date -Format yyyyMMdd-HHmmss)), [int]$Port = 27991, [int]$Duration = 35, [switch]$Actions, [switch]$Vehicles, [switch]$Garage, [switch]$Workshop, [switch]$Platforms, [switch]$Activities, [switch]$Regression, [switch]$Assembly, [switch]$Carrier, [ValidatePattern('^[a-zA-Z0-9_-]+$')][string]$HostGame = 'game', [ValidatePattern('^[a-zA-Z0-9_-]+$')][string]$ClientGame = 'game-client', [ValidateSet('JONNEZ','BOAT','KEKMET','SATSUMA')][string[]]$VehicleNames,
-    [switch]$EngineLifecycle, [switch]$Cabin, [switch]$Performance, [ValidateRange(1,8)][int]$Players = 2, [ValidateRange(0,600)][int]$Warmup = 60,
+    [switch]$EngineLifecycle, [switch]$Cabin, [ValidateSet('HAYOSIKO','SATSUMA')][string]$CabinVehicle = 'HAYOSIKO', [switch]$CabinRoad, [switch]$Performance, [ValidateRange(1,8)][int]$Players = 2, [ValidateRange(0,600)][int]$Warmup = 60,
     [ValidateRange(320,7680)][int]$Width = 640, [ValidateRange(240,4320)][int]$Height = 480,
     [ValidateSet('Local','Host','Client')][string]$Role = 'Local', [string]$JoinAddress = '127.0.0.1',
     [ValidatePattern('^[a-zA-Z0-9_-]+$')][string[]]$ExtraClientGames,
@@ -7,6 +7,7 @@ param([ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9_-]{0,48}$')][string]$Run = ('mwco
     [string]$BuildDirectory, [string]$SeedProfile, [switch]$Optimization, [switch]$PartsProfile, [switch]$ToolCases, [switch]$ToolCaseMenu, [switch]$BoltPositions, [switch]$Attachments, [switch]$AttachmentDoors, [switch]$Battery, [ValidateSet('Recovery','Unwired','Reload')][string]$BatteryMode = 'Recovery', [switch]$Shopping, [switch]$Bindings, [switch]$Wallet, [switch]$Cheats, [switch]$Engine, [switch]$SummerFixes, [switch]$MusicOnly, [ValidateSet('Host','Guest')][string]$ActionActor = 'Host', [ValidateSet('Host','Guest')][string]$SaveQuitActor)
 $ErrorActionPreference = 'Stop'
 if ($AttachmentDoors) { $Attachments = $true }
+if ($CabinRoad -and (!$Cabin -or $CabinVehicle -ne 'SATSUMA' -or !$SeedProfile)) { throw 'CabinRoad requires Cabin, CabinVehicle SATSUMA and a copied assembled SeedProfile.' }
 if ($MusicOnly) { $SummerFixes = $true }
 $root = Split-Path -Parent $PSScriptRoot
 $local = Join-Path $root '.local'
@@ -163,7 +164,8 @@ foreach ($instance in $instances) {
     if ($Bindings) { $arguments += ' --summercoop-test-bindings-channel "' + $bindingsChannel + '"' }
     if ($Wallet) { $arguments += ' --summercoop-test-wallet-channel "' + $walletChannel + '"' }
     if ($Engine) { $arguments += ' --summercoop-test-engine-channel ' + [char]34 + (Join-Path $local ($Run + '-engine')) + [char]34 }
-    if ($Cabin) { $arguments += ' --summercoop-test-cabin-channel ' + [char]34 + (Join-Path $local ($Run + '-cabin')) + [char]34 }
+    if ($Cabin) { $arguments += ' --summercoop-test-cabin-channel ' + [char]34 + (Join-Path $local ($Run + '-cabin')) + [char]34 + ' --summercoop-test-cabin-vehicle ' + $CabinVehicle }
+    if ($CabinRoad) { $arguments += ' --summercoop-test-cabin-road yes' }
     if ($EngineLifecycle) { $arguments += ' --summercoop-test-engine-lifecycle ' + [char]34 + (Join-Path $local ($Run + '-engine-lifecycle')) + [char]34 }
     if ($Cheats) { $arguments += ' --summercoop-test-cheats-channel "' + $cheatsChannel + '"' }
     if ($Garage) { $arguments += ' --summercoop-test-garage-channel "' + $garageChannel + '"' }
