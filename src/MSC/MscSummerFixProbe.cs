@@ -135,9 +135,9 @@ namespace MWCoop
                 if (At(id, t, when) && mine) RemovePanel(i);
                 if (At(id + 1, t, when + 1.5f) && mine) InstallPanel(i);
                 if (At(id + 2, t, when + 4.3f)) CheckPanel(i, actor == 0 ? "host" : "guest");
-                if (mine && t >= when + 4.4f && t < when + 6.1f) Tighten(i);
-                if (At(id + 3, t, when + 6.1f) && mine) CarDoors.TestOpen("SATSUMA", true, DoorName(i));
-                if (At(id + 4, t, when + 6.7f) && mine) CarDoors.TestOpen("SATSUMA", false, DoorName(i));
+                if (mine && t >= when + 4.4f && t < when + 7.1f) Tighten(i);
+                if (At(id + 3, t, when + 7.1f) && mine) CarDoors.TestOpen("SATSUMA", true, DoorName(i));
+                if (At(id + 4, t, when + 7.35f) && mine) CarDoors.TestOpen("SATSUMA", false, DoorName(i));
                 if (At(id + 5, t, when + 7.7f))
                 {
                     int count = 0, minimum = 8;

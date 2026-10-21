@@ -1,8 +1,9 @@
+using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
-using SummerCoop.Core;
 
 namespace MWCoop
 {
@@ -11,12 +12,27 @@ namespace MWCoop
     internal static class MscProbeFiles
     {
         static readonly object publication = new object();
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        static extern bool MoveFileEx(string source, string destination, int flags);
         public static void WriteAllText(string path, string value)
         {
-            // File.Replace can race an open from another thread even when the
-            // reader shares DELETE. Serialize local diagnostic readers/writers;
-            // other game processes still receive complete atomic snapshots.
-            lock (publication) AtomicFile.Write(path, Encoding.UTF8.GetBytes(value));
+            // Ephemeral QA IPC needs a complete publication, without forcing
+            // physical disk durability and stalling Unity's simulation frame.
+            // Native rename also avoids old Mono's File.Replace sharing window.
+            lock (publication)
+            {
+                string target = Path.GetFullPath(path), temp = target + ".pending";
+                Directory.CreateDirectory(Path.GetDirectoryName(target));
+                byte[] bytes = Encoding.UTF8.GetBytes(value);
+                using (var file = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None)) file.Write(bytes, 0, bytes.Length);
+                for (int attempt = 0; ; attempt++)
+                {
+                    if (MoveFileEx(temp, target, 1)) return;
+                    int error = Marshal.GetLastWin32Error();
+                    if (attempt >= 50) throw new IOException("QA snapshot rename failed (" + error + "): " + target);
+                    Thread.Sleep(2);
+                }
+            }
         }
         public static void WriteAllLines(string path, string[] lines)
         {
