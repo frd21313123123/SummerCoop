@@ -402,7 +402,7 @@ namespace MWCoop
         // Hote : invite arrive en jeu -> 20 s plus tard, ce qui a ete mange ou jete pendant son chargement.
         public static bool Tracks(PlayMakerFSM f) { return hooked.Contains(f); }
 
-        public static void ScheduleSnapshot(Peer p) { snapshots.Add(new KeyValuePair<float, Peer>(Time.realtimeSinceStartup + 20f, p)); }
+        public static void ScheduleSnapshot(Peer p, bool immediate = false) { snapshots.Add(new KeyValuePair<float, Peer>(Time.realtimeSinceStartup + (immediate ? 0 : 20f), p)); }
 
         static bool IsBag(string state) { return state == "Spawn one" || state == "Spawn all"; }
         static bool IsGoneName(string state) { return System.Array.IndexOf(GoneStates, state) >= 0; }

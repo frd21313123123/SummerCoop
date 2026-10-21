@@ -32,6 +32,7 @@ namespace MWCoop
         static readonly HashSet<PlayMakerFSM> refused = new HashSet<PlayMakerFSM>();
         static readonly HashSet<string> applyTypes = new HashSet<string> { "FloatClamp", "FloatOperator", "SetPosition", "SetRotation", "SetFsmFloat", "SetFloatValue" };
         static float nextHost;
+        public static void Resynchronize() { nextHost = 0; }
 
         public static void OnLevelLoaded() { knobs.Clear(); byKey.Clear(); refused.Clear(); }
 

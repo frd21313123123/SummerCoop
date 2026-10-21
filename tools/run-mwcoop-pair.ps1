@@ -3,10 +3,11 @@ param([ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9_-]{0,48}$')][string]$Run = ('mwco
     [ValidateRange(320,7680)][int]$Width = 640, [ValidateRange(240,4320)][int]$Height = 480,
     [ValidateSet('Local','Host','Client')][string]$Role = 'Local', [string]$JoinAddress = '127.0.0.1',
     [ValidatePattern('^[a-zA-Z0-9_-]+$')][string[]]$ExtraClientGames,
-    [string]$SeedMusicCache,
+    [string]$SeedMusicCache, [switch]$FleetariInstant,
     [string]$BuildDirectory, [string]$SeedProfile, [switch]$Optimization, [switch]$PartsProfile, [switch]$ToolCases, [switch]$ToolCaseMenu, [switch]$BoltPositions, [switch]$Attachments, [switch]$AttachmentDoors, [switch]$Battery, [ValidateSet('Recovery','Unwired','Reload')][string]$BatteryMode = 'Recovery', [switch]$Shopping, [switch]$Bindings, [switch]$Wallet, [switch]$Cheats, [switch]$Engine, [switch]$SummerFixes, [switch]$MusicOnly, [ValidateSet('Host','Guest')][string]$ActionActor = 'Host', [ValidateSet('Host','Guest')][string]$SaveQuitActor)
 $ErrorActionPreference = 'Stop'
 if ($AttachmentDoors) { $Attachments = $true }
+if ($FleetariInstant) { $Bindings = $true }
 if ($CabinRoad -and (!$Cabin -or $CabinVehicle -ne 'SATSUMA' -or !$SeedProfile)) { throw 'CabinRoad requires Cabin, CabinVehicle SATSUMA and a copied assembled SeedProfile.' }
 if ($MusicOnly) { $SummerFixes = $true }
 $root = Split-Path -Parent $PSScriptRoot
@@ -55,7 +56,7 @@ if ($Battery -and !$PSBoundParameters.ContainsKey('Duration')) { $Duration = 85 
 if ($Carrier -and !$Assembly -and !$PSBoundParameters.ContainsKey('Duration')) { $Duration = 135 }
 if ($Shopping -and !$PSBoundParameters.ContainsKey('Duration')) { $Duration = 140 }
 if ($Cheats -and !$PSBoundParameters.ContainsKey('Duration')) { $Duration = 95 }
-if ($SummerFixes -and !$PSBoundParameters.ContainsKey('Duration')) { $Duration = if ($MusicOnly) { 130 } else { 280 } }
+if ($SummerFixes -and !$PSBoundParameters.ContainsKey('Duration')) { $Duration = if ($MusicOnly) { 235 } else { 340 } }
 $vehicleChannel = Join-Path $local ($Run + '-vehicles')
 $garageChannel = Join-Path $local ($Run + '-garage')
 $workshopChannel = Join-Path $local ($Run + '-workshop')
@@ -168,6 +169,7 @@ foreach ($instance in $instances) {
     if ($CabinRoad) { $arguments += ' --summercoop-test-cabin-road yes' }
     if ($EngineLifecycle) { $arguments += ' --summercoop-test-engine-lifecycle ' + [char]34 + (Join-Path $local ($Run + '-engine-lifecycle')) + [char]34 }
     if ($Cheats) { $arguments += ' --summercoop-test-cheats-channel "' + $cheatsChannel + '"' }
+    if ($FleetariInstant) { $arguments += ' --summercoop-test-bindings-instant' }
     if ($Garage) { $arguments += ' --summercoop-test-garage-channel "' + $garageChannel + '"' }
     if ($Workshop) { $arguments += ' --summercoop-test-workshop-channel "' + $workshopChannel + '"' }
     if ($Vehicles) { $arguments += ' --summercoop-test-vehicle-channel "' + $vehicleChannel + '"' }

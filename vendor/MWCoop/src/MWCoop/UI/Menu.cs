@@ -452,6 +452,12 @@ namespace MWCoop
         {
             if (MscRuntime.Argument("--summercoop-test-bolt-positions") != "yes") return;
             Open = true; ChatOpen = false; CheatPanel.Open = WalletPanel.Open = MapPanel.Open = false;
+            openedAt = Time.realtimeSinceStartup; SetTab(3); sel = testSel = 1; Key(KeyCode.Return, false);
+        }
+        internal static void TestResyncButton()
+        {
+            if (!MscRuntime.HasArgument("--summercoop-test-summerfixes")) return;
+            Open = true; ChatOpen = false; CheatPanel.Open = WalletPanel.Open = MapPanel.Open = false;
             openedAt = Time.realtimeSinceStartup; SetTab(3); sel = 0; Key(KeyCode.Return, false);
         }
         static string toolCaseNote;
@@ -730,6 +736,8 @@ namespace MWCoop
         {
             if (MscRuntime.Enabled)
             {
+                if (Item(Lang.R("Synchronize everything"), null, false, Lang.R("Request the host's world, FSMs, parts, doors and music again without reconnecting."), false) == 2)
+                    Hud.Toast(MscResync.Request());
                 if (Item(Lang.R("Restore bolt positions"), null, false, Lang.R("Restore bolt positions locally without changing tightness."), !PlayerSync.InGame) == 2)
                     Hud.Toast(MscBoltPositions.RestoreAll());
                 Para(Lang.R("Restore bolt positions locally without changing tightness."), Style.Dim);

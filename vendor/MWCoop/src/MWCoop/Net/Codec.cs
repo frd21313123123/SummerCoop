@@ -145,6 +145,8 @@ namespace MWCoop.Net
         Radio = 50,       // hote -> invites : morceau, position et lecture de chaque canal radio (Radio)
         Music = 55,       // authenticated catalogue and bounded music file pulls
         Cd = 56,          // host-ordered CD controls and playback snapshots
+        Resync = 57,      // request host state again without leaving the game
+        Stereo = 58,      // host-ordered volume/tuner edits
         ModData = 51,     // donnees d'un autre mod (CoopApi) : canal, morceaux ; l'hote relaie
         Event = 53,       // evenement du monde decide par l'hote : objets allumes, valeurs reglees (Events)
         Talk = 54,        // vocal de proximite : paquet de voix compresse par Steam (Voice) ; l'hote relaie

@@ -65,11 +65,13 @@ namespace MWCoop
         static readonly string[] HelpFr = {
             "/tp <joueur> : aller à un joueur", "/amener <joueur> : faire venir un joueur", "/lieu <nom> : maison, pub, ville, port, garage, inspection, decharge, danse, cabane, chalet",
             "/argent <montant> : du liquide pour soi", "/soin : faim, soif, fatigue, stress, vessie, saleté à zéro", "/liberer : plus recherché, sorti de prison",
-            "/heure <0,2,...,24> : l'heure de tous", "/pluie oui|non : pluie (ou neige) pour tous" };
+            "/heure <0,2,...,24> : l'heure de tous", "/pluie oui|non : pluie (ou neige) pour tous",
+            "/sober : enlever l'ivresse et la gueule de bois", "/fleetari : terminer la commande en cours" };
         static readonly string[] HelpEn = {
             "/tp <player>: go to a player", "/bring <player>: bring a player to you", "/place <name>: home, pub, town, harbor, garage, inspection, landfill, dance, cottage, cabin",
             "/money <amount>: cash for yourself", "/heal: hunger, thirst, fatigue, stress, bladder, dirt to zero", "/free: no longer wanted, out of jail",
-            "/time <0,2,...,24>: everyone's time of day", "/rain on|off: rain (or snow) for everyone" };
+            "/time <0,2,...,24>: everyone's time of day", "/rain on|off: rain (or snow) for everyone",
+            "/sober: clear drunkenness and hangover", "/fleetari: finish the active service order" };
 
         // Commandes anglaises -> les noms d'ici.
         static string Canon(string c)
@@ -155,6 +157,8 @@ namespace MWCoop
                     return MscComfort.Cure(true);
                 case "curesting": return MscComfort.Cure(true);
                 case "clearblindness": return MscComfort.Cure(false);
+                case "sober": return MscComfort.Sober();
+                case "fleetari": return MscOrders.FinishFleetari();
                 case "wasphome":
                 {
                     bool? on = OnOff(arg);
@@ -195,6 +199,10 @@ namespace MWCoop
             if (a.Length == 0) return;
             string c = Canon(a[0].TrimStart('/').ToLowerInvariant()), arg = a.Length > 1 ? string.Join(" ", a, 1, a.Length - 1) : "";
             if (Session.IsHost && !Allowed) { Log.Warn("triches : " + name + " : " + line + " refusee (coupees ici)"); return; }
+            if (Session.IsHost && c == "fleetari") {
+                string error = MscOrders.FinishFleetari();
+                if (error != null) Say(error);
+            }
             if (Session.IsHost && c == "wasphome") { bool? on = OnOff(arg); if (on != null) { MscComfort.SetHouseWasp(on.Value); nextAnnounce = 0; Update(); } }
             if (Session.IsHost && c == "heure") { int h; if (int.TryParse(arg, out h) && h >= 0 && h <= 24) SetHour(h); }
             if (Session.IsHost && (c == "pluie" || c == "neige")) { bool? on = OnOff(arg); if (on != null) SetRain(on.Value, from != null ? from.State.Feet : Game.PlayerT != null ? Game.PlayerT.position : Vector3.zero); }

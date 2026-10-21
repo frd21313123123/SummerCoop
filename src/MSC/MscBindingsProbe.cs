@@ -17,12 +17,17 @@ namespace MWCoop
         static int shelfBefore;
         static FsmStateAction deliveryWait;
         static string[] packages;
+        static bool instantClick, instantClicked, instantRecorded;
+        static bool Instant { get { return MscRuntime.HasArgument("--summercoop-test-bindings-instant"); } }
         static string Role { get { return MWCoop.Net.Session.IsHost ? "host" : "guest"; } }
         public static void Update()
         {
             string channel = MscRuntime.Argument("--summercoop-test-bindings-channel");
             if (channel.Length == 0 || Time.timeSinceLevelLoad < 15) return;
-            if (!dumped) { Dump(channel); dumped = true; }
+            if (!dumped) {
+                Dump(channel); dumped = true;
+                if (Instant) new GameObject("SummerCoop Fleetari cheat QA").AddComponent<InstantDriver>();
+            }
             Exercise(channel);
         }
         static void Dump(string channel)
@@ -96,6 +101,7 @@ namespace MWCoop
             float t = (float)TimeSpan.FromTicks(DateTime.UtcNow.Ticks - start).TotalSeconds;
             var order = Fsm(MscOrders.RepairPath, "Data");
             if (At(0, t, 0)) {
+                if (Instant && host) Cheats.SetAllowed(true);
                 Wallet.AddLocal(20000);
                 cash = FsmVariables.GlobalVariables.GetFsmFloat("PlayerMoney").Value;
                 Transform visitor = Game.PlayerT;
@@ -150,12 +156,26 @@ namespace MWCoop
                 Record(channel, "fleetari-payment", (host || serviceCost > 0) && Mathf.Abs(actual - (cash - (host ? 0 : serviceCost))) < .05f, "Before=" + cash + ";After=" + actual + ";Cost=" + serviceCost);
             }
             if (At(3, t, 10)) {
-                // Native Fleetari requires the player to leave the workshop.
                 Transform player = Game.PlayerT; var controller = player.GetComponent<CharacterController>();
                 if (controller != null) controller.enabled = false;
-                player.parent = null; player.position = new Vector3(-10, 1, 10);
+                player.parent = null;
+                player.position = Instant ? Game.FindAny("REPAIRSHOP/LOD/Office/PlayerDistance").transform.position : new Vector3(-10, 1, 10);
                 if (controller != null) controller.enabled = true;
-                if (host) order.FsmVariables.GetFsmFloat("_OrderTime").Value = 0;
+                if (Instant) { if (!host) instantClick = true; }
+                else if (host) order.FsmVariables.GetFsmFloat("_OrderTime").Value = 0;
+            }
+            if (Instant && t >= 10 && !instantRecorded && !order.FsmVariables.GetFsmBool("_Order").Value) {
+                string clicked = Path.Combine(channel, "instant-click.txt"); long ticks;
+                if (File.Exists(clicked) && long.TryParse(MscProbeFiles.ReadAllText(clicked), out ticks)) {
+                    instantRecorded = true;
+                    float elapsed = (float)TimeSpan.FromTicks(DateTime.UtcNow.Ticks - ticks).TotalSeconds;
+                    float spark = Fsm("Database/DatabaseMotor/Distributor", "Data").FsmVariables.GetFsmFloat("SparkAngle").Value;
+                    float carb = Fsm("Database/DatabaseMotor/Carburator", "Data").FsmVariables.GetFsmFloat("IdleAdjust").Value;
+                    Record(channel, "fleetari-instant", elapsed < 1.5f && Mathf.Abs(spark - 14.5f) < .001f && Mathf.Abs(carb - 16.75f) < .001f,
+                        "Seconds=" + elapsed + ";Spark=" + spark + ";Carb=" + carb + ";State=" + order.ActiveStateName);
+                    float before = Wallet.Cash;
+                    Record(channel, "fleetari-empty", Cheats.Command("/fleetari") != null && Wallet.Cash == before, "No second job or charge without an active order");
+                }
             }
             if (At(4, t, 22)) {
                 Record(channel, "fleetari-complete", !order.FsmVariables.GetFsmBool("_Order").Value, "State=" + order.ActiveStateName);
@@ -252,6 +272,27 @@ namespace MWCoop
                 Game.SetState(Fsm("REPAIRSHOP", "OpeningHours"), "State 1");
             }
             if (At(32, t, 80)) Opening(channel, "reopened", true);
+        }
+        public sealed class InstantDriver : MonoBehaviour
+        {
+            void OnGUI()
+            {
+                if (!instantClick || instantClicked || Event.current.type != EventType.Layout) return;
+                Event real = Event.current;
+                try {
+                    CheatPanel.Open = true; CheatPanel.Draw();
+                    for (int turn = 0; turn < 20 && !CheatPanel.ContentViewport.Contains(CheatPanel.FleetariButtonRect.center); turn++) {
+                        Event.current = new Event { type = EventType.ScrollWheel, delta = new Vector2(0, 3), mousePosition = CheatPanel.ContentViewport.center };
+                        CheatPanel.Draw();
+                    }
+                    string channel = MscRuntime.Argument("--summercoop-test-bindings-channel");
+                    MscProbeFiles.WriteAllText(Path.Combine(channel, "instant-click.txt"), DateTime.UtcNow.Ticks.ToString());
+                    Event.current = new Event { type = EventType.MouseDown, button = 0, mousePosition = CheatPanel.FleetariButtonRect.center };
+                    CheatPanel.Draw(); instantClicked = true; CheatPanel.Open = false;
+                    Record(channel, "fleetari-button", CheatPanel.ContentViewport.Contains(CheatPanel.FleetariButtonRect.center),
+                        "Button=" + CheatPanel.FleetariButtonRect + ";Viewport=" + CheatPanel.ContentViewport);
+                } finally { Event.current = real; }
+            }
         }
         static void Opening(string channel, string name, bool expected)
         {

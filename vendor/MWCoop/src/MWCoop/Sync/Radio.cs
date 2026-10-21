@@ -26,6 +26,7 @@ namespace MWCoop
         static int sentRevision, receivedRevision;
         static float nextSend, nextFind, nextClips, nextLog;
         static Dictionary<string, AudioClip> clips;
+        public static void Resynchronize() { nextSend = nextFind = 0; }
         static readonly MscAudioStream[] streams = new MscAudioStream[2];
         static readonly float[] wantedTime = new float[2], wantedAt = new float[2];
         static readonly bool[] wantedPlaying = new bool[2];
@@ -196,6 +197,7 @@ namespace MWCoop
             inRemote = found && realT != null && fetch != null;
             if (inRemote) remoteBase = Take();
         }
+        public static void BeforeLocal() { winK = null; winUntil = 0; inRemote = false; }
 
         public static void AfterRemote(Transform fsm, int who, string state)
         {

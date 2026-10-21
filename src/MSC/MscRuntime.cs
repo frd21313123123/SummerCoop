@@ -205,7 +205,7 @@ namespace MWCoop
                 Log.Error("MSC compatibility: " + key + " (retry in " + (failure.Retry - Time.realtimeSinceStartup) + "s): " + e);
             }
         }
-        public static void SceneChanged() { failures.Clear(); MscComfort.Reset(); MscCd.Reset(); MscBattery.Reset(); MscParts.Reset(); MscVehicleControls.Reset(); MscEngineSync.Reset(); MscPlatforms.Reset(); MscBrewing.Reset(); MscSleep.Reset(); MscIsland.Reset(); MscFireworks.Reset(); MscFluids.Reset(); MscToolCases.Reset(); }
+        public static void SceneChanged() { failures.Clear(); MscComfort.Reset(); MscCd.Reset(); MscStereo.Reset(); MscResync.Reset(); MscBattery.Reset(); MscParts.Reset(); MscVehicleControls.Reset(); MscEngineSync.Reset(); MscPlatforms.Reset(); MscBrewing.Reset(); MscSleep.Reset(); MscIsland.Reset(); MscFireworks.Reset(); MscFluids.Reset(); MscToolCases.Reset(); }
     }
     // The original engine still supplies F10, T, the roster, looks and sync audit.
     // F6 supplies the MSC connection settings when launched without a launcher.

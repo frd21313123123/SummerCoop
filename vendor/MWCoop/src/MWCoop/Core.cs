@@ -130,6 +130,8 @@ namespace MWCoop
             new Mod("file IO", MscIo.Update),
             new Mod("music transfer MSC", MscMusic.Update),
             new Mod("CD MSC", MscCd.Update),
+            new Mod("stereo MSC", MscStereo.Update),
+            new Mod("full synchronization MSC", MscResync.Update),
             new Mod("summer fixes QA", MscSummerFixProbe.Update),
             new Mod("caisses outils MSC", MscToolCases.Update),
             new Mod("supports MSC", MscPlatforms.Update),

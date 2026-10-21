@@ -589,7 +589,7 @@ namespace MWCoop
 
         // Hote : invite arrive en jeu -> 20 s plus tard (ses objets sont releves), la pose de tout ce qui est au repos.
         static float resendAt;
-        public static void ScheduleSnapshot() { if (Session.IsHost) resendAt = Time.realtimeSinceStartup + 20f; }
+        public static void ScheduleSnapshot(bool immediate = false) { if (Session.IsHost) resendAt = Time.realtimeSinceStartup + (immediate ? .01f : 20f); }
 
         static bool ReliableBusy()
         {

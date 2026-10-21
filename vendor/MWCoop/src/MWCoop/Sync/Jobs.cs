@@ -195,6 +195,7 @@ namespace MWCoop
 
         public static void OnLevelLoaded()
         {
+            recoverySnapshots.Clear();
             jobs.Clear(); hooked.Clear(); reserved.Clear(); classified.Clear(); jobCars.Clear(); waitingJobs.Clear(); waitingSet.Clear();
             creators.Clear(); creatorsWaiting.Clear(); tagged.Clear(); newborn.Clear(); wells.Clear(); wellsWaiting.Clear();
             SewageHose.OnLevelLoaded();
@@ -623,7 +624,8 @@ namespace MWCoop
                 return;
             }
             if (j.Control) PlayerSync.ReachFor(who, j.F.transform);   // (son avatar appuie sur la commande)
-            if (j.Kind == K_IGNITION) { ApplyIgnition(j, who, key, state); return; }
+            bool recovery = prev == "(sync)" && !Session.IsHost && who == 0;
+            if (j.Kind == K_IGNITION && !recovery) { ApplyIgnition(j, who, key, state); return; }
             // Fendeuse arretee ici (mise en marche pas recue : arrivee en cours de buche) : seule la fin de la
             // buche est reprise (rend le declencheur), une etape rejouee sur l'automate inactif ne mene a rien.
             if (j.Kind == K_FEEDLOG && !j.F.gameObject.activeInHierarchy && state != "State 1")
@@ -634,7 +636,7 @@ namespace MWCoop
             // Deja fait ici a l'instant (la meme logique a tourne chez les deux, ex. le jour de paie) : pas une 2e fois.
             // Sauf la fendeuse : deux clics de suite (un par joueur) sont deux etapes.
             float done;
-            if (j.Kind != K_FEEDLOG && j.LocalRecent.TryGetValue(prev + "|" + ev + "|" + state, out done) && Time.realtimeSinceStartup - done < 10f)
+            if (!recovery && j.Kind != K_FEEDLOG && j.LocalRecent.TryGetValue(prev + "|" + ev + "|" + state, out done) && Time.realtimeSinceStartup - done < 10f)
             {
                 Log.Info("quete de #" + who + " : " + key + " -" + ev + "-> deja fait ici");
                 return;
@@ -643,7 +645,7 @@ namespace MWCoop
             // Deja dans l'etat d'arrivee (l'enchainement du message precedent l'y a mene) : ses actions ont tourne ici,
             // les variables relevees chez l'autre a l'ENTREE de cet etat (avant ses SetBoolValue...) les defairaient
             // (loquet du capot : Open inverse chez l'invite).
-            if (j.F.ActiveStateName != state)
+            if (recovery || j.F.ActiveStateName != state)
             {
                 foreach (var x in ints) { FsmInt t = v.FindFsmInt(x.Key); if (t != null) t.Value = x.Value; }
                 foreach (var x in floats) { FsmFloat t = v.FindFsmFloat(x.Key); if (t != null) t.Value = x.Value; }
@@ -657,6 +659,9 @@ namespace MWCoop
                     if (g != null || x.Value.Length == 0) t.Value = g;
                 }
             }
+            // A recovery is an absolute variable snapshot, never an instruction
+            // to repeat the current job (payment, spawn, ignition, mouse input).
+            if (recovery) return;
             // Plateau a bois : la buche comptee chez l'autre est detruite ici par son propre message (@parti) ;
             // l'objet que "Destroy Wood" detruirait ici (variable Log, d'un ancien passage) n'est pas le bon.
             if (j.Kind == K_LOGTRIGGER) { FsmGameObject lg = v.FindFsmGameObject("Log"); if (lg != null) lg.Value = null; }
@@ -691,6 +696,30 @@ namespace MWCoop
                 n++;
             }
             return n;
+        }
+
+        sealed class RecoverySnapshot { public Peer Peer; public List<Job> Jobs; public int Cursor; }
+        static readonly List<RecoverySnapshot> recoverySnapshots = new List<RecoverySnapshot>();
+        public static void QueueSnapshot(Peer peer)
+        {
+            recoverySnapshots.RemoveAll(x => x.Peer == peer);
+            recoverySnapshots.Add(new RecoverySnapshot { Peer = peer, Jobs = new List<Job>(jobs.Values) });
+        }
+        public static void PumpSnapshots()
+        {
+            if (recoverySnapshots.Count == 0 || !MscMaintenance.Available) return;
+            RecoverySnapshot snapshot = recoverySnapshots[0];
+            if (!snapshot.Peer.Accepted || !Session.T.Peers.Contains(snapshot.Peer)) { recoverySnapshots.RemoveAt(0); return; }
+            if (snapshot.Peer.waiting.Count > 192) return;
+            for (int i = 0; i < 8 && snapshot.Cursor < snapshot.Jobs.Count; i++)
+            {
+                Job j = snapshot.Jobs[snapshot.Cursor++];
+                if (j.F == null) continue;
+                var w = new NetWriter(Msg.Job).U8(0).Str(j.Key).Str("(sync)").Str("").Str(j.F.ActiveStateName);
+                WriteVars(j.F, w);
+                if (w.Length <= Net.Transport.MaxPayload - 40) Session.T.SendReliable(snapshot.Peer, w.ToArray());
+            }
+            if (snapshot.Cursor >= snapshot.Jobs.Count) recoverySnapshots.RemoveAt(0);
         }
 
         // Essais : comme un joueur qui actionne la commande : l'automate passe de 'prev' a 'state' par

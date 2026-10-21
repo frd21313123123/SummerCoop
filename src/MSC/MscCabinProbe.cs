@@ -199,10 +199,8 @@ namespace MWCoop
                 string volumePath = Recon.Path(body.transform) + "/RadioPivot/Radio/ButtonsRadio/RadioVolume";
                 PlayMakerFSM tuner = Game.FindFsm(tunerPath, "Knob"), volume = Game.FindFsm(volumePath, "Knob");
                 if (tuner == null || volume == null) throw new InvalidOperationException("Native radio controls missing");
-                tuner.FsmVariables.FindFsmFloat("Tune").Value = .091f;
-                Jobs.TestSend(tunerPath + "::Knob", "Get scroll", "QA", "Wait1");
-                volume.FsmVariables.FindFsmFloat("Volume").Value = .6f;
-                string result = Jobs.TestSend(volumePath + "::Knob", "Mouse off 2", "ON", "Check tune");
+                MscStereo.TestSet(tuner, .091f);
+                string result = MscStereo.TestSet(volume, .6f);
                 MscProbeFiles.WriteAllText(Path.Combine(channel, "radio-input-" + current + ".txt"), result
                     + ";Native=" + volume.ActiveStateName + ";Enabled=" + volume.enabled + ";Active=" + volume.gameObject.activeInHierarchy);
             }

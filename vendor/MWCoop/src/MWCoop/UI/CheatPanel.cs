@@ -16,7 +16,7 @@ namespace MWCoop
         static bool pressed;
         static bool pointerVisible = true;
         static string note; static float noteUntil; static bool noteBad;
-        internal static Rect MoneyButtonRect, ContentViewport;
+        internal static Rect MoneyButtonRect, SoberButtonRect, FleetariButtonRect, ContentViewport;
 
         public static void Update()
         {
@@ -65,8 +65,8 @@ namespace MWCoop
             float w = Mathf.Min(Style.Px(680), Screen.width - Style.Px(32));
             int perRow = 4, placeRows = (Cheats.Places.Length + perRow - 1) / perRow;
             float h = Style.Px(120) + (Session.Active ? Style.Px(30) + Mathf.Max(1, players.Count) * rowH : 0f) + Style.Px(30) + placeRows * (bh + gap) + Style.Px(30) + bh + gap + Style.Px(30) + 2 * (bh + gap) + Style.Px(60);
-            float contentHeight = h + 3 * (bh + gap);
-            h = Mathf.Min(h + 4 * (bh + gap), Screen.height - Style.Px(24));
+            float contentHeight = h + 5 * (bh + gap);
+            h = Mathf.Min(h + 6 * (bh + gap), Screen.height - Style.Px(24));
             float x = Mathf.Round((Screen.width - w) / 2), y = Mathf.Round((Screen.height - h) / 2 + (1f - k) * Style.Px(12));
             Style.Glass(new Rect(x, y, w, h), Style.Px(20));
             Style.Title(new Rect(x + pad, y + Style.Px(12), w - 2 * pad, Style.Px(40)), Lang.T("TRICHES", "CHEATS"), Style.White, TextAnchor.MiddleLeft, 26);
@@ -125,8 +125,16 @@ namespace MWCoop
             if (Button(new Rect(ix, cy, cureWidth, bh), Lang.R("Cure wasp sting"), false, e, ok)) Do("/curesting", Lang.R("Sting cured"));
             if (Button(new Rect(ix + cureWidth + gap, cy, cureWidth, bh), Lang.R("Clear blindness"), false, e, ok)) Do("/clearblindness", Lang.R("Vision restored"));
             cy += bh + gap;
+            Rect sober = new Rect(ix, cy, iw, bh);
+            SoberButtonRect = new Rect(viewport.x + sober.x - scroll.x, viewport.y + sober.y - scroll.y, iw, bh);
+            if (Button(sober, Lang.R("Clear drunkenness and hangover"), false, e, ok)) Do("/sober", Lang.R("You are sober now"));
+            cy += bh + gap;
             // monde
             Header(ix, ref cy, iw, Lang.T("MONDE (POUR TOUS)", "WORLD (FOR EVERYONE)"));
+            Rect fleetari = new Rect(ix, cy, iw, bh);
+            FleetariButtonRect = new Rect(viewport.x + fleetari.x - scroll.x, viewport.y + fleetari.y - scroll.y, iw, bh);
+            if (Button(fleetari, Lang.R("Finish Fleetari's order now"), false, e, ok)) Do("/fleetari", Lang.R("Fleetari order completion requested"));
+            cy += bh + gap;
             int[] hours = { 6, 8, 12, 16, 18, 22 };
             float hw = Mathf.Floor((iw - Style.Px(90) - (hours.Length - 1) * gap) / hours.Length);
             Style.Text(new Rect(ix, cy, Style.Px(90), bh), Lang.T("Heure", "Time"), 15, TextAnchor.MiddleLeft, Style.White, false);

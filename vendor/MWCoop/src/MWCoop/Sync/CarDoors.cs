@@ -88,6 +88,7 @@ namespace MWCoop
         static float nextScan = -1, nextAngle, lastUnknownScan = -100;
         static int gen = -1;   // VehicleSync.Generation au dernier releve
         static readonly List<KeyValuePair<float, Peer>> snapshots = new List<KeyValuePair<float, Peer>>();
+        static readonly HashSet<Peer> fullSnapshots = new HashSet<Peer>();
         static bool applying;
         sealed class Waiting { public string Key; public int Kind, Who; public float Until; }
         static readonly List<Waiting> waiting = new List<Waiting>();
@@ -118,6 +119,20 @@ namespace MWCoop
         }
 
         public static bool Tracks(PlayMakerFSM f) { return hooked.Contains(f); }
+        public static bool Owns(PlayMakerFSM f)
+        {
+            return f != null && f.FsmName == "Use" && (f.Fsm.GetState("Open door") != null && f.Fsm.GetState("Close door") != null
+                || f.Fsm.GetState("Open hood") != null && f.Fsm.GetState("Close hood") != null);
+        }
+
+        static string StableKey(string car, PlayMakerFSM f, string path, int ordinal)
+        {
+            // Database identity survives a first installation, removal and
+            // reinstallation. Discovery may happen at a different hierarchy
+            // on each peer while native Assembly is still completing.
+            string id = MscParts.IdOf(f.gameObject);
+            return car + (id.Length > 0 ? "/part:" + id + "/" + f.name : path) + "#" + ordinal;
+        }
 
         internal static void PartRemoving(GameObject part)
         {
@@ -138,7 +153,7 @@ namespace MWCoop
 
         public static void OnLevelLoaded()
         {
-            byKey.Clear(); hooked.Clear(); snapshots.Clear(); lockJoints.Clear(); plugWait.Clear();
+            byKey.Clear(); hooked.Clear(); snapshots.Clear(); fullSnapshots.Clear(); lockJoints.Clear(); plugWait.Clear();
             waiting.Clear();
             plColls = new Collider[0]; plCollsAt = -10f; plCc = null; ccWasOn = false; gen = -1;
             nextScan = PlayerSync.InGame ? Time.realtimeSinceStartup + 12f : -1;
@@ -172,8 +187,11 @@ namespace MWCoop
                     if (open == null) continue;
                     string rel = VehicleSync.RelPath(car.transform, f.transform);
                     int k; seen.TryGetValue(rel, out k); seen[rel] = k + 1;   // compte aussi les portieres deja suivies
-                    if (hooked.Contains(f) || !Replay.Claim(f, "portieres")) continue;
-                    var d = new Door { Key = carKey + rel + "#" + k, Fsm = f, Open = open, Grab = grab, Close = close, IsDoor = isDoor };
+                    if (hooked.Contains(f)) continue;
+                    if (!f.Fsm.Initialized || !f.Fsm.GetState(open).IsInitialized || !f.Fsm.GetState(close).IsInitialized)
+                    { nextScan = Mathf.Min(nextScan, Time.realtimeSinceStartup + .25f); continue; }
+                    if (!Replay.Claim(f, "portieres")) continue;
+                    var d = new Door { Key = StableKey(carKey, f, rel, k), Fsm = f, Open = open, Grab = grab, Close = close, IsDoor = isDoor };
                     d.Body = f.GetComponentInParent<Rigidbody>();
                     if (d.Body != null && d.Body.transform == car.transform) d.Body = null;
                     d.Hinge = d.Body != null ? d.Body.GetComponent<HingeJoint>() : null;
@@ -309,9 +327,16 @@ namespace MWCoop
             HingeJoint hinge = body == null ? null : body.GetComponent<HingeJoint>();
             Transform parent = body == null ? null : body.transform.parent;
             if (d.Body == body && d.Hinge == hinge && d.Parent == parent) return;
+            bool remounted = d.Body != body || d.Parent != parent;
             if (d.Held && d.Body != null) { d.Body.isKinematic = false; d.Held = false; }
             StopFollow(d);
             d.Body = body; d.Hinge = hinge; d.Parent = parent; d.RestSet = false; d.Colls = null;
+            if (remounted)
+            {
+                d.Owner = -1; d.Mine = false; d.PendingOwn = 0; d.Closing = false;
+                d.LockCheckUntil = 0; d.LockSpurious = false; d.PreLock = null;
+                DropLocks(d, "remontage"); d.Sent = false;
+            }
             d.State = OpenVar(d) ? DoorState.Open : DoorState.Closed;
             NoteRest(d);
         }
@@ -352,15 +377,19 @@ namespace MWCoop
                 if (now < snapshots[i].Key) continue;
                 Peer p = snapshots[i].Value;
                 snapshots.RemoveAt(i);
+                bool full = fullSnapshots.Remove(p);
                 if (!p.Accepted || !Session.T.Peers.Contains(p)) continue;
                 int n = 0;
                 foreach (Door d in byKey.Values)
-                    if (d.State != DoorState.Closed && d.Fsm != null)
+                    if ((full || d.State != DoorState.Closed) && d.Fsm != null && (d.PlugOn != null || d.Hinge != null))
                     {
                         // Ouverte sans main (deja ouverte au chargement, joueur parti) : l'hote la prend, sinon
                         // personne n'enverrait son angle au nouveau venu.
-                        if (d.Owner < 0) Take(d);
-                        Session.T.SendReliable(p, new NetWriter(Msg.CarDoor).U8(d.Owner >= 0 ? d.Owner : Session.LocalId).Str(d.Key).U8(K_OPEN).ToArray());
+                        if (d.State != DoorState.Closed && d.Owner < 0) Take(d);
+                        int owner = d.Owner >= 0 ? d.Owner : Session.LocalId;
+                        Session.T.SendReliable(p, new NetWriter(Msg.CarDoor).U8(owner).Str(d.Key).U8(d.State == DoorState.Closed ? K_CLOSED : K_OPEN).ToArray());
+                        if (full && d.State != DoorState.Closed && d.Hinge != null && d.RestSet)
+                            Session.T.SendReliable(p, new NetWriter(Msg.CarDoor).U8(owner).Str(d.Key).U8(K_ANGLE).F32(Angle(d)).ToArray());
                         n++;
                     }
                 Log.Info("portieres : " + n + " ouvertes envoyees a " + p);
@@ -411,7 +440,12 @@ namespace MWCoop
             }
         }
 
-        public static void ScheduleSnapshot(Peer p) { if (Session.IsHost) snapshots.Add(new KeyValuePair<float, Peer>(Time.realtimeSinceStartup + 20f, p)); }
+        public static void ScheduleSnapshot(Peer p, bool immediate = false)
+        {
+            if (!Session.IsHost) return;
+            if (immediate) { Scan(); fullSnapshots.Add(p); }
+            snapshots.Add(new KeyValuePair<float, Peer>(Time.realtimeSinceStartup + (immediate ? 0 : 20f), p));
+        }
 
         // Joueur parti : ses portieres ouvertes ne suivent plus personne ; l'hote les reprend.
         public static void PlayerLeft(int id)
@@ -659,6 +693,8 @@ namespace MWCoop
         // Evenement du joueur local (le jeu vient d'entrer dans l'etat accroche).
         static void Local(Door d, int kind)
         {
+            RefreshPhysics(d);
+            if (d.PlugOn == null && (d.Body == null || d.Hinge == null)) return;
             float now = Time.realtimeSinceStartup;
             Trace(d);
             if (kind == K_LOCK && d.LockSpurious) return;   // (a l'ouverture, l'angle peut se lire 359 degres et le jeu passe une fois par la ; LockEnter)

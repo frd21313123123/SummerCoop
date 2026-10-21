@@ -31,7 +31,7 @@ namespace MWCoop.Net
     // Session coop : l'hote fait autorite et relaie tout. [Coop] Mode=solo|hote|invite.
     public static class Session
     {
-        public const int NetVersion = 1050;   // MSC music catalogue, CD playback and shared comfort setting.
+        public const int NetVersion = 1051;   // Ordered stereo controls and in-session world recovery.
         static readonly HashSet<int> authenticated = new HashSet<int>();
         internal static bool AuthenticatedForSave(Peer peer) { return peer != null && peer.Accepted && authenticated.Contains(peer.Id); }
         public static Transport T;
@@ -291,6 +291,8 @@ namespace MWCoop.Net
                     case Msg.Radio: Radio.OnMessage(from, r); break;
                     case Msg.Music: MscMusic.OnMessage(from, r); break;
                     case Msg.Cd: MscCd.OnMessage(from, r); break;
+                    case Msg.Resync: MscResync.OnMessage(from, r); break;
+                    case Msg.Stereo: MscStereo.OnMessage(from, r); break;
                     case Msg.ModData: CoopApi.OnMessage(from, r); break;
                     case Msg.Knob: Knobs.OnMessage(from, r); break;
                     case Msg.Event: Events.OnMessage(from, r); break;

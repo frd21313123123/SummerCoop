@@ -7,7 +7,20 @@ namespace MWCoop
     {
         public static readonly Dictionary<string, string> Table = new Dictionary<string, string>
         {
+            { "Synchronize everything", "Синхронизировать всё" },
+            { "Request the host's world, FSMs, parts, doors and music again without reconnecting.", "Повторно получить от хоста мир, FSM, детали, двери и музыку без переподключения." },
+            { "Full synchronization requested", "Запрошена полная синхронизация" },
+            { "Synchronization is not ready yet.", "Синхронизация пока недоступна." },
             { "Cure wasp sting", "Вылечить укус осы" },
+            { "Clear drunkenness and hangover", "Убрать опьянение и похмелье" },
+            { "You are sober now", "Опьянение и похмелье сняты" },
+            { "Finish Fleetari's order now", "Мгновенно завершить заказ Флитари" },
+            { "Fleetari order completion requested", "Запрошено завершение заказа Флитари" },
+            { "Fleetari orders are not ready.", "Заказы Флитари ещё не готовы." },
+            { "There is no active Fleetari order.", "У Флитари нет активного заказа." },
+            { "Fleetari is already finishing this order.", "Флитари уже завершает этот заказ." },
+            { "/sober: clear drunkenness and hangover", "/sober: убрать опьянение и похмелье" },
+            { "/fleetari: finish the active service order", "/fleetari: мгновенно завершить текущий заказ Флитари" },
             { "Receiving host music: ", "Получение музыки хоста: " },
             { "Music synchronization failed: ", "Ошибка синхронизации музыки: " },
             { "Clear blindness", "Убрать ослепление" },

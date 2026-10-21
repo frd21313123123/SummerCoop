@@ -329,6 +329,7 @@ namespace MWCoop
             CarDoors.SoonScan();
             if (go != null && changedSet.Add(go)) changedRoots.Enqueue(go);
         }
+        public static void Resynchronize() { nextScan = nextPartSnapshot = nextBoltSnapshot = 0; }
         static void ScanStep()
         {
             while (MscMaintenance.Available)

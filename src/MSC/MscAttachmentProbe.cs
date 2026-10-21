@@ -123,10 +123,10 @@ namespace MWCoop
                 if (At(205, 5.5f)) TraceDoor("5.5");
                 if (At(206, 7)) TraceDoor("7");
                 if (elapsed >= 4.5f && elapsed < 7.8f && Session.IsHost) TightenDoor();
-                if (At(207, 8) && !Session.IsHost) CarDoors.TestOpen("SATSUMA", true, "door left");
+                if (At(207, 8) && !Session.IsHost) NativeDoor(true);
                 if (At(208, 10) && !Session.IsHost) CarDoors.TestState("SATSUMA", "Mouse off", "door left");
                 if (At(209, 12)) CheckDoor("focused-door-open", true);
-                if (At(210, 14) && !Session.IsHost) CarDoors.TestOpen("SATSUMA", false, "door left");
+                if (At(210, 14) && !Session.IsHost) NativeDoor(false);
                 if (At(211, 18)) CheckDoor("focused-door-close", false);
                 return;
             }
@@ -201,6 +201,11 @@ namespace MWCoop
             Record(phase, use != null && use.FsmVariables.FindFsmBool("Open").Value == open && hinge != null && hinge.connectedBody == car
                 && (open ? angle > 10 : angle < 2.5f) && part.GetComponents<FixedJoint>().Length <= 1,
                 CarDoors.StateOf("SATSUMA", "door left"));
+        }
+        static void NativeDoor(bool open)
+        {
+            PlayMakerFSM use = Game.FsmOn(MscParts.Find("mscdb:Database/DatabaseBody/Door_Left"), "Use");
+            Game.SetState(use, open ? "Open door" : "Sound");
         }
         static void TightenDoor()
         {

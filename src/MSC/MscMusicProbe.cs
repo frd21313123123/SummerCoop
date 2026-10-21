@@ -61,6 +61,19 @@ namespace MWCoop
         {
             if (At(0, t, 114))
             {
+                var controls = new System.Text.StringBuilder();
+                foreach (UnityEngine.Object value in Game.AllFsms())
+                {
+                    PlayMakerFSM f = value as PlayMakerFSM;
+                    if (f == null || f.hideFlags != HideFlags.None || !(f.FsmName == "Knob" || f.name == "CDPlayer" || f.name == "RadioCDSwitch" || f.name == "TrackChannelSwitch"
+                        || f.name == "Eject" || f.name == "trigger_disc" || f.name.StartsWith("cd(item", StringComparison.Ordinal))) continue;
+                    if (!f.Fsm.Initialized) f.Fsm.InitData();
+                    controls.AppendLine(Recon.Path(f.transform) + "::" + f.FsmName + " (" + f.ActiveStateName + ")");
+                    foreach (FsmFloat v in f.FsmVariables.FloatVariables) controls.AppendLine("FLOAT " + v.Name + "=" + v.Value);
+                    foreach (FsmBool v in f.FsmVariables.BoolVariables) controls.AppendLine("BOOL " + v.Name + "=" + v.Value);
+                    foreach (FsmState s in f.FsmStates) controls.AppendLine(Jobs.DumpActions(f, s.Name));
+                }
+                MscProbeFiles.WriteAllText(Path.Combine(channel, (Session.IsHost ? "host" : "guest") + "-native-stereo.txt"), controls.ToString());
                 device = Find("trigger_disc", "Assembly"); Awake(device.transform);
                 playback = Find("CDPlayer", "Update"); Awake(playback.transform);
                 cdAudio = playback.GetComponent<AudioSource>();
@@ -157,7 +170,17 @@ namespace MWCoop
             }
             if (At(93, t, 190) && Session.IsHost)
             { radioAudio.Stop(); if (powerKnobs.Count > 0) Game.SetState(powerKnobs[0], "Off 2"); else playback.SendEvent("STOP CD"); }
+            if (At(95, t, 192) && !Session.IsHost)
+            {
+                // Simulate a missed ejection: only the guest mounts a disc.
+                // Recovery must run the native sled/slot ejection itself.
+                Replay.Depth++;
+                try { device.FsmVariables.GetFsmGameObject("Part").Value = MscCd.DiscAt(3); Game.SetState(device, "Assemble"); }
+                finally { Replay.Depth--; }
+            }
             if (At(94, t, 193)) record("music-power-off", !radioAudio.isPlaying && !audioA.isPlaying && !audioB.isPlaying && !cdAudio.isPlaying, "Radio=" + radioAudio.isPlaying + ";CD=" + cdAudio.isPlaying);
+            if (At(96, t, 199)) record("cd-snapshot-eject-recovery", Location(MscCd.DiscAt(3)) == 0, "Location=" + Location(MscCd.DiscAt(3)) + ";Slot=" + device.ActiveStateName);
+            MscStereoProbe.Tick(t, record);
         }
     }
 }

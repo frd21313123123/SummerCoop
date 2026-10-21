@@ -198,17 +198,17 @@ namespace MWCoop
             nextScan = PlayerSync.InGame ? loadedAt + 16f : -1;
         }
 
-        public static void ScheduleSnapshot(Peer p)
+        public static void ScheduleSnapshot(Peer p, bool immediate = false)
         {
             if (p == null || !p.Accepted || Session.T == null) return;
             for (int i = snapshots.Count - 1; i >= 0; i--)
             {
                 if (!snapshots[i].Value.Accepted || !Session.T.Peers.Contains(snapshots[i].Value)) snapshots.RemoveAt(i);
-                else if (snapshots[i].Value == p) return;
+                else if (snapshots[i].Value == p) { if (immediate) snapshots[i] = new KeyValuePair<float, Peer>(Time.realtimeSinceStartup, p); return; }
             }
             for (int i = snapshotJobs.Count - 1; i >= 0; i--)
                 if (snapshotJobs[i].Peer == p || !snapshotJobs[i].Peer.Accepted || !Session.T.Peers.Contains(snapshotJobs[i].Peer)) snapshotJobs.RemoveAt(i);
-            snapshots.Add(new KeyValuePair<float, Peer>(Time.realtimeSinceStartup + 22f, p));
+            snapshots.Add(new KeyValuePair<float, Peer>(Time.realtimeSinceStartup + (immediate ? 0 : 22f), p));
         }
 
         // ---------------------------------------------------------------- choix des automates

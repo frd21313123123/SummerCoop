@@ -52,6 +52,16 @@ class MscAdapterTests
         try
         {
 #if !MWCOOP_NETWORK_ONLY
+            Test("stereo turns survive reordering and reject retransmissions in a bounded actor window", delegate {
+                var requests = new MWCoop.MscStereoRequests();
+                Assert(requests.Accept(1, 3) && requests.Accept(1, 1) && requests.Accept(1, 2), "Reordered wheel turns were lost");
+                Assert(!requests.Accept(1, 2) && !requests.Accept(1, 3), "Retransmission applied a turn twice");
+                Assert(requests.Accept(0, 2), "Concurrent host turn was lost");
+                Assert(!requests.Accept(-1, 1) && !requests.Accept(256, 1) && !requests.Accept(1, 0), "Invalid turn identity accepted");
+                Assert(requests.Accept(1, 300) && !requests.Accept(1, 40) && requests.Accept(1, 299), "Bounded replay window failed");
+                requests.ForgetActor(1);
+                Assert(requests.Accept(1, 1), "A reconnected player could no longer use stereo controls");
+            });
             Test("wallet transfer availability uses MSC cash without a bank and rejects unavailable recipients and invalid amounts", delegate {
                 var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static;
                 var cashField = typeof(MWCoop.Wallet).GetField("cash", flags);
@@ -95,6 +105,46 @@ class MscAdapterTests
                 byte[] extra = new byte[packet.Length + 1]; Array.Copy(packet, extra, packet.Length);
                 Reject(delegate { MWCoop.MscOrderMessage.Read(extra); });
                 expected.Time = float.NaN; Reject(delegate { MWCoop.MscOrderMessage.Read(expected.Pack()); });
+            });
+            Test("instant Fleetari work preserves the accepted service mask and seed in the existing packet", delegate {
+                var expected = new MWCoop.MscOrderMessage { Type = MWCoop.MscOrderMessage.Fleetari, Op = MWCoop.MscOrderMessage.Work,
+                    Active = true, Paid = true, Flags = 0x80000401UL, Seed = 516750, Revision = 10, Time = 5000, Gear = 4.11f };
+                var actual = MWCoop.MscOrderMessage.Read(expected.Pack());
+                Assert(actual.Paid && actual.Op == MWCoop.MscOrderMessage.Work && actual.Flags == expected.Flags && actual.Seed == expected.Seed,
+                    "Instant work lost its marker, selected services or deterministic result");
+                expected.Paid = false;
+                Assert(!MWCoop.MscOrderMessage.Read(expected.Pack()).Paid, "Normal work unexpectedly became instant");
+            });
+            Test("sobering clears native hangover motion and duration without changing unrelated player values", delegate {
+                var strength = new HutongGames.PlayMaker.FsmFloat(4) { Name = "HangoverStrenght" };
+                var decay = new HutongGames.PlayMaker.FsmFloat(1) { Name = "HangoverStrenghtMinus" };
+                var duration = new HutongGames.PlayMaker.FsmFloat(300) { Name = "TimeLeft" };
+                var x = new HutongGames.PlayMaker.FsmFloat(2) { Name = "X" };
+                var y = new HutongGames.PlayMaker.FsmFloat(3) { Name = "Y" };
+                var z = new HutongGames.PlayMaker.FsmFloat(4) { Name = "Z" };
+                var money = new HutongGames.PlayMaker.FsmFloat(1500) { Name = "PlayerMoney" };
+                var thirst = new HutongGames.PlayMaker.FsmFloat(20) { Name = "PlayerThirst" };
+                var variables = new HutongGames.PlayMaker.FsmVariables { FloatVariables = new[] { strength, decay, duration, x, y, z, money, thirst } };
+                MWCoop.MscComfort.ClearHangover(variables);
+                Assert(strength.Value == 0 && decay.Value == 0 && duration.Value == 0 && x.Value == 0 && y.Value == 0 && z.Value == 0,
+                    "Native hangover or its camera motion survived");
+                Assert(money.Value == 1500 && thirst.Value == 20, "Sobering changed cash or needs");
+                MWCoop.MscComfort.ClearHangover(new HutongGames.PlayMaker.FsmVariables());
+            });
+            Test("sobering removes cached camera rotation and distortion while preserving metabolism and drinking records", delegate {
+                var fish = new HutongGames.PlayMaker.FsmFloat(2) { Name = "FishX" };
+                var min = new HutongGames.PlayMaker.FsmFloat(-16) { Name = "DrunkXmin" };
+                var max = new HutongGames.PlayMaker.FsmFloat(16) { Name = "DrunkXmax" };
+                var metabolism = new HutongGames.PlayMaker.FsmFloat(.0053f) { Name = "Metabolism" };
+                var record = new HutongGames.PlayMaker.FsmFloat(4) { Name = "DrunkRecord" };
+                var current = new HutongGames.PlayMaker.FsmVector3 { Name = "V3CURRENT", Value = new UnityEngine.Vector3(4, 8, 2) };
+                var from = new HutongGames.PlayMaker.FsmVector3 { Name = "V3FROM", Value = new UnityEngine.Vector3(3, 7, 1) };
+                var to = new HutongGames.PlayMaker.FsmVector3 { Name = "V3TO", Value = new UnityEngine.Vector3(-4, -8, -2) };
+                var variables = new HutongGames.PlayMaker.FsmVariables { FloatVariables = new[] { fish, min, max, metabolism, record }, Vector3Variables = new[] { current, from, to } };
+                MWCoop.MscComfort.ClearDrunkMotion(variables);
+                Assert(fish.Value == 0 && min.Value == 0 && max.Value == 0, "Camera distortion or random rotation range survived");
+                Assert(current.Value.sqrMagnitude == 0 && from.Value.sqrMagnitude == 0 && to.Value.sqrMagnitude == 0, "Cached rotation survived");
+                Assert(metabolism.Value == .0053f && record.Value == 4, "Sobering changed normal alcohol processing or records");
             });
             Test("MSC checkout and extraction preserve both bag tables and native identities within one UDP packet", delegate {
                 var expected = new MWCoop.MscShopMessage { Op = MWCoop.MscShopMessage.Extract, Ticket = 9, Sequence = 4, Actor = 1,

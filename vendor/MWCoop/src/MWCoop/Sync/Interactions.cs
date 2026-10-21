@@ -203,7 +203,7 @@ namespace MWCoop
 
         // Arrivee d'un invite en cours de partie : l'hote lui envoie l'etat de tout ce qui est suivi.
         static readonly List<KeyValuePair<float, Peer>> snapshots = new List<KeyValuePair<float, Peer>>();
-        public static void ScheduleSnapshot(Peer p) { snapshots.Add(new KeyValuePair<float, Peer>(Time.realtimeSinceStartup + 12f, p)); }
+        public static void ScheduleSnapshot(Peer p, bool immediate = false) { if (immediate) Scan(); snapshots.Add(new KeyValuePair<float, Peer>(Time.realtimeSinceStartup + (immediate ? 0 : 12f), p)); }
 
         static void SendSnapshots()
         {

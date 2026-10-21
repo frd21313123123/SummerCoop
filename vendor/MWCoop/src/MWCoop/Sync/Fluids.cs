@@ -69,7 +69,7 @@ namespace MWCoop
         static readonly List<KeyValuePair<float, Peer>> snapshots = new List<KeyValuePair<float, Peer>>();
 
         // Hote : invite arrive en jeu -> 20 s plus tard (ses automates sont trouves), toutes les valeurs.
-        public static void ScheduleSnapshot(Peer p) { snapshots.Add(new KeyValuePair<float, Peer>(Time.realtimeSinceStartup + 20f, p)); }
+        public static void ScheduleSnapshot(Peer p, bool immediate = false) { snapshots.Add(new KeyValuePair<float, Peer>(Time.realtimeSinceStartup + (immediate ? 0 : 20f), p)); }
 
         static void SendSnapshots(float now)
         {

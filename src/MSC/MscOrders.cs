@@ -23,7 +23,7 @@ namespace MWCoop
         static MscOrderMessage repairOrder, catalogOrder;
         static int ticket, revision, applied, randomSeed;
         static float nextBind, nextSync, workUntil;
-        static bool bound, applying, posting, baseline;
+        static bool bound, applying, posting, baseline, instantWork;
         public static int SavedSequence { get; private set; }
         public static bool Unsaved { get { return revision > SavedSequence; } }
         public static bool Busy { get { return applying || Time.realtimeSinceStartup < workUntil; } }
@@ -49,7 +49,7 @@ namespace MWCoop
             int saved = !Session.IsHost && PlayerSync.InGame && baseline ? SavedSequence : 0;
             repair = brochure = catalog = timer = postbox = payment = null; services = null;
             repairOrder = catalogOrder = null; requests.Clear(); pending.Clear(); packageNames.Clear();
-            bound = applying = posting = baseline = false; revision = applied = SavedSequence = saved;
+            bound = applying = posting = baseline = instantWork = false; revision = applied = SavedSequence = saved;
             nextBind = nextSync = workUntil = 0; ticket = UnityEngine.Random.Range(1, 1000000) * 1000;
             if (!PlayerSync.InGame) incoming.Clear();
         }
@@ -81,8 +81,9 @@ namespace MWCoop
             foreach (UnityEngine.Object obj in Game.AllFsms()) {
                 var f = obj as PlayMakerFSM; if (f == null) continue;
                 string path = Recon.Path(f.transform);
-                if (path.StartsWith("REPAIRSHOP/Jobs/", StringComparison.Ordinal)) { f.Fsm.InitData(); Replay.Claim(f, Module); PatchRandom(f, path); }
+                if (path.StartsWith("REPAIRSHOP/Jobs/", StringComparison.Ordinal)) { f.Fsm.InitData(); Replay.Claim(f, Module); PatchRandom(f, path); PatchWaits(f, false); }
             }
+            PatchWaits(repair, true);
             Gate(repair, "Distance player"); Gate(repair, "Wait day"); Gate(timer, "State 1");
             Log.Info("MSC orders bound: Fleetari services=" + services.Length + ";catalog slots=" + catalogOrder.Items.Length);
             return true;
@@ -90,7 +91,60 @@ namespace MWCoop
         sealed class OrderHook : ModHook
         {
             public int Kind; public override string Module { get { return MscOrders.Module; } }
-            public override void OnEnter() { try { if (!applying && Session.Active) Local(Kind); } catch (Exception e) { Replay.HookError(e); } Finish(); }
+            public override void OnEnter() { try { if (!applying && (Session.Active || instantWork)) Local(Kind); } catch (Exception e) { Replay.HookError(e); } Finish(); }
+        }
+        public static string FinishFleetari()
+        {
+            if (!PlayerSync.InGame) return Lang.R("Load the game first.");
+            if (!bound) {
+                if (Session.Active || !Bind()) return Lang.R("Fleetari orders are not ready.");
+                bound = true;
+            }
+            if (!Session.Active) repairOrder = Capture(MscOrderMessage.Fleetari);
+            if (repairOrder == null || !repairOrder.Active) return Lang.R("There is no active Fleetari order.");
+            // The guest's command is announced to the host through the existing
+            // cheat channel. Only the host starts and publishes the native job.
+            if (Session.Active && !Session.IsHost) return null;
+            if (instantWork || repair.ActiveStateName == "Work" || repair.ActiveStateName == "Reset job" || repair.ActiveStateName == "Reset order")
+                return Lang.R("Fleetari is already finishing this order.");
+            instantWork = true;
+            Set(repairOrder);
+            repair.FsmVariables.GetFsmFloat("_OrderTime").Value = 0;
+            Game.SetState(repair, "Work");
+            return null;
+        }
+        sealed class FleetariWait : FsmStateAction
+        {
+            public Wait Native; public bool Order;
+            bool fast; int frame;
+            public override void OnEnter()
+            {
+                fast = instantWork; frame = Time.frameCount;
+                if (!fast) Native.OnEnter();
+                else if (!Order) Complete();
+            }
+            void Complete() { Finish(); Fsm.Event(Native.finishEvent); }
+            public override void OnUpdate()
+            {
+                if (!fast) Native.OnUpdate();
+                // Newly activated native job FSMs must get their Start/Update
+                // before the order clears their selected services.
+                else if (Order && Time.frameCount > frame + 2) Complete();
+            }
+            public override void OnExit() { if (!fast) Native.OnExit(); }
+        }
+        static void PatchWaits(PlayMakerFSM f, bool order)
+        {
+            foreach (FsmState state in f.Fsm.States) {
+                if (order && state.Name != "Work") continue;
+                var actions = new List<FsmStateAction>(state.Actions);
+                for (int i = 0; i < actions.Count; i++) {
+                    var wait = actions[i] as Wait; if (wait == null || wait.finishEvent == null) continue;
+                    wait.Init(state);
+                    var wrapper = new FleetariWait { Native = wait, Order = order }; wrapper.Init(state); actions[i] = wrapper;
+                }
+                state.Actions = actions.ToArray();
+            }
         }
         static void Hook(PlayMakerFSM f, string name, int kind, bool first)
         {
@@ -159,13 +213,18 @@ namespace MWCoop
         static void Local(int kind)
         {
             if (!bound) return;
+            if (kind == 2 && instantWork) { instantWork = false; workUntil = 0; }
             if (kind == 0) {
                 var m = Capture(MscOrderMessage.Fleetari); m.Cost = brochure.FsmVariables.GetFsmFloat("Price").Value; m.Op = MscOrderMessage.Submit;
                 Set(repairOrder); Submit(m);
-            } else if (kind == 1 && Session.IsHost) {
+            } else if (kind == 1 && (!Session.Active || Session.IsHost)) {
                 Set(repairOrder); randomSeed = repairOrder.Seed; workUntil = Time.realtimeSinceStartup + 8;
-                var m = Capture(MscOrderMessage.Fleetari); m.Seed = randomSeed; Publish(m, MscOrderMessage.Work);
-            } else if (kind == 2 && Session.IsHost) { repairOrder = Capture(MscOrderMessage.Fleetari); Publish(repairOrder, MscOrderMessage.Done); }
+                var m = Capture(MscOrderMessage.Fleetari); m.Seed = randomSeed;
+                // Paid is only used by catalogue orders. Its existing wire slot
+                // marks instant Fleetari Work without changing packet layout.
+                m.Paid = instantWork;
+                if (Session.Active) Publish(m, MscOrderMessage.Work);
+            } else if (kind == 2 && (!Session.Active || Session.IsHost)) { repairOrder = Capture(MscOrderMessage.Fleetari); if (Session.Active) Publish(repairOrder, MscOrderMessage.Done); }
             else if (kind == 3) posting = true;
             else if (kind == 4 && posting) {
                 posting = false; var m = Capture(MscOrderMessage.Catalog); m.Active = true; m.Op = MscOrderMessage.Submit;
@@ -223,7 +282,7 @@ namespace MWCoop
                         repair.FsmVariables.GetFsmBool("_Order").Value = m.Active;
                         repair.FsmVariables.GetFsmFloat("_OrderTime").Value = m.Time;
                     } else Set(m);
-                    if (op == MscOrderMessage.Work) { workUntil = Time.realtimeSinceStartup + 8; Game.SetState(repair, "Work"); }
+                    if (op == MscOrderMessage.Work) { instantWork = m.Paid; workUntil = Time.realtimeSinceStartup + 8; Game.SetState(repair, "Work"); }
                     else if (op == MscOrderMessage.Commit) Game.SetState(repair, "Distance player");
                 } else {
                     // The host can finish its native package loop a frame
@@ -262,6 +321,9 @@ namespace MWCoop
             if (!PlayerSync.InGame || !Session.Active || Time.timeSinceLevelLoad < 3) return;
             if (!bound) { if (Time.realtimeSinceStartup < nextBind) return; nextBind = Time.realtimeSinceStartup + 2; bound = Bind(); if (!bound) return; }
             while (incoming.Count > 0) {
+                // A fast host can send Done before a slower guest has started
+                // its job FSMs. Preserve the service mask until local cleanup.
+                if (instantWork) break;
                 var m = incoming.Dequeue();
                 if (Session.IsHost) Accept(m);
                 else if (m.Op == MscOrderMessage.Reject) Refund(m);

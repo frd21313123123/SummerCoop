@@ -55,5 +55,45 @@ namespace MWCoop
             }
             return null;
         }
+        public static string Sober()
+        {
+            if (!PlayerSync.InGame) return Lang.R("Load the game first.");
+            Transform player = Game.PlayerT;
+            if (player == null) return Lang.R("Camera effects are not ready.");
+            foreach (string name in new[] { "PlayerDrunk", "PlayerDrunkAdjusted" })
+                Game.SetGlobalFloat(name, 0);
+            foreach (PlayMakerFSM f in player.GetComponentsInChildren<PlayMakerFSM>(true)) {
+                if (f.FsmName == "Hangover") {
+                    ClearHangover(f.FsmVariables);
+                    Game.SetState(f, "State 1");
+                    f.transform.localPosition = Vector3.zero;
+                } else if (f.FsmName == "Drunk Mode") {
+                    ClearDrunkMotion(f.FsmVariables);
+                    Game.SetState(f, "Update drunk");
+                    f.transform.localRotation = Quaternion.identity;
+                }
+            }
+            return null;
+        }
+        public static void ClearDrunkMotion(FsmVariables variables)
+        {
+            foreach (string name in new[] { "DrunkCurrent", "DrunkXmin", "DrunkXmax", "DrunkYmin", "DrunkYmax", "DrunkZmin", "DrunkZmax", "FishX", "X", "Y", "Z" }) {
+                FsmFloat value = variables.FindFsmFloat(name);
+                if (value != null) value.Value = 0;
+            }
+            foreach (string name in new[] { "V3CURRENT", "V3FROM", "V3TO" }) {
+                FsmVector3 value = variables.FindFsmVector3(name);
+                if (value != null) value.Value = Vector3.zero;
+            }
+        }
+        public static void ClearHangover(FsmVariables variables)
+        {
+            // These misspellings are the native MSC variable names.
+            foreach (string name in new[] { "HangoverStrenght", "HangoverStrenghtMinus", "TimeLeft", "X", "Y", "Z" })
+            {
+                FsmFloat value = variables.FindFsmFloat(name);
+                if (value != null) value.Value = 0;
+            }
+        }
     }
 }

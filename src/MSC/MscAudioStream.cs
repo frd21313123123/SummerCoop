@@ -10,12 +10,14 @@ namespace MWCoop
         readonly WWW request;
         public readonly string Key;
         AudioClip clip;
+        AudioSource attached;
         bool failed;
         public AudioClip Clip { get { return clip; } }
         public MscAudioStream(string path, string key) { Key = key; request = new WWW(new Uri(path).AbsoluteUri); }
         public void Apply(AudioSource source, bool playing, float time)
         {
             if (source == null || failed) return;
+            attached = source;
             if (clip == null && request.isDone)
             {
                 if (!string.IsNullOrEmpty(request.error)) { failed = true; Log.Warn("MSC audio: " + request.error); return; }
@@ -39,6 +41,8 @@ namespace MWCoop
         }
         public void Dispose()
         {
+            if (attached != null && attached.clip == clip) { attached.Stop(); attached.clip = null; }
+            attached = null;
             if (clip != null) { MscMusic.UnbindClip(clip); UnityEngine.Object.Destroy(clip); clip = null; }
             request.Dispose();
         }

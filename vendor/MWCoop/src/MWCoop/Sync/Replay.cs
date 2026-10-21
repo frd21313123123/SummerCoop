@@ -30,6 +30,8 @@ namespace MWCoop
         public static bool Claim(PlayMakerFSM f, string module)
         {
             if (module != "msc-cd" && MscCd.Owns(f)) return false;
+            if (module != "msc-stereo" && MscStereo.Owns(f)) return false;
+            if (module != "portieres" && CarDoors.Owns(f)) return false;
             // MSC discovery is sliced. A generic scanner must not win an
             // assembly/removal/bolt FSM before MscParts reaches its slice.
             if (module != "msc-parts" && MscParts.Owns(f)) return false;
@@ -50,6 +52,8 @@ namespace MWCoop
         public static bool ClaimedByOther(PlayMakerFSM f, string module)
         {
             if (module != "msc-cd" && MscCd.Owns(f)) return true;
+            if (module != "msc-stereo" && MscStereo.Owns(f)) return true;
+            if (module != "portieres" && CarDoors.Owns(f)) return true;
             if (module != "msc-parts" && MscParts.Owns(f)) return true;
             if (module != "msc-fleetari" && MscFleetari.Owns(f)) return true;
             string o;
