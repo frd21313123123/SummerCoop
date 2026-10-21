@@ -6,7 +6,7 @@ namespace MWCoop
 {
     // Tout ce qui bouge ou s'allume dans les vehicules, vu par tous : aiguilles du tableau de bord,
     // voyants, feux, clignotants, vitres, essuie-glaces, frein a main, leviers, volant, pedales,
-    // ceintures, pare-soleil, retroviseurs, lecteur CD, givre... Pour chaque voiture, on retient les
+    // ceintures, pare-soleil, retroviseurs, givre... Pour chaque voiture, on retient les
     // objets dont le nom l'indique ; celui qui fait autorite sur sa physique envoie 10 fois
     // par seconde ce qui a change : pose locale (objets qui bougent) ou visibilite (objets qui
     // s'allument). Chez les autres, les valeurs recues sont reappliquees apres la logique du jeu
@@ -83,7 +83,7 @@ namespace MWCoop
                 var seen = new Dictionary<string, int>();
                 foreach (Transform t in rb.GetComponentsInChildren<Transform>(true))
                 {
-                    if (t == rb.transform || MscVehicleControls.PlayerObject(t) || t.GetComponent<Rigidbody>() != null) continue;
+                    if (t == rb.transform || MscVehicleControls.PlayerObject(t) || MscStereoControls.OwnsVisual(t) || t.GetComponent<Rigidbody>() != null) continue;
                     string n = t.name.ToLowerInvariant();
                     if (Has(n, SkipWords)) continue;
                     bool pose = Has(n, PoseWords), show = Has(n, ShowWords) || ShowNames.Contains(n) || t.GetComponent<Light>() != null;   // toute lampe
@@ -141,7 +141,7 @@ namespace MWCoop
                 NetWriter w = null;
                 foreach (Item it in c.Items)
                 {
-                    if (it.T == null) continue;
+                    if (it.T == null || MscStereoControls.OwnsVisual(it.T)) continue;
                     // A newly authoritative car immediately resumes its native
                     // visuals, rather than holding the previous owner's pose.
                     if (it.Held) { it.Held = false; it.Shown = false; }
@@ -177,6 +177,9 @@ namespace MWCoop
                 foreach (Item it in c.Items)
                 {
                     if (!it.Held || it.T == null) continue;
+                    // A device may have been installed/reparented since Scan.
+                    // Its own accepted commands must also beat held packets.
+                    if (MscStereoControls.OwnsVisual(it.T)) { it.Held = it.Shown = false; continue; }
                     if (!driven && now - it.HeldAt > 3f) { it.Held = false; it.Shown = false; it.Active = it.T.gameObject.activeSelf; it.Pos = it.T.localPosition; it.Rot = it.T.localRotation; continue; }
                     if (it.Pose)
                     {
@@ -237,7 +240,7 @@ namespace MWCoop
                 if ((fl & 1) != 0) { pos = r.Vec(); rot = r.Quat(); }
                 if (relay != null) { relay.Str(key).U8(fl); if ((fl & 1) != 0) relay.Vec(pos).Quat(rot); }
                 Item it;
-                if (c == null || !c.ByKey.TryGetValue(key, out it) || it.T == null || MscVehicleControls.PlayerObject(it.T)) continue;
+                if (c == null || !c.ByKey.TryGetValue(key, out it) || it.T == null || MscVehicleControls.PlayerObject(it.T) || MscStereoControls.OwnsVisual(it.T)) continue;
                 it.Held = true; it.HeldAt = now;
                 if ((fl & 1) != 0) { it.HeldPos = pos; it.HeldRot = rot; }
                 if ((fl & 2) != 0) { it.HeldShow = true; it.HeldActive = (fl & 4) != 0; }

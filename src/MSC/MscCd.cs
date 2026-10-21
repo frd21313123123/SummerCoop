@@ -119,6 +119,7 @@ namespace MWCoop
                 if (known.Contains(f) || !Owns(f) || f.FsmName == "Player") continue;
                 known.Add(f);
                 if (!f.Fsm.Initialized) f.Fsm.InitData();
+                if (DeviceRoot(f.transform) != null) MscStereoControls.Prepare(f);
                 var node = new Node { Fsm = f, Key = Key(f), Back = f.FsmName == "Assembly" ? "Wait for assembly" : f.FsmName == "Removal" ? "Mouse off" : "Wait player" };
                 foreach (FsmState state in f.FsmStates) if (ActionState(f, state.Name))
                 { node.Actions.Add(state.Name); FireTools.Insert(f, state, new Hook { Node = node }, false); }

@@ -66,12 +66,14 @@ namespace MWCoop
             "/tp <joueur> : aller à un joueur", "/amener <joueur> : faire venir un joueur", "/lieu <nom> : maison, pub, ville, port, garage, inspection, decharge, danse, cabane, chalet",
             "/argent <montant> : du liquide pour soi", "/soin : faim, soif, fatigue, stress, vessie, saleté à zéro", "/liberer : plus recherché, sorti de prison",
             "/heure <0,2,...,24> : l'heure de tous", "/pluie oui|non : pluie (ou neige) pour tous",
-            "/sober : enlever l'ivresse et la gueule de bois", "/fleetari : terminer la commande en cours" };
+            "/sober : enlever l'ivresse et la gueule de bois", "/fleetari : terminer la commande en cours",
+            "/parcels : recevoir immediatement la commande postale" };
         static readonly string[] HelpEn = {
             "/tp <player>: go to a player", "/bring <player>: bring a player to you", "/place <name>: home, pub, town, harbor, garage, inspection, landfill, dance, cottage, cabin",
             "/money <amount>: cash for yourself", "/heal: hunger, thirst, fatigue, stress, bladder, dirt to zero", "/free: no longer wanted, out of jail",
             "/time <0,2,...,24>: everyone's time of day", "/rain on|off: rain (or snow) for everyone",
-            "/sober: clear drunkenness and hangover", "/fleetari: finish the active service order" };
+            "/sober: clear drunkenness and hangover", "/fleetari: finish the active service order",
+            "/parcels: receive the mailed catalogue order now" };
 
         // Commandes anglaises -> les noms d'ici.
         static string Canon(string c)
@@ -159,6 +161,7 @@ namespace MWCoop
                 case "clearblindness": return MscComfort.Cure(false);
                 case "sober": return MscComfort.Sober();
                 case "fleetari": return MscOrders.FinishFleetari();
+                case "parcels": return MscOrders.ReceiveParcels();
                 case "wasphome":
                 {
                     bool? on = OnOff(arg);
@@ -201,6 +204,10 @@ namespace MWCoop
             if (Session.IsHost && !Allowed) { Log.Warn("triches : " + name + " : " + line + " refusee (coupees ici)"); return; }
             if (Session.IsHost && c == "fleetari") {
                 string error = MscOrders.FinishFleetari();
+                if (error != null) Say(error);
+            }
+            if (Session.IsHost && c == "parcels") {
+                string error = MscOrders.ReceiveParcels();
                 if (error != null) Say(error);
             }
             if (Session.IsHost && c == "wasphome") { bool? on = OnOff(arg); if (on != null) { MscComfort.SetHouseWasp(on.Value); nextAnnounce = 0; Update(); } }

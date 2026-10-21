@@ -708,6 +708,19 @@ namespace MWCoop
                     if (cars[driving].Motion != null) cars[driving].Motion.Clear();
                 }
                 LocalDriving = driving;
+                if (driving >= 0 && cars[driving].Replica != null)
+                {
+                    Car c = cars[driving];
+                    // A parked native/LOD state can be kinematic when remote
+                    // ownership begins during a stop. It is not the state of
+                    // a car with a local driver. Release every mod-held body
+                    // before the next physics step, including closed doors.
+                    SetKinematic(c, false);
+                    c.Replica.End(c.Vel, c.AngVel);
+                    CarDoors.ReleaseCopy(c.T);
+                    c.Body.isKinematic = false;
+                    c.Body.WakeUp();
+                }
             }
             if (LocalDriving >= 0 && now >= nextSeatCheck) { nextSeatCheck = now + 0.5f; SeatGuard(cars[LocalDriving]); }
             // Moteur demarre ici sans etre au volant (cle tournee par un passager, ou de l'exterieur) : personne ne la
@@ -1258,7 +1271,7 @@ namespace MWCoop
                 if (c.Motion != null) c.Motion.Clear();
                 if (c.Replica != null) c.Replica.End(c.Vel, c.AngVel);
                 if (c.JointsWas != null) { c.JointsLater = c.JointsWas; c.JointsWas = null; }
-                c.Body.isKinematic = c.WasKinematic;
+                c.Body.isKinematic = c.Index != LocalDriving && c.WasKinematic;
                 if (!c.Body.isKinematic)
                 {
                     c.Body.velocity = c.Vel; c.Body.angularVelocity = c.AngVel;

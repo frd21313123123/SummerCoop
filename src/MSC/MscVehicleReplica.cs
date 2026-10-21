@@ -34,6 +34,10 @@ namespace MWCoop
             if (body == null || body == car || !body.gameObject.activeInHierarchy || !body.transform.IsChildOf(car.transform)
                 || MscVehicleControls.PlayerObject(body.transform) || MscBoltPositions.IsFastenerBody(body)
                 || body.GetComponent<Wheel>() != null || !NativeAssembly.Installed(body.gameObject)) return false;
+            // Removal/assembly may briefly replace a hinge with a fixed latch.
+            // CarDoors owns these bodies even while that hinge is absent.
+            foreach (PlayMakerFSM f in body.GetComponents<PlayMakerFSM>())
+                if (CarDoors.Owns(f)) return false;
             foreach (Joint joint in body.GetComponents<Joint>())
                 if (!(joint is FixedJoint) || joint.connectedBody == null
                     || joint.connectedBody != car && !joint.connectedBody.transform.IsChildOf(car.transform)) return false;

@@ -58,6 +58,38 @@ namespace MWCoop
         static int reversals;
         static float fixedStageStart, phaseAtStageStart;
         static readonly HashSet<int> actions = new HashSet<int>();
+        static bool Recovery { get { return MscRuntime.Argument("--summercoop-test-cabin-recovery") == "yes"; } }
+        static void RecoverableStop(string channel, int current, float t)
+        {
+            if (!Recovery || !Session.IsHost || car != "SATSUMA") return;
+            if (current == 0 && t >= 29 && actions.Add(90))
+            {
+                // Reproduce a native parked value captured while this peer is
+                // a copy. The release must not strand the returning driver.
+                var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static;
+                var cars = (System.Collections.IEnumerable)typeof(VehicleSync).GetField("cars", flags).GetValue(null);
+                bool injected = false;
+                foreach (object c in cars)
+                    if (c.GetType().GetField("Body").GetValue(c) == (object)body)
+                    {
+                        injected = (bool)c.GetType().GetField("Kinematic").GetValue(c);
+                        c.GetType().GetField("WasKinematic").SetValue(c, true);
+                    }
+                MscProbeFiles.WriteAllText(Path.Combine(channel, "recovery-injected.txt"), "Pass=" + injected);
+            }
+            if (current != 1) return;
+            if (t >= 34 && actions.Add(91))
+            {
+                body.isKinematic = true;
+                VehicleSync.TestEnter(car, false);
+            }
+            if (t >= 35 && t < 37 && VehicleSync.LocalDrivingRoot != body.transform)
+                VehicleSync.TestEnter(car, true);
+            if (t >= 37 && actions.Add(92))
+                MscProbeFiles.WriteAllText(Path.Combine(channel, "recovery-reentry.txt"), "Pass="
+                    + (VehicleSync.LocalDrivingRoot == body.transform && !body.isKinematic)
+                    + ";Kinematic=" + body.isKinematic + ";Driver=" + VehicleSync.LocalDrivingKey);
+        }
         public static void Update()
         {
             string channel = MscRuntime.Argument("--summercoop-test-cabin-channel");
@@ -113,6 +145,10 @@ namespace MWCoop
             string start = Path.Combine(channel, "start.txt");
             if (clock == 0)
             {
+                string ready = Path.Combine(channel, "ready-" + Session.LocalId + ".txt");
+                if (!File.Exists(ready)) MscProbeFiles.WriteAllText(ready, "ready");
+                foreach (PlayerInfo peer in Session.Players.Values)
+                    if (peer.Level != 1 || !File.Exists(Path.Combine(channel, "ready-" + peer.Id + ".txt"))) return;
                 if (Session.IsHost && !File.Exists(start))
                 {
                     if (!road) { body.position += Vector3.up * 2f; if (car == "SATSUMA") PlaceBodies(Vector3.zero); }
@@ -160,8 +196,6 @@ namespace MWCoop
             // Artificial constraints/placement are not crash-physics evidence.
             // Keep the native head-impact detector out of this component test.
             if (!road) foreach (var force in fixtureHeadForces) if (force.Key != null) force.Key.enabled = false;
-            if (car == "SATSUMA" && !road && Session.LocalId == driver && VehicleSync.LocalDrivingRoot == body.transform)
-                body.isKinematic = false; // The component source has prescribed motion even if native LOD left it parked.
             if (road)
             {
                 bool driveHere = Session.LocalId == driver && VehicleSync.LocalDrivingRoot == body.transform;
@@ -251,7 +285,8 @@ namespace MWCoop
                 MscProbeFiles.WriteAllText(Path.Combine(channel, "motion-" + current + "-" + Session.LocalId + ".txt"), result);
                 if (Session.LocalId == passenger) Seats.TestLeave();
             }
-            if (t >= 32 && Session.LocalId == driver && VehicleSync.LocalDriving >= 0) VehicleSync.ExitLocal();
+            if (t >= 32 && (!Recovery || current != 1 || t < 34) && Session.LocalId == driver && VehicleSync.LocalDriving >= 0) VehicleSync.ExitLocal();
+            RecoverableStop(channel, current, t);
         }
 
         // The assembled car's moving joints can push even an airborne chassis

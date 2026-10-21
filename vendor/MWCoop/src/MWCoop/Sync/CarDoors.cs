@@ -495,6 +495,22 @@ namespace MWCoop
 
         static int holdLogs;
 
+        internal static void ReleaseCopy(Transform car)
+        {
+            foreach (Door d in byKey.Values)
+                if (d.Held && d.Body != null && d.Body.transform.IsChildOf(car))
+                {
+                    d.Held = false; d.Body.isKinematic = false;
+                    Rigidbody chassis = car.GetComponent<Rigidbody>();
+                    if (chassis != null)
+                    {
+                        d.Body.velocity = chassis.GetPointVelocity(d.Body.worldCenterOfMass);
+                        d.Body.angularVelocity = chassis.angularVelocity;
+                    }
+                    d.Body.WakeUp();
+                }
+        }
+
         // Menee vers TargetAngle : sa vitesse autour de l'axe de la charniere (par rapport a la voiture) est
         // corrigee a chaque image, proportionnelle a l'ecart et bornee ; le joueur local ne la bloque pas.
         const float ServoGain = 12f, ServoMax = 360f;   // (1/s, degres/s)

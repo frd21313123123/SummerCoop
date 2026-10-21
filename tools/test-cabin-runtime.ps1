@@ -1,5 +1,5 @@
 param([Parameter(Mandatory=$true)][ValidatePattern('^[a-zA-Z0-9_-]+$')][string]$Run, [ValidateRange(2,8)][int]$Players = 3,
-    [ValidateSet('HAYOSIKO','SATSUMA')][string]$Vehicle = 'HAYOSIKO', [switch]$Road)
+    [ValidateSet('HAYOSIKO','SATSUMA')][string]$Vehicle = 'HAYOSIKO', [switch]$Road, [switch]$Recovery)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $channel = Join-Path $root ('.local/' + $Run + '-cabin')
@@ -22,6 +22,13 @@ foreach ($stage in @(0,1)) {
             if ($Road -and $result -notmatch ';Fixture=native engine and road physics;') { throw ('Road proof required: ' + $path) }
             Write-Output ('PASS ' + $kind + '/' + $stage + '/' + $player + ': ' + $result.Trim())
         }
+    }
+}
+if ($Recovery) {
+    foreach ($name in @('recovery-injected','recovery-reentry')) {
+        $path = Join-Path $channel ($name + '.txt')
+        if (!(Test-Path -LiteralPath $path) -or (Get-Content -LiteralPath $path -Raw) -notmatch '^Pass=True(?:;|$)') { throw ('Failed recovery check: ' + $path) }
+        Write-Output ('PASS ' + $name)
     }
 }
 Write-Output 'ALL CABIN CHECKS PASSED'

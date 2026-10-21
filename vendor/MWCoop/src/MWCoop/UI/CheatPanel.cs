@@ -16,7 +16,7 @@ namespace MWCoop
         static bool pressed;
         static bool pointerVisible = true;
         static string note; static float noteUntil; static bool noteBad;
-        internal static Rect MoneyButtonRect, SoberButtonRect, FleetariButtonRect, ContentViewport;
+        internal static Rect MoneyButtonRect, SoberButtonRect, FleetariButtonRect, ParcelsButtonRect, ContentViewport;
 
         public static void Update()
         {
@@ -65,7 +65,7 @@ namespace MWCoop
             float w = Mathf.Min(Style.Px(680), Screen.width - Style.Px(32));
             int perRow = 4, placeRows = (Cheats.Places.Length + perRow - 1) / perRow;
             float h = Style.Px(120) + (Session.Active ? Style.Px(30) + Mathf.Max(1, players.Count) * rowH : 0f) + Style.Px(30) + placeRows * (bh + gap) + Style.Px(30) + bh + gap + Style.Px(30) + 2 * (bh + gap) + Style.Px(60);
-            float contentHeight = h + 5 * (bh + gap);
+            float contentHeight = h + 6 * (bh + gap);
             h = Mathf.Min(h + 6 * (bh + gap), Screen.height - Style.Px(24));
             float x = Mathf.Round((Screen.width - w) / 2), y = Mathf.Round((Screen.height - h) / 2 + (1f - k) * Style.Px(12));
             Style.Glass(new Rect(x, y, w, h), Style.Px(20));
@@ -134,6 +134,10 @@ namespace MWCoop
             Rect fleetari = new Rect(ix, cy, iw, bh);
             FleetariButtonRect = new Rect(viewport.x + fleetari.x - scroll.x, viewport.y + fleetari.y - scroll.y, iw, bh);
             if (Button(fleetari, Lang.R("Finish Fleetari's order now"), false, e, ok)) Do("/fleetari", Lang.R("Fleetari order completion requested"));
+            cy += bh + gap;
+            Rect parcels = new Rect(ix, cy, iw, bh);
+            ParcelsButtonRect = new Rect(viewport.x + parcels.x - scroll.x, viewport.y + parcels.y - scroll.y, iw, bh);
+            if (Button(parcels, Lang.R("Receive parcels now"), false, e, ok)) Do("/parcels", Lang.R("Parcels delivered to the post office"));
             cy += bh + gap;
             int[] hours = { 6, 8, 12, 16, 18, 22 };
             float hw = Mathf.Floor((iw - Style.Px(90) - (hours.Length - 1) * gap) / hours.Length);

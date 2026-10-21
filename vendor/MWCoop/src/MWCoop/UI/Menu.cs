@@ -509,6 +509,11 @@ namespace MWCoop
                 Para(Lang.T("Autoriser les triches", "Allow cheats") + ": " + Lang.T(allowed ? "OUI" : "NON", allowed ? "ON" : "OFF"), allowed ? Style.Good : Style.Warn);
             Para(Lang.T("Seul l'hôte peut changer ce réglage. Chaque triche est annoncée dans le tchat.", "Only the host can change this setting. Every cheat is announced in chat."), Style.Dim);
             Para(Lang.T("Panneau des triches", "Cheat panel") + ": " + Keys.Label(Keys.Cheats), Style.Dim);
+            if (Item(Lang.R("Receive parcels now"), "", allowed, Lang.R("Deliver the mailed catalogue order to the post office for free."), false) != 0)
+            {
+                string error = Cheats.Command("/parcels");
+                Hud.Toast(error ?? Lang.R("Parcels delivered to the post office"));
+            }
             ToolCasesTab();
         }
 

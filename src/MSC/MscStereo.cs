@@ -37,7 +37,7 @@ namespace MWCoop
         static bool applying, bound;
         public static bool Owns(PlayMakerFSM f)
         { return f != null && f.FsmName == "Knob" && (f.name == "RadioVolume" || f.name == "RadioTuner"); }
-        public static void Reset() { knobs.Clear(); known.Clear(); turns.Clear(); scan = publish = 0; sequence = revision = 0; applying = false; }
+        public static void Reset() { knobs.Clear(); known.Clear(); turns.Clear(); MscStereoControls.Reset(); scan = publish = 0; sequence = revision = 0; applying = false; }
         public static void Resynchronize() { scan = publish = 0; foreach (Knob k in knobs.Values) k.Received = 0; }
         static string Device(PlayMakerFSM f)
         {
@@ -55,6 +55,7 @@ namespace MWCoop
                 PlayMakerFSM f = obj as PlayMakerFSM;
                 if (!Owns(f) || f.hideFlags != HideFlags.None || known.Contains(f)) continue;
                 if (!f.Fsm.Initialized) f.Fsm.InitData();
+                MscStereoControls.Prepare(f);
                 var k = new Knob { Fsm = f, Tuner = f.name == "RadioTuner", Device = Device(f) };
                 k.Cd = k.Device == "msc:cd"; k.Key = k.Device + "/" + f.name;
                 k.Value = f.FsmVariables.FindFsmFloat(k.Tuner ? "Tune" : "Volume");
@@ -72,6 +73,7 @@ namespace MWCoop
         { return new NetWriter(Msg.Stereo).U8(kind).I32(++revision).U8(k.Actor).I32(k.Sequence).Str(k.Key).F32(k.Value.Value); }
         public static void Update()
         {
+            MscStereoControls.Update();
             if (!Session.Active || !PlayerSync.InGame) return;
             if (!bound)
             {

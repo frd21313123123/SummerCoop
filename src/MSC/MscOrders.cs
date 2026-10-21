@@ -23,7 +23,7 @@ namespace MWCoop
         static MscOrderMessage repairOrder, catalogOrder;
         static int ticket, revision, applied, randomSeed;
         static float nextBind, nextSync, workUntil;
-        static bool bound, applying, posting, baseline, instantWork;
+        static bool bound, applying, posting, baseline, instantWork, instantDelivery;
         public static int SavedSequence { get; private set; }
         public static bool Unsaved { get { return revision > SavedSequence; } }
         public static bool Busy { get { return applying || Time.realtimeSinceStartup < workUntil; } }
@@ -49,7 +49,7 @@ namespace MWCoop
             int saved = !Session.IsHost && PlayerSync.InGame && baseline ? SavedSequence : 0;
             repair = brochure = catalog = timer = postbox = payment = null; services = null;
             repairOrder = catalogOrder = null; requests.Clear(); pending.Clear(); packageNames.Clear();
-            bound = applying = posting = baseline = instantWork = false; revision = applied = SavedSequence = saved;
+            bound = applying = posting = baseline = instantWork = instantDelivery = false; revision = applied = SavedSequence = saved;
             nextBind = nextSync = workUntil = 0; ticket = UnityEngine.Random.Range(1, 1000000) * 1000;
             if (!PlayerSync.InGame) incoming.Clear();
         }
@@ -91,7 +91,7 @@ namespace MWCoop
         sealed class OrderHook : ModHook
         {
             public int Kind; public override string Module { get { return MscOrders.Module; } }
-            public override void OnEnter() { try { if (!applying && (Session.Active || instantWork)) Local(Kind); } catch (Exception e) { Replay.HookError(e); } Finish(); }
+            public override void OnEnter() { try { if (!applying && (Session.Active || instantWork || instantDelivery)) Local(Kind); } catch (Exception e) { Replay.HookError(e); } Finish(); }
         }
         public static string FinishFleetari()
         {
@@ -111,6 +111,29 @@ namespace MWCoop
             Set(repairOrder);
             repair.FsmVariables.GetFsmFloat("_OrderTime").Value = 0;
             Game.SetState(repair, "Work");
+            return null;
+        }
+        public static string ReceiveParcels()
+        {
+            if (!PlayerSync.InGame) return Lang.R("Load the game first.");
+            if (!bound) {
+                if (Session.Active || !Bind()) return Lang.R("Catalogue orders are not ready.");
+                bound = true;
+            }
+            if (!Session.Active) catalogOrder = Capture(MscOrderMessage.Catalog);
+            if (catalogOrder == null || !catalogOrder.Active) return Lang.R("There is no mailed catalogue order.");
+            if (catalogOrder.Paid || instantDelivery) return Lang.R("The parcels are already being delivered.");
+            // Use the same host-authorized cheat announcement as Fleetari.
+            // Native delivery unparents the existing boxes at the post office;
+            // it must run once on every peer, including a slower guest.
+            if (Session.Active && !Session.IsHost) return null;
+            instantDelivery = true; workUntil = Time.realtimeSinceStartup + 3;
+            var m = Capture(MscOrderMessage.Catalog);
+            m.Paid = true; m.Gear = 1;
+            // Pay can complete synchronously. Keep its hooks active so Arrive
+            // is published before the boxes are unparented, then Done clears
+            // the accepted order and permits the next catalogue purchase.
+            Set(m); timer.gameObject.SetActive(true); Game.SetState(timer, "Pay");
             return null;
         }
         sealed class FleetariWait : FsmStateAction
@@ -229,8 +252,11 @@ namespace MWCoop
             else if (kind == 4 && posting) {
                 posting = false; var m = Capture(MscOrderMessage.Catalog); m.Active = true; m.Op = MscOrderMessage.Submit;
                 Set(catalogOrder); Submit(m);
-            } else if (kind == 5 && Session.IsHost) { catalogOrder = Capture(MscOrderMessage.Catalog); Publish(catalogOrder, MscOrderMessage.Arrive); }
-            else if (kind == 6 && Session.IsHost) { catalogOrder = Capture(MscOrderMessage.Catalog); Publish(catalogOrder, MscOrderMessage.Done); }
+            } else if (kind == 5 && (!Session.Active || Session.IsHost)) { catalogOrder = Capture(MscOrderMessage.Catalog); if (Session.Active) Publish(catalogOrder, MscOrderMessage.Arrive); }
+            else if (kind == 6 && (!Session.Active || Session.IsHost)) {
+                instantDelivery = false; catalogOrder = Capture(MscOrderMessage.Catalog);
+                if (Session.Active) Publish(catalogOrder, MscOrderMessage.Done);
+            }
             else if (kind == 7) {
                 var m = Capture(MscOrderMessage.Catalog); m.Op = MscOrderMessage.Pay; m.Cost = payment.FsmVariables.GetFsmFloat("FinalPrice").Value;
                 catalog.FsmVariables.GetFsmBool("Paid").Value = false; Submit(m);

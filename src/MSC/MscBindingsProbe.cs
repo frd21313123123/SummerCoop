@@ -17,8 +17,10 @@ namespace MWCoop
         static int shelfBefore;
         static FsmStateAction deliveryWait;
         static string[] packages;
-        static bool instantClick, instantClicked, instantRecorded;
+        static bool instantClick, instantClicked, instantRecorded, parcelClick, parcelClicked;
+        static float parcelCash;
         static bool Instant { get { return MscRuntime.HasArgument("--summercoop-test-bindings-instant"); } }
+        static bool Parcels { get { return MscRuntime.HasArgument("--summercoop-test-bindings-parcels"); } }
         static string Role { get { return MWCoop.Net.Session.IsHost ? "host" : "guest"; } }
         public static void Update()
         {
@@ -26,7 +28,7 @@ namespace MWCoop
             if (channel.Length == 0 || Time.timeSinceLevelLoad < 15) return;
             if (!dumped) {
                 Dump(channel); dumped = true;
-                if (Instant) new GameObject("SummerCoop Fleetari cheat QA").AddComponent<InstantDriver>();
+                if (Instant || Parcels) new GameObject("SummerCoop order cheat QA").AddComponent<InstantDriver>();
             }
             Exercise(channel);
         }
@@ -101,7 +103,7 @@ namespace MWCoop
             float t = (float)TimeSpan.FromTicks(DateTime.UtcNow.Ticks - start).TotalSeconds;
             var order = Fsm(MscOrders.RepairPath, "Data");
             if (At(0, t, 0)) {
-                if (Instant && host) Cheats.SetAllowed(true);
+                if ((Instant || Parcels) && host) Cheats.SetAllowed(true);
                 Wallet.AddLocal(20000);
                 cash = FsmVariables.GlobalVariables.GetFsmFloat("PlayerMoney").Value;
                 Transform visitor = Game.PlayerT;
@@ -217,24 +219,34 @@ namespace MWCoop
                 var data = Fsm(MscOrders.CatalogPath, "Data"); var list = MscShop.List(data.gameObject, "Delivering");
                 int count = 0; foreach (object item in list) if (!string.IsNullOrEmpty(Convert.ToString(item))) count++;
                 Record(channel, "catalog-posted", count == 1 && data.FsmVariables.GetFsmBool("Wait").Value, "Products=" + count + ";Wait=" + data.FsmVariables.GetFsmBool("Wait").Value);
+                parcelCash = Wallet.Cash;
             }
-            if (host && At(8, t, 35)) Fsm(MscOrders.CatalogPath + "/Timer", "Delivery").FsmVariables.GetFsmFloat("Current").Value = 6000;
-            if (!host && At(9, t, 39)) {
+            if (!host && Parcels && At(33, t, 35)) parcelClick = true;
+            if (!Parcels && host && At(8, t, 35)) Fsm(MscOrders.CatalogPath + "/Timer", "Delivery").FsmVariables.GetFsmFloat("Current").Value = 6000;
+            if (!host && At(9, t, Parcels ? 34 : 39)) {
                 Enable(Game.FindAny("STORE/LOD/ActivateStore/PostOffice/PostOrderBuy"));
                 // Deliberately lag this guest's native package loop behind the
                 // host's completion message to exercise delivery ordering.
                 foreach (FsmStateAction action in Fsm(MscOrders.CatalogPath + "/Timer", "Delivery").Fsm.GetState("Pay").Actions)
                     if (action is HutongGames.PlayMaker.Actions.BoolTest) { deliveryWait = action; action.Enabled = false; }
             }
-            if (!host && At(10, t, 41)) Game.SetState(Fsm("STORE/LOD/ActivateStore/PostOffice/PostOrderBuy", "Use"), "State 4");
-            if (!host && At(11, t, 43)) {
+            if (!Parcels && !host && At(10, t, 41)) Game.SetState(Fsm("STORE/LOD/ActivateStore/PostOffice/PostOrderBuy", "Use"), "State 4");
+            if (!Parcels && !host && At(11, t, 43)) {
                 var pay = Fsm("STORE/LOD/ActivateStore/PostOffice/PostOrderBuy", "Use");
                 foreach (FsmState state in pay.Fsm.States) foreach (FsmStateAction a in state.Actions) {
                     var set = a as HutongGames.PlayMaker.Actions.SetFsmBool;
                     if (set != null && set.variableName.Value == "Paid" && set.setValue.Value) { Game.SetState(pay, state.Name); return; }
                 }
             }
-            if (!host && At(24, t, 46) && deliveryWait != null) deliveryWait.Enabled = true;
+            if (!host && At(24, t, 46) && deliveryWait != null) {
+                deliveryWait.Enabled = true;
+                // This cheat reaches Pay after the action was disabled. Enter
+                // it again when unpausing so PlayMaker schedules OnUpdate too.
+                if (Parcels) {
+                    var delivery = Fsm(MscOrders.CatalogPath + "/Timer", "Delivery");
+                    if (delivery.ActiveStateName == "Pay") Game.SetState(delivery, "Pay");
+                }
+            }
             if (At(12, t, 50)) {
                 var data = Fsm(MscOrders.CatalogPath, "Data");
                 var names = new List<string>();
@@ -245,6 +257,11 @@ namespace MWCoop
                 Record(channel, "catalog-delivered", !data.FsmVariables.GetFsmBool("Wait").Value && packages.Length > 0,
                     "Wait=" + data.FsmVariables.GetFsmBool("Wait").Value + ";Packages=" + packages.Length);
                 MscProbeFiles.WriteAllText(Path.Combine(channel, Role + "-packages.txt"), string.Join("\n", packages));
+                if (Parcels) {
+                    Record(channel, "parcels-free", Mathf.Abs(Wallet.Cash - parcelCash) < .01f, "Before=" + parcelCash + ";After=" + Wallet.Cash);
+                    string error = Cheats.Command("/parcels");
+                    Record(channel, "parcels-empty", error == Lang.R("There is no mailed catalogue order."), "Error=" + error);
+                }
             }
             if (At(17, t, 52)) {
                 Enable(Game.FindAny("STORE/LOD/ActivateStore/FoodProducts/Sausages"));
@@ -277,20 +294,24 @@ namespace MWCoop
         {
             void OnGUI()
             {
-                if (!instantClick || instantClicked || Event.current.type != EventType.Layout) return;
+                bool parcels = parcelClick && !parcelClicked;
+                if ((!parcels && (!instantClick || instantClicked)) || Event.current.type != EventType.Layout) return;
                 Event real = Event.current;
                 try {
                     CheatPanel.Open = true; CheatPanel.Draw();
-                    for (int turn = 0; turn < 20 && !CheatPanel.ContentViewport.Contains(CheatPanel.FleetariButtonRect.center); turn++) {
+                    for (int turn = 0; turn < 20 && !CheatPanel.ContentViewport.Contains((parcels ? CheatPanel.ParcelsButtonRect : CheatPanel.FleetariButtonRect).center); turn++) {
                         Event.current = new Event { type = EventType.ScrollWheel, delta = new Vector2(0, 3), mousePosition = CheatPanel.ContentViewport.center };
                         CheatPanel.Draw();
                     }
                     string channel = MscRuntime.Argument("--summercoop-test-bindings-channel");
-                    MscProbeFiles.WriteAllText(Path.Combine(channel, "instant-click.txt"), DateTime.UtcNow.Ticks.ToString());
-                    Event.current = new Event { type = EventType.MouseDown, button = 0, mousePosition = CheatPanel.FleetariButtonRect.center };
-                    CheatPanel.Draw(); instantClicked = true; CheatPanel.Open = false;
-                    Record(channel, "fleetari-button", CheatPanel.ContentViewport.Contains(CheatPanel.FleetariButtonRect.center),
-                        "Button=" + CheatPanel.FleetariButtonRect + ";Viewport=" + CheatPanel.ContentViewport);
+                    Rect button = parcels ? CheatPanel.ParcelsButtonRect : CheatPanel.FleetariButtonRect;
+                    MscProbeFiles.WriteAllText(Path.Combine(channel, parcels ? "parcel-click.txt" : "instant-click.txt"), DateTime.UtcNow.Ticks.ToString());
+                    Event.current = new Event { type = EventType.MouseDown, button = 0, mousePosition = button.center };
+                    CheatPanel.Draw();
+                    if (parcels) parcelClicked = true; else instantClicked = true;
+                    CheatPanel.Open = false;
+                    Record(channel, parcels ? "parcels-button" : "fleetari-button", CheatPanel.ContentViewport.Contains(button.center),
+                        "Button=" + button + ";Viewport=" + CheatPanel.ContentViewport);
                 } finally { Event.current = real; }
             }
         }

@@ -100,6 +100,7 @@ namespace MWCoop
                 if (!File.Exists(timer) || !long.TryParse(MscProbeFiles.ReadAllText(timer), out start)) return;
             }
             float t = (float)TimeSpan.FromTicks(DateTime.UtcNow.Ticks - start).TotalSeconds; if (t < 0) return;
+            if (MscRuntime.HasArgument("--summercoop-test-stereo-passengers")) { MscStereoPassengerProbe.Tick(t, Record); return; }
             if (MscRuntime.HasArgument("--summercoop-test-music-only")) { MscMusicProbe.Tick(t + 114, channel, Record); return; }
             if (At(0, t, 0))
             {
